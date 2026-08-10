@@ -19,9 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/andygeiss/tictactoe"
-	"github.com/andygeiss/tictactoe/internal/app"
-	"github.com/andygeiss/tictactoe/internal/store"
+	reference "github.com/andygeiss/baseline-reference"
+	"github.com/andygeiss/baseline-reference/internal/app"
+	"github.com/andygeiss/baseline-reference/internal/store"
 )
 
 func main() {
@@ -62,11 +62,11 @@ func run() error {
 	}
 	defer db.Close()
 
-	templatesFS, err := fs.Sub(tictactoe.TemplatesFS, "web/templates")
+	templatesFS, err := fs.Sub(reference.TemplatesFS, "web/templates")
 	if err != nil {
 		return fmt.Errorf("templates fs: %w", err)
 	}
-	staticFS, err := fs.Sub(tictactoe.StaticFS, "web")
+	staticFS, err := fs.Sub(reference.StaticFS, "web")
 	if err != nil {
 		return fmt.Errorf("static fs: %w", err)
 	}

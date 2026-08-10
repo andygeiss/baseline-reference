@@ -11,9 +11,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/andygeiss/tictactoe"
-	"github.com/andygeiss/tictactoe/internal/domain"
-	"github.com/andygeiss/tictactoe/internal/store"
+	reference "github.com/andygeiss/baseline-reference"
+	"github.com/andygeiss/baseline-reference/internal/domain"
+	"github.com/andygeiss/baseline-reference/internal/store"
 	"io/fs"
 )
 
@@ -31,7 +31,7 @@ func newTestApp(t *testing.T) *testApp {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	templatesFS, err := fs.Sub(tictactoe.TemplatesFS, "web/templates")
+	templatesFS, err := fs.Sub(reference.TemplatesFS, "web/templates")
 	if err != nil {
 		t.Fatalf("templates fs: %v", err)
 	}

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/andygeiss/tictactoe/internal/domain"
-	"github.com/andygeiss/tictactoe/internal/store"
+	"github.com/andygeiss/baseline-reference/internal/domain"
+	"github.com/andygeiss/baseline-reference/internal/store"
 )
 
 // gameView is the template data for game.html and its board fragment.

@@ -1,5 +1,5 @@
 // Package tictactoe embeds the web assets so the deliverable is one static binary.
-package tictactoe
+package reference
 
 import "embed"
 

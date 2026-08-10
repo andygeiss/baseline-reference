@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andygeiss/tictactoe/internal/domain"
+	"github.com/andygeiss/baseline-reference/internal/domain"
 )
 
 var ErrNotFound = errors.New("not found")

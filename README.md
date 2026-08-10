@@ -1,23 +1,28 @@
-# tictactoe
+# baseline-reference
 
-Two-player tic-tac-toe as a server-rendered web application. This project is the
-reference implementation / first consumer of the
-[engineering baseline](https://github.com/andygeiss/baseline) — every stack choice,
-pattern, and convention here follows `project-types/web-application.md` there.
+Reference implementation and **reproducible acceptance test** of the
+[engineering baseline](https://github.com/andygeiss/baseline): two-player tic-tac-toe
+as a server-rendered web application, built strictly per the baseline's
+`project-types/web-application.md`.
+
+- **[SPEC.md](SPEC.md)** — what this test is: the task, the pinned baseline commit,
+  the acceptance criteria, and the protocol for reproducing the test from scratch.
+- **[verify.sh](verify.sh)** — the mechanical acceptance run: every CI gate from the
+  baseline plus a live smoke test of the built binary. `./verify.sh` must exit 0.
 
 ## Stack
 
 Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.9 (vendored, the
-only script) · pure CSS (cascade layers, oklch, `light-dark()`) · SQLite
-(`modernc.org/sqlite`, WAL, single-writer pool) · single static binary with all
-assets embedded.
+only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, oklch,
+`light-dark()`) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) · single
+static binary with all assets embedded.
 
 ## Run
 
 ```sh
 go run ./cmd/server            # http://localhost:8080, ops on localhost:6060
 go test -race ./...
-CGO_ENABLED=0 go build ./cmd/server
+./verify.sh                    # full acceptance gauntlet
 ```
 
 Configuration (flags override env): `PORT`, `OPS_PORT`, `DATABASE_URL`, `LOG_LEVEL`, `ENV`.

@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/andygeiss/tictactoe/internal/domain"
+	"github.com/andygeiss/baseline-reference/internal/domain"
 )
 
 // GameStore is what the app needs from persistence (consumer-defined).

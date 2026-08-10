@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/andygeiss/tictactoe/internal/domain"
+	"github.com/andygeiss/baseline-reference/internal/domain"
 )
 
 // newTestDB opens a real SQLite file with production pragmas and migrations.

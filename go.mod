@@ -1,4 +1,4 @@
-module github.com/andygeiss/tictactoe
+module github.com/andygeiss/baseline-reference
 
 go 1.26.5
 
