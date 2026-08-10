@@ -5,6 +5,7 @@ package domain
 import "errors"
 
 var (
+	ErrNotFound    = errors.New("not found")
 	ErrInvalidCell = errors.New("cell out of range")
 	ErrCellTaken   = errors.New("cell already taken")
 	ErrGameOver    = errors.New("game is over")

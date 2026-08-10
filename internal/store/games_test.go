@@ -57,11 +57,11 @@ func TestGames_NotFound(t *testing.T) {
 	games := NewGames(newTestDB(t))
 	ctx := t.Context()
 
-	if _, err := games.Get(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Get: got %v, want ErrNotFound", err)
+	if _, err := games.Get(ctx, "missing"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Get: got %v, want domain.ErrNotFound", err)
 	}
-	if err := games.Update(ctx, domain.NewGame("missing")); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Update: got %v, want ErrNotFound", err)
+	if err := games.Update(ctx, domain.NewGame("missing")); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Update: got %v, want domain.ErrNotFound", err)
 	}
 }
 

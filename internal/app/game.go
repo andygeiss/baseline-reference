@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	"github.com/andygeiss/baseline-reference/internal/domain"
-	"github.com/andygeiss/baseline-reference/internal/store"
 )
 
 // gameView is the template data for game.html and its board fragment.
@@ -32,8 +31,8 @@ func (a *App) handleGameCreate(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleGameShow(w http.ResponseWriter, r *http.Request) {
 	g, err := a.games.Get(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		a.clientError(w, http.StatusNotFound)
+	if errors.Is(err, domain.ErrNotFound) {
+		a.clientError(w, r, http.StatusNotFound)
 		return
 	}
 	if err != nil {
@@ -45,8 +44,8 @@ func (a *App) handleGameShow(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleMoveCreate(w http.ResponseWriter, r *http.Request) {
 	g, err := a.games.Get(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		a.clientError(w, http.StatusNotFound)
+	if errors.Is(err, domain.ErrNotFound) {
+		a.clientError(w, r, http.StatusNotFound)
 		return
 	}
 	if err != nil {
@@ -56,14 +55,14 @@ func (a *App) handleMoveCreate(w http.ResponseWriter, r *http.Request) {
 
 	cell, err := strconv.Atoi(r.PostFormValue("cell"))
 	if err != nil {
-		a.clientError(w, http.StatusBadRequest)
+		a.clientError(w, r, http.StatusBadRequest)
 		return
 	}
 
 	view := gameView{Game: g}
 	switch err := g.Move(cell); {
 	case errors.Is(err, domain.ErrInvalidCell):
-		a.clientError(w, http.StatusBadRequest)
+		a.clientError(w, r, http.StatusBadRequest)
 		return
 	case errors.Is(err, domain.ErrCellTaken):
 		view.Message = "That cell is already taken."

@@ -50,7 +50,7 @@ func New(logger *slog.Logger, games GameStore, templatesFS, staticFS fs.FS, vers
 // render writes page as a full document, or only its named block when the request
 // came from an htmx interaction. block == "" always renders the full page.
 func (a *App) render(w http.ResponseWriter, r *http.Request, status int, page, block string, data any) {
-	name := "layout"
+	name := "layout.html" // full page: the layout shell that invokes the page's "main"
 	if block != "" && isHTMX(r) {
 		name = block
 	}
@@ -59,7 +59,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, page, b
 		a.serverError(w, r, err)
 		return
 	}
-	w.Header().Add("Vary", "HX-Request")
+	w.Header().Add("Vary", "HX-Request, HX-Boosted")
 	w.WriteHeader(status)
 	buf.WriteTo(w)
 }
@@ -75,6 +75,7 @@ func (a *App) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "Sorry, something went wrong.", http.StatusInternalServerError)
 }
 
-func (a *App) clientError(w http.ResponseWriter, status int) {
+func (a *App) clientError(w http.ResponseWriter, r *http.Request, status int) {
+	a.logger.Debug("client error", "method", r.Method, "path", r.URL.Path, "status", status)
 	http.Error(w, http.StatusText(status), status)
 }

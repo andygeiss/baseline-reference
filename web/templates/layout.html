@@ -1,10 +1,17 @@
-{{define "layout"}}<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{block "title" .}}Tic-Tac-Toe{{end}} · Tic-Tac-Toe</title>
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,
+    "historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[
+    {"code":"204","swap":false},
+    {"code":"[23]..","swap":true},
+    {"code":"422","swap":true},
+    {"code":"[45]..","swap":false,"error":true}]}'>
+  <title>{{template "title" .}} · Tic-Tac-Toe</title>
   <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
+  <link rel="icon" href="/static/favicon.svg?v={{version}}" type="image/svg+xml">
 </head>
 <body hx-boost="true">
   <header class="site-header">
@@ -21,4 +28,3 @@
   <script src="/static/js/htmx.min.js?v={{version}}"></script>
 </body>
 </html>
-{{end}}

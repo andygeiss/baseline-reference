@@ -48,6 +48,12 @@
     }
     &:disabled { cursor: default; }
   }
+
+  /* htmx's built-in indicator styles are disabled for CSP
+     (includeIndicatorStyles:false) — these rules replace them. */
+  .htmx-indicator { opacity: 0; }
+  .htmx-request .htmx-indicator,
+  .htmx-request.htmx-indicator { opacity: 1; }
 }
 
 @layer layout {

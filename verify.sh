@@ -66,7 +66,8 @@ curl -fsS "localhost:$OPS_PORT/healthz" | grep -q '"status":"ok"' || fail "healt
 
 step "smoke: home page with CSP header"
 curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/" | grep -q "Start a new game" || fail "home body"
-grep -qi "content-security-policy: default-src 'self'" "$WORKDIR/headers" || fail "CSP header"
+grep -qi "content-security-policy: default-src 'self'; frame-ancestors 'none'" "$WORKDIR/headers" || fail "CSP header"
+grep -qi "strict-transport-security" "$WORKDIR/headers" || fail "HSTS header"
 
 step "smoke: plain form flow (create game -> 303 -> page)"
 GAME_URL="$(curl -fsS -o /dev/null -w '%{redirect_url}' -X POST "localhost:$PORT/games")"

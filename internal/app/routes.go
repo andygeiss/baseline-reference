@@ -13,8 +13,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("GET /games/{id}", a.handleGameShow)
 	mux.HandleFunc("POST /games/{id}/moves", a.handleMoveCreate)
 
-	csrf := http.NewCrossOriginProtection()
-	return a.logRequests(a.recoverPanic(a.secureHeaders(csrf.Handler(mux))))
+	return a.middleware(mux)
 }
 
 // cacheForever marks embedded assets immutable; URLs carry ?v=<version> to bust.

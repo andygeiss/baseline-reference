@@ -11,8 +11,6 @@ import (
 	"github.com/andygeiss/baseline-reference/internal/domain"
 )
 
-var ErrNotFound = errors.New("not found")
-
 type Games struct {
 	db *DB
 }
@@ -40,7 +38,7 @@ func (s *Games) Get(ctx context.Context, id string) (*domain.Game, error) {
 		`SELECT id, board, next, status, winner FROM games WHERE id = ?`, id).
 		Scan(&g.ID, &board, &next, &status, &winner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, domain.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("selecting game %s: %w", id, err)
@@ -68,7 +66,7 @@ func (s *Games) Update(ctx context.Context, g *domain.Game) error {
 		return fmt.Errorf("updating game %s: %w", g.ID, err)
 	}
 	if n == 0 {
-		return ErrNotFound
+		return domain.ErrNotFound
 	}
 	return nil
 }

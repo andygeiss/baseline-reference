@@ -100,8 +100,11 @@ func TestHome(t *testing.T) {
 	if !strings.Contains(body, "<html") || !strings.Contains(body, "Start a new game") {
 		t.Error("home page missing document or new-game form")
 	}
-	if csp := res.Header.Get("Content-Security-Policy"); csp != "default-src 'self'" {
+	if csp := res.Header.Get("Content-Security-Policy"); csp != "default-src 'self'; frame-ancestors 'none'" {
 		t.Errorf("CSP = %q", csp)
+	}
+	if res.Header.Get("Strict-Transport-Security") == "" {
+		t.Error("missing Strict-Transport-Security header")
 	}
 }
 
@@ -168,8 +171,9 @@ func TestMoveCreate_HTMXReturnsFragment(t *testing.T) {
 	if !strings.Contains(body, `id="board"`) || !strings.Contains(body, "O's turn") {
 		t.Error("fragment missing swapped board or updated turn")
 	}
-	if vary := res.Header.Values("Vary"); !strings.Contains(strings.Join(vary, ","), "HX-Request") {
-		t.Errorf("Vary = %v, want HX-Request", vary)
+	if vary := strings.Join(res.Header.Values("Vary"), ","); !strings.Contains(vary, "HX-Request") ||
+		!strings.Contains(vary, "HX-Boosted") {
+		t.Errorf("Vary = %q, want HX-Request and HX-Boosted", vary)
 	}
 }
 

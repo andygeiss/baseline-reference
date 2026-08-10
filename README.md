@@ -25,7 +25,7 @@ go test -race ./...
 ./verify.sh                    # full acceptance gauntlet
 ```
 
-Configuration (flags override env): `PORT`, `OPS_PORT`, `DATABASE_URL`, `LOG_LEVEL`, `ENV`.
+Configuration (flags override env): `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, `LOG_LEVEL`, `ENV`.
 
 ## Baseline deviations
 
@@ -39,3 +39,6 @@ Recorded per the baseline's rules:
   baseline targets *form validation*; a stale-board click is not invalid input — the
   response replaces the stale board with current truth. (htmx 2 also doesn't swap
   4xx responses by default.)
+- **`OPS_PORT` is an extra config var** beyond the baseline's environment contract:
+  the ops listener port is configurable so `verify.sh` can boot test instances beside
+  a running dev server.

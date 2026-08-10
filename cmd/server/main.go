@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -18,6 +17,8 @@ import (
 	"runtime/debug"
 	"syscall"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	reference "github.com/andygeiss/baseline-reference"
 	"github.com/andygeiss/baseline-reference/internal/app"
@@ -33,9 +34,10 @@ func main() {
 
 func run() error {
 	var cfg struct {
-		port, opsPort, dbPath, logLevel, env string
+		host, port, opsPort, dbPath, logLevel, env string
 	}
-	flag.StringVar(&cfg.port, "port", cmp.Or(os.Getenv("PORT"), "8080"), "app listen port (localhost)")
+	flag.StringVar(&cfg.host, "host", cmp.Or(os.Getenv("HOST"), "127.0.0.1"), "bind address (the proxy is the public listener)")
+	flag.StringVar(&cfg.port, "port", cmp.Or(os.Getenv("PORT"), "8080"), "app listen port")
 	flag.StringVar(&cfg.opsPort, "ops-port", cmp.Or(os.Getenv("OPS_PORT"), "6060"), "ops listen port (localhost)")
 	flag.StringVar(&cfg.dbPath, "db", cmp.Or(os.Getenv("DATABASE_URL"), "app.db"), "SQLite file path")
 	flag.StringVar(&cfg.logLevel, "log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "debug|info|warn|error")
@@ -77,7 +79,7 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Addr:              net.JoinHostPort("127.0.0.1", cfg.port),
+		Addr:              net.JoinHostPort(cfg.host, cfg.port),
 		Handler:           a.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -91,29 +93,29 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	serveErr := make(chan error, 2)
-	go func() { serveErr <- srv.ListenAndServe() }()
-	go func() { serveErr <- opsSrv.ListenAndServe() }()
+	// Both listeners run under the signal context via errgroup — every goroutine
+	// has an owned lifecycle; a failing listener shuts the other down gracefully.
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return serve(gctx, srv) })
+	g.Go(func() error { return serve(gctx, opsSrv) })
+	g.Go(func() error { <-gctx.Done(); logger.Info("shutting down"); return nil })
 	logger.Info("started", "addr", srv.Addr, "ops", opsSrv.Addr, "version", version(), "env", cfg.env)
+	return g.Wait()
+}
 
+// serve runs srv until ctx is canceled, then shuts it down gracefully so
+// in-flight requests finish.
+func serve(ctx context.Context, srv *http.Server) error {
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
 	select {
 	case <-ctx.Done():
-		logger.Info("shutting down")
-	case err := <-serveErr:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serving: %w", err)
-		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	case err := <-errc:
+		return fmt.Errorf("serving %s: %w", srv.Addr, err)
 	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutting down app server: %w", err)
-	}
-	if err := opsSrv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutting down ops server: %w", err)
-	}
-	return nil
 }
 
 // opsHandler serves /healthz and pprof on the localhost-only ops listener.
