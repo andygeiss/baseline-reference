@@ -1,0 +1,24 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}Tic-Tac-Toe{{end}} · Tic-Tac-Toe</title>
+  <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
+</head>
+<body hx-boost="true">
+  <header class="site-header">
+    <nav>
+      <a href="/">Tic-Tac-Toe</a>
+    </nav>
+  </header>
+  <main>
+    {{template "main" .}}
+  </main>
+  <footer class="site-footer">
+    <p>Server-rendered with Go + htmx — no JavaScript written.</p>
+  </footer>
+  <script src="/static/js/htmx.min.js?v={{version}}"></script>
+</body>
+</html>
+{{end}}

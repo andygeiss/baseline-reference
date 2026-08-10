@@ -1,0 +1,41 @@
+name: ci
+on:
+  push: {branches: [main]}
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"   # weekly: catches new CVEs in unchanged code
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod   # single source of truth for the Go version
+          check-latest: true        # newest patch release = current security fixes
+
+      - name: Format
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+      - name: Vulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Tidy
+        run: go mod tidy -diff
+
+      - name: Test
+        run: go test -race -shuffle=on ./...
+
+      - name: Build (static)
+        run: CGO_ENABLED=0 go build -trimpath ./...
