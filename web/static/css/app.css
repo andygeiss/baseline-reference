@@ -7,18 +7,31 @@
 }
 
 @layer tokens {
+  /* Dark mode via media-query token redefinition, the Baseline Widely available
+     mechanism — light-dark() is Baseline Newly and would need an @supports
+     guard (see the baseline's stack/css.md). */
   :root {
     color-scheme: light dark;
-    --color-bg: light-dark(oklch(98% 0.005 250), oklch(20% 0.02 250));
-    --color-surface: light-dark(oklch(100% 0 0), oklch(25% 0.02 250));
-    --color-text: light-dark(oklch(25% 0.02 250), oklch(92% 0.005 250));
-    --color-muted: light-dark(oklch(50% 0.02 250), oklch(70% 0.01 250));
-    --color-accent: light-dark(oklch(55% 0.18 255), oklch(70% 0.15 255));
-    --color-border: light-dark(oklch(85% 0.01 250), oklch(35% 0.02 250));
+    --color-bg: oklch(98% 0.005 250);
+    --color-surface: oklch(100% 0 0);
+    --color-text: oklch(25% 0.02 250);
+    --color-muted: oklch(50% 0.02 250);
+    --color-accent: oklch(55% 0.18 255);
+    --color-border: oklch(85% 0.01 250);
     --space-1: 0.5rem;
     --space-2: 1rem;
     --space-3: 2rem;
     --radius: 0.5rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: oklch(20% 0.02 250);
+      --color-surface: oklch(25% 0.02 250);
+      --color-text: oklch(92% 0.005 250);
+      --color-muted: oklch(70% 0.01 250);
+      --color-accent: oklch(70% 0.15 255);
+      --color-border: oklch(35% 0.02 250);
+    }
   }
 }
 

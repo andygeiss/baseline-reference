@@ -9,7 +9,7 @@ set -eu
 cd "${1:-$(dirname "$0")}"
 
 # Pinned in the baseline's VERSIONS.md; update both together.
-HTMX_SHA256="57d9191515339922bd1356d7b2d80b1ee3b29f1b3a2c65a078bb8b2e8fd9ae5f"
+HTMX_SHA256="71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de"
 
 PORT="${PORT:-8091}"
 OPS_PORT="${OPS_PORT:-6061}"
