@@ -6,14 +6,20 @@ import "net/http"
 func (a *App) Routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.Handle("GET /static/", cacheForever(http.FileServerFS(a.staticFS)))
-
 	mux.HandleFunc("GET /{$}", a.handleHome)
 	mux.HandleFunc("POST /games", a.handleGameCreate)
 	mux.HandleFunc("GET /games/{id}", a.handleGameShow)
 	mux.HandleFunc("POST /games/{id}/moves", a.handleMoveCreate)
 
-	return a.middleware(mux)
+	// Static sits outside the middleware chain: CSRF and the body cap have
+	// nothing to check on a bodiless GET, and FileServerFS sets the right
+	// Content-Type on its own. CSP and HSTS still cover the HTML documents
+	// that reference the assets.
+	root := http.NewServeMux()
+	root.Handle("GET /static/", cacheForever(http.FileServerFS(a.staticFS)))
+	root.Handle("/", a.middleware(mux))
+
+	return root
 }
 
 // cacheForever marks embedded assets immutable; URLs carry ?v=<version> to bust.
