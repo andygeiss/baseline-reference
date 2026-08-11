@@ -20,8 +20,9 @@ single static binary with all assets embedded.
 ## Run
 
 ```sh
-go run ./cmd/server            # http://localhost:8080, ops on localhost:6060
-go test -race ./...
+make run                       # http://localhost:8080, ops on localhost:6060
+make test                      # inner loop: race + shuffle, as CI runs it
+make check                     # default target: every CI gate, gate-for-gate
 ./verify.sh                    # full acceptance gauntlet
 ```
 
