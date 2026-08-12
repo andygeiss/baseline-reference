@@ -14,7 +14,8 @@ as a server-rendered web application, built strictly per the baseline's
 
 Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
 only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
-grid layout, oklch, media-query dark mode) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) ·
+grid layout, oklch, media-query dark mode, motion-as-feedback with view-transition
+swaps) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) ·
 single static binary with all assets embedded.
 
 ## Run
@@ -49,3 +50,8 @@ Recorded per the baseline's rules:
   listener to `127.0.0.1:6060` ("fixed, not a flag"): the port is configurable so
   `verify.sh` can boot test instances beside a running dev server. The bind address
   stays hardcoded to localhost.
+- **No `<dialog>` in the UI** (`patterns/css-motion.md` dialog entry not exercised):
+  the game has no modal. The rest of the pattern is implemented — motion tokens,
+  base-layer state transitions, the indicator fade with its 100 ms entry delay,
+  view-transition swaps (board moves opt out as rapid-fire controls), and the
+  reduced-motion kill switch.

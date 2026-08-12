@@ -2,7 +2,9 @@
 
 @layer reset {
   *, *::before, *::after { box-sizing: border-box; }
-  * { margin: 0; }
+  /* Margin trim by element list, never `* { margin: 0 }` — the universal trim
+     strips the UA's `dialog { margin: auto }` centering (stack/css.md). */
+  body, h1, h2, h3, p, figure, blockquote, dl, dd, ul, ol, form { margin: 0; }
   button { font: inherit; }
 }
 
@@ -35,6 +37,10 @@
     --font-body: system-ui, sans-serif;
     --font-mono: ui-monospace, monospace;
     --radius: 0.375rem;
+
+    /* Motion — two speeds, feedback and movement (patterns/css-motion.md). */
+    --motion-fast: 150ms; /* state feedback: hover, presses, indicator fades */
+    --motion-slow: 300ms; /* movement and entry: dialogs, revealed content */
   }
 
   /* Dark scheme = color tokens redefined. Nothing else forks. */
@@ -80,11 +86,19 @@
     &:disabled { cursor: default; }
   }
 
-  /* htmx's built-in indicator styles are disabled for CSP
-     (includeIndicatorStyles:false) — these rules replace them. */
-  .htmx-indicator { opacity: 0; }
-  .htmx-request .htmx-indicator,
-  .htmx-request.htmx-indicator { opacity: 1; }
+  /* State feedback + smooth-scroll glide (patterns/css-motion.md). Only the
+     motion sits inside the wrapper; state rules stay outside. */
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; } /* same-page anchor jumps glide */
+
+    a, button, summary,
+    input, select, textarea {
+      transition: color var(--motion-fast) ease-out,
+                  background-color var(--motion-fast) ease-out,
+                  border-color var(--motion-fast) ease-out,
+                  box-shadow var(--motion-fast) ease-out;
+    }
+  }
 }
 
 @layer layout {
@@ -117,6 +131,20 @@
 }
 
 @layer components {
+  /* htmx's built-in indicator styles are disabled for CSP
+     (includeIndicatorStyles:false) — these rules replace them. */
+  .htmx-indicator { opacity: 0; } /* visibility, not motion — stays outside the wrapper */
+
+  .htmx-request .htmx-indicator,
+  .htmx-request.htmx-indicator { opacity: 1; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .htmx-indicator { transition: opacity var(--motion-fast) ease-out; }
+
+    .htmx-request .htmx-indicator,
+    .htmx-request.htmx-indicator { transition-delay: 100ms; }
+  }
+
   .button-primary {
     /* The measured primary-button recipe from patterns/css-tokens.md. */
     background: var(--color-accent);
@@ -146,14 +174,19 @@
       font-size: clamp(1.5rem, 8vw, 2.5rem);
       font-weight: 700;
 
-      @media (prefers-reduced-motion: no-preference) {
-        transition: background-color 150ms ease;
-      }
+      /* Hover eases via the base-layer button transition — no rule here. */
       &:hover:not(:disabled) { background: var(--color-bg); }
       &:disabled { border-color: var(--color-border); opacity: 1; }
     }
 
     &.htmx-request .board-grid { opacity: 0.6; }
+
+    /* The board dims like an indicator: the 100 ms entry delay keeps
+       sub-100ms responses from flashing (patterns/css-motion.md). */
+    @media (prefers-reduced-motion: no-preference) {
+      & .board-grid { transition: opacity var(--motion-fast) ease-out; }
+      &.htmx-request .board-grid { transition-delay: 100ms; }
+    }
   }
 }
 
@@ -165,5 +198,16 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+
+  /* View-transition kill switch (patterns/css-motion.md). Polarity is
+     `reduce` because it cancels animations the browser's own stylesheet
+     declares, not ones app.css does. */
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation: none !important;
+    }
   }
 }
