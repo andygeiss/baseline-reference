@@ -34,12 +34,18 @@ Recorded per the baseline's rules:
 
 - **No auth/sessions** (`patterns/go-auth-sessions.md` skipped): the game has no user
   accounts. Games are addressed by unguessable IDs only.
+- **No form validator or flash messages** (`patterns/go-forms-validation.md` not
+  exercised): no form takes typed input — every POST is a bare button or a board
+  cell, and the domain rules decide legality. Flash also requires sessions (skipped
+  above); results render on the target page, as that pattern prescribes for
+  session-less apps.
 - **No backups/Litestream** (`patterns/go-sqlite.md` §Backups waived): throwaway demo
   data. Everything else in that document (pragmas, pools, migrations) is implemented.
 - **Rule-violation moves return 200 with a message, not 422:** the 422 flow in the
   baseline targets *form validation*; a stale-board click is not invalid input — the
   response replaces the stale board with current truth. (htmx 2 also doesn't swap
   4xx responses by default.)
-- **`OPS_PORT` is an extra config var** beyond the baseline's environment contract:
-  the ops listener port is configurable so `verify.sh` can boot test instances beside
-  a running dev server.
+- **`OPS_PORT` is a config var**, though `patterns/go-http-server.md` pins the ops
+  listener to `127.0.0.1:6060` ("fixed, not a flag"): the port is configurable so
+  `verify.sh` can boot test instances beside a running dev server. The bind address
+  stays hardcoded to localhost.
