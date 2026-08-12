@@ -13,8 +13,8 @@ as a server-rendered web application, built strictly per the baseline's
 ## Stack
 
 Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
-only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, oklch,
-media-query dark mode) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) ·
+only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
+grid layout, oklch, media-query dark mode) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) ·
 single static binary with all assets embedded.
 
 ## Run

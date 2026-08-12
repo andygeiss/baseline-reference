@@ -21,6 +21,8 @@
     --space-1: 0.5rem;
     --space-2: 1rem;
     --space-3: 2rem;
+    --space: clamp(1rem, 0.5rem + 2vw, 2rem); /* fluid page gutter (patterns/css-layout.md) */
+    --measure: 30rem; /* game UI, not prose — narrower than the pattern's 65ch example */
     --radius: 0.5rem;
   }
   @media (prefers-color-scheme: dark) {
@@ -41,10 +43,12 @@
     color: var(--color-text);
     font-family: system-ui, sans-serif;
     line-height: 1.5;
-    min-height: 100dvh;
-    display: flex;
-    flex-direction: column;
+    overflow-wrap: anywhere;
   }
+  /* The narrow-screen guards from patterns/css-layout.md rule 1. */
+  img { max-inline-size: 100%; block-size: auto; }
+  input, select, textarea { max-inline-size: 100%; }
+  fieldset { min-inline-size: 0; }
   a { color: var(--color-accent); }
   h1 { font-size: clamp(1.5rem, 4vw, 2.25rem); }
   button {
@@ -70,6 +74,14 @@
 }
 
 @layer layout {
+  /* The page shell from patterns/css-layout.md: header, main, footer as grid
+     rows, footer pinned on short pages. */
+  body {
+    min-height: 100dvh; /* not 100vh: on phones vh includes the browser chrome */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr); /* the implicit column's auto minimum would let wide content push past the viewport */
+    grid-template-rows: auto 1fr auto;
+  }
   .site-header, .site-footer {
     padding: var(--space-2);
     color: var(--color-muted);
@@ -81,8 +93,7 @@
     }
   }
   main {
-    flex: 1;
-    width: min(100% - 2 * var(--space-2), 30rem);
+    inline-size: min(100% - 2 * var(--space), var(--measure));
     margin-inline: auto;
     display: grid;
     gap: var(--space-2);
