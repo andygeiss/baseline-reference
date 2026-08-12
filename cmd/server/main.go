@@ -4,14 +4,12 @@ package main
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -73,7 +71,9 @@ func run() error {
 		return fmt.Errorf("static fs: %w", err)
 	}
 
-	a, err := app.New(logger, store.NewGames(db), templatesFS, staticFS, version())
+	ver := version() // read once at boot; the ops handler and the asset cache-buster share it
+
+	a, err := app.New(logger, store.NewGames(db), templatesFS, staticFS, ver)
 	if err != nil {
 		return fmt.Errorf("building app: %w", err)
 	}
@@ -89,8 +89,15 @@ func run() error {
 	}
 	opsSrv := &http.Server{
 		Addr:              net.JoinHostPort("127.0.0.1", cfg.opsPort),
-		Handler:           opsHandler(db),
+		Handler:           app.OpsHandler(db.Read, ver),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		// WriteTimeout does not cap long profiles: profile?seconds=30 writes
+		// nothing until profiling ends, but net/http/pprof extends its own write
+		// deadline to WriteTimeout + seconds on every seconds-based handler.
 	}
 
 	// Both listeners run under the signal context via errgroup — every goroutine
@@ -99,7 +106,7 @@ func run() error {
 	g.Go(func() error { return serve(gctx, srv) })
 	g.Go(func() error { return serve(gctx, opsSrv) })
 	g.Go(func() error { <-gctx.Done(); logger.Info("shutting down"); return nil })
-	logger.Info("started", "addr", srv.Addr, "ops", opsSrv.Addr, "version", version(), "env", cfg.env)
+	logger.Info("started", "addr", srv.Addr, "ops", opsSrv.Addr, "version", ver, "env", cfg.env)
 	return g.Wait()
 }
 
@@ -116,28 +123,6 @@ func serve(ctx context.Context, srv *http.Server) error {
 	case err := <-errc:
 		return fmt.Errorf("serving %s: %w", srv.Addr, err)
 	}
-}
-
-// opsHandler serves /healthz and pprof on the localhost-only ops listener.
-func opsHandler(db *store.DB) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-		defer cancel()
-		status, code := "ok", http.StatusOK
-		if err := db.Read.PingContext(ctx); err != nil {
-			status, code = "degraded: "+err.Error(), http.StatusServiceUnavailable
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		json.NewEncoder(w).Encode(map[string]string{"status": status, "version": version()})
-	})
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	return mux
 }
 
 // version returns the VCS revision embedded by the toolchain.
