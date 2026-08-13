@@ -7,8 +7,8 @@ working, production-grade web application?*
 
 ## Baseline pin
 
-Built against baseline **v1.12.0** — commit
-**`4395067c0e4e991084c20b68a9b63fda804232b4`** (2026-08-13).
+Built against baseline **v1.13.0** — commit
+**`1307a152d418406f0e5867c18ce565d735faf3c3`** (2026-08-13).
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a
