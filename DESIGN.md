@@ -79,9 +79,9 @@ wider screens only add columns.
 
 ## Elevation & Depth
 
-No shadows. Depth is one step deep: `surface` panels on the `bg` page ground,
-separated by `border` lines. A design needing a taller stack than that gets
-redesigned flatter.
+No shadows: this is the minimal surface style. Depth is one step deep:
+`surface` panels on the `bg` page ground, separated by `border` lines. A
+design needing a taller stack than that gets redesigned flatter.
 
 ## Shapes
 
