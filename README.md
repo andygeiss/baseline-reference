@@ -9,6 +9,8 @@ as a server-rendered web application, built strictly per the baseline's
   the acceptance criteria, and the protocol for reproducing the test from scratch.
 - **[verify.sh](verify.sh)** — the mechanical acceptance run: every CI gate from the
   baseline plus a live smoke test of the built binary. `./verify.sh` must exit 0.
+- **[DESIGN.md](DESIGN.md)** — the design system: theme values and component
+  inventory, lockstep with `web/static/css/app.css`.
 
 ## Stack
 
