@@ -49,6 +49,24 @@ else
     echo "$HTMX_SHA256  web/static/js/htmx.min.js" | shasum -a 256 -c -
 fi
 
+step "css: type sizes track the reader's font-size setting"
+# clamp()'s middle argument is the fluid one. Built from vw alone it ignores the
+# reader's font-size setting and fails WCAG 1.4.4 — and the rem in the min and max
+# hides that from a naive grep, so read field 3 specifically. Each clamp is one line.
+BAD="$(grep -o 'font-size: *clamp([^)]*)' web/static/css/app.css | awk -F'[(,]' '$3 !~ /rem/')"
+[ -z "$BAD" ] || fail "font-size clamp() without a rem term in its fluid middle: $BAD"
+BAD="$(grep -o 'font-size: *[0-9.]*px' web/static/css/app.css || true)"
+[ -z "$BAD" ] || fail "font-size in px ignores the reader's font-size setting: $BAD"
+
+step "css: icon masks are well-formed data URIs"
+# Both failure modes are silent in the stylesheet: an SVG without xmlns is an
+# invalid image, which a mask renders fully transparent, and a raw # opens a URL
+# fragment that truncates the shape.
+BAD="$(grep -- '--icon:' web/static/css/app.css | grep -cv "xmlns='http://www.w3.org/2000/svg'" || true)"
+[ "$BAD" = "0" ] || fail "$BAD icon data URI(s) without xmlns — the icon renders transparent"
+BAD="$(grep -c -- "--icon:.*#" web/static/css/app.css || true)"
+[ "$BAD" = "0" ] || fail "$BAD icon data URI(s) contain a # — it truncates the shape"
+
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 
@@ -75,7 +93,9 @@ curl -fsS "localhost:$OPS_PORT/healthz" | grep -q '"status":"ok"' || fail "healt
 
 step "smoke: home page with CSP header"
 curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/" | grep -q "Start a new game" || fail "home body"
-grep -qi "content-security-policy: default-src 'self'; frame-ancestors 'none'" "$WORKDIR/headers" || fail "CSP header"
+# img-src must keep data:, or the browser blocks every mask icon in app.css.
+grep -qi "content-security-policy: default-src 'self'; img-src 'self' data:; frame-ancestors 'none'" \
+    "$WORKDIR/headers" || fail "CSP header"
 grep -qi "strict-transport-security" "$WORKDIR/headers" || fail "HSTS header"
 
 step "smoke: install manifest linked, served as application/manifest+json"

@@ -114,7 +114,7 @@ func TestHome(t *testing.T) {
 	if !strings.Contains(body, "<html") || !strings.Contains(body, "Start a new game") {
 		t.Error("home page missing document or new-game form")
 	}
-	if csp := res.Header.Get("Content-Security-Policy"); csp != "default-src 'self'; frame-ancestors 'none'" {
+	if csp := res.Header.Get("Content-Security-Policy"); csp != "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'" {
 		t.Errorf("CSP = %q", csp)
 	}
 	if res.Header.Get("Strict-Transport-Security") == "" {

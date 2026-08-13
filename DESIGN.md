@@ -75,8 +75,10 @@ in both schemes; `border` on both backgrounds ≥ 3.2:1; the primary button
 ## Typography
 
 The system font stack, no web fonts: `body` for text, `mono` for code. There
-is no fixed size scale — sizes are fluid `clamp()` expressions at the use
-site, so type tracks the viewport and the user's font-size setting.
+is no size ladder. Body copy keeps the size the reader's browser is set to,
+and the one heading level the app renders sizes itself fluidly:
+`clamp(1.75rem, 1.2rem + 2.4vw, 2.5rem)`. Every fluid size keeps a `rem`
+term, so type still grows when a reader raises that default (WCAG 1.4.4).
 
 ## Layout
 
@@ -105,12 +107,19 @@ Every component composes the roles above, and every interactive state
 - **Button** — primary actions use the `button` composite above: `accent`
   background, `bg` text. Secondary actions are plain buttons: `surface`
   fill inside a `border` boundary.
-- **Board** — nine square cell buttons in a three-column grid. A taken or
-  finished cell is disabled but keeps full-contrast text — the mark is
-  content, not a control state. While a move is in flight the grid dims,
-  hidden until the request runs past 100 ms.
+- **Board** — nine square cell buttons in a three-column grid. The mark
+  inside a cell is the second fluid size in the app,
+  `clamp(1.5rem, 0.5rem + 5vw, 2.5rem)`. A taken or finished cell is
+  disabled but keeps full-contrast text — the mark is content, not a
+  control state. While a move is in flight the grid dims, hidden until the
+  request runs past 100 ms.
 - **Status line** — one line above the board announcing the turn or the
   result, with rule-breaking moves explained in `text-muted`.
+- **Icon** — a CSS mask, `1em` square, painted with the surrounding text
+  color, so it needs no color and no size of its own. One shape ships: a
+  plus on Lucide's 24-unit grid with a 2-unit round-capped stroke, on both
+  "start a new game" buttons. It decorates a labeled control; the label is
+  the accessible name.
 
 ## Do's and Don'ts
 
@@ -119,5 +128,7 @@ Every component composes the roles above, and every interactive state
 - Do let the OS pick the scheme. Don't add a theme toggle.
 - Do use motion as feedback: `150ms` for state changes, `300ms` for
   movement. Don't decorate with motion.
+- Do size type and icons in `rem` and `em`. Don't add a size-token ladder,
+  and don't set a root `font-size` — both override the reader's choice.
 - Do change this file and `app.css` in the same commit. Don't let them
   drift.

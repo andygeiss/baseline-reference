@@ -70,9 +70,21 @@
   input, select, textarea { max-inline-size: 100%; }
   fieldset { min-inline-size: 0; }
   a { color: var(--color-accent); }
-  h1 { font-size: clamp(1.5rem, 4vw, 2.25rem); }
+  /* The heading step from patterns/css-typography.md. The rem term is
+     load-bearing: a vw-only size ignores the user's font-size setting
+     (WCAG 1.4.4). Only h1 ships — no page renders a deeper level. */
+  h1 {
+    font-size: clamp(1.75rem, 1.2rem + 2.4vw, 2.5rem);
+    line-height: 1.2;
+    text-wrap: balance; /* Baseline Newly — older browsers just wrap normally */
+  }
   button {
     cursor: pointer;
+    /* An icon sits beside the label, centered with it (patterns/css-icons.md). */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     background: var(--color-surface);
@@ -145,6 +157,27 @@
     .htmx-request.htmx-indicator { transition-delay: 100ms; }
   }
 
+  /* Icons are CSS masks painted with the surrounding text color
+     (patterns/css-icons.md): no request, no icon font, every theme for free. */
+  .icon {
+    display: inline-block;
+    inline-size: 1em;
+    block-size: 1em;
+    flex-shrink: 0;           /* a 1em box in a flex row must not be squeezed */
+    vertical-align: -0.125em; /* optical center against lowercase text */
+    background-color: currentColor;
+    mask: var(--icon) center / contain no-repeat;
+  }
+
+  /* Forced colors replaces author background colors with system ones, so
+     currentColor never survives to paint the shape. A system keyword does. */
+  @media (forced-colors: active) {
+    .icon { background-color: CanvasText; }
+  }
+
+  /* Lucide's plus, on its 24-unit grid with a 2-unit round-capped stroke. */
+  .icon-plus { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E"); }
+
   .button-primary {
     /* The measured primary-button recipe from patterns/css-tokens.md. */
     background: var(--color-accent);
@@ -170,7 +203,7 @@
 
     & .board-cell {
       aspect-ratio: 1;
-      font-size: clamp(1.5rem, 8vw, 2.5rem);
+      font-size: clamp(1.5rem, 0.5rem + 5vw, 2.5rem); /* rem term: WCAG 1.4.4 */
       font-weight: 700;
 
       /* Hover eases via the base-layer button transition — no rule here. */

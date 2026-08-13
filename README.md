@@ -17,9 +17,13 @@ as a server-rendered web application, built strictly per the baseline's
 Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
 only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
 grid layout, oklch, media-query dark mode, motion-as-feedback with view-transition
-swaps) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) · installable
-(web app manifest + four icons, no service worker) ·
-single static binary with all assets embedded.
+swaps, system font stack, mask icons) · SQLite (`modernc.org/sqlite`, WAL,
+single-writer pool) · installable (web app manifest + four icons, no service
+worker) · single static binary with all assets embedded.
+
+The one UI icon is a CSS mask. Its path data comes from
+[Lucide](https://lucide.dev), which ships under the ISC license, with the parts it
+inherits from Feather under MIT.
 
 ## Run
 
@@ -54,6 +58,12 @@ Recorded per the baseline's rules:
   listener to `127.0.0.1:6060` ("fixed, not a flag"): the port is configurable so
   `verify.sh` can boot test instances beside a running dev server. The bind address
   stays hardcoded to localhost.
+- **Only the part of the type scale the app renders** (`patterns/css-typography.md`):
+  the UI has one heading level and no `<small>`, code, or tables, so `app.css`
+  carries the `h1` step alone. `font: inherit` sits on `button` — the only form
+  control here. The scale's rules still hold: no root `font-size`, no size tokens,
+  and a `rem` term in every `clamp()`, which verify.sh gates. No web font: the
+  system stack is the pattern's default answer, not a waiver.
 - **No `<dialog>` in the UI** (`patterns/css-motion.md` dialog entry not exercised):
   the game has no modal. The rest of the pattern is implemented — motion tokens,
   base-layer state transitions, the indicator fade with its 100 ms entry delay,
@@ -62,9 +72,16 @@ Recorded per the baseline's rules:
 
 ## Beyond the baseline
 
-Four things this implementation adds that the baseline does not spell out. Each is a
+Five things this implementation adds that the baseline does not spell out. Each is a
 candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.md).
 
+- **The CSP carries `img-src 'self' data:`** (`internal/app/middleware.go`). Without
+  it no icon paints. Mask icons are data URIs, a CSS image is an image request, and
+  `'self'` never matches `data:`, so the baseline's exact header (`default-src
+  'self'; frame-ancestors 'none'`) makes Chrome refuse the mask: *"Loading the image
+  'data:image/svg+xml,…' violates the following Content Security Policy directive.
+  The action has been blocked."* `patterns/css-icons.md` and the checklist's CSP line
+  both need this directive.
 - **A move is one write transaction** (`internal/store/games.go`). The pattern's
   handler reads the game, applies the rule, then saves it. Two clicks that arrive
   together read the same board, and the second save erases the first move — it

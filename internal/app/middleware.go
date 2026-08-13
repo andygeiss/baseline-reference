@@ -53,7 +53,11 @@ func (a *App) recoverPanic(next http.Handler) http.Handler {
 func (a *App) secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		// img-src allows data: so the mask icons in app.css can paint. A CSS image is
+		// an image request, and 'self' never matches data: — under default-src alone
+		// the browser refuses every mask. Such an image runs no script and reaches no
+		// third party, so allowing it gives an attacker nothing new.
+		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
 		h.Set("Strict-Transport-Security", "max-age=31536000")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
