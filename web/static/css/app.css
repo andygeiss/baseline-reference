@@ -153,20 +153,19 @@
     font-weight: 600;
   }
 
+  /* Reserved height: the line grows a message without shifting the board. */
+  .status {
+    min-height: 1.5lh;
+
+    & .message { color: var(--color-text-muted); }
+  }
+
   .board {
-    display: grid;
-    gap: var(--space);
-
-    & .status {
-      min-height: 1.5lh;
-      & .message { color: var(--color-text-muted); }
-    }
-
     & .board-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: var(--space-sm);
-      max-width: 20rem;
+      max-inline-size: 20rem;
     }
 
     & .board-cell {

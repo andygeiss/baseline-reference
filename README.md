@@ -30,7 +30,8 @@ make check                     # default target: every CI gate, gate-for-gate
 ./verify.sh                    # full acceptance gauntlet
 ```
 
-Configuration (flags override env): `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, `LOG_LEVEL`, `ENV`.
+Configuration: `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, and `LOG_LEVEL` are flags
+with env-var defaults (the flag wins); `ENV` is read from the environment only.
 
 ## Baseline deviations
 
@@ -58,3 +59,24 @@ Recorded per the baseline's rules:
   base-layer state transitions, the indicator fade with its 100 ms entry delay,
   view-transition swaps (board moves opt out as rapid-fire controls), and the
   reduced-motion kill switch.
+
+## Beyond the baseline
+
+Four things this implementation adds that the baseline does not spell out. Each is a
+candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.md).
+
+- **A move is one write transaction** (`internal/store/games.go`). The pattern's
+  handler reads the game, applies the rule, then saves it. Two clicks that arrive
+  together read the same board, and the second save erases the first move — it
+  happened in 25 of 30 tries before the fix. The store now takes the change as a
+  function and does read, apply, and write inside one transaction on the
+  single-writer pool.
+- **The status line sits outside the swapped board** (`web/templates/game.html`).
+  A screen reader does not reliably announce a live region that arrives with its
+  text already in it. So the region stays put and the move response fills it out of
+  band (`hx-swap-oob="innerHTML:#status"`).
+- **Static directory URLs answer 404** (`internal/app/routes.go`). `FileServerFS`
+  otherwise renders a browsable index of the embedded tree — an HTML page that no
+  page links to, served outside the security headers and cached for a year.
+- **Cell labels count from 1** (`web/templates/game.html`). Board indices start at
+  zero; what a player hears should not. A one-line `inc` template function does it.

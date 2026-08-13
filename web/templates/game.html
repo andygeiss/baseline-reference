@@ -2,10 +2,27 @@
 
 {{define "main"}}
 <h1>Tic-Tac-Toe</h1>
+<!-- The live region stays put across swaps: a region inserted together with its
+     text is not reliably announced, so moves replace its contents, never it. -->
+<p id="status" class="status" aria-live="polite">{{template "status" .}}</p>
 {{template "board" .}}
 <form method="post" action="/games">
   <button>Start a new game</button>
 </form>
+{{end}}
+
+{{define "status"}}
+  {{if eq .Game.Status "won"}}<strong>{{.Game.Winner}} wins!</strong>
+  {{else if eq .Game.Status "draw"}}<strong>It's a draw.</strong>
+  {{else}}{{.Game.Next}}'s turn{{end}}
+  {{with .Message}}<span class="message">{{.}}</span>{{end}}
+{{end}}
+
+{{/* The htmx answer to a move: the new board, plus the status line swapped
+     into the live region out of band. */}}
+{{define "board-swap"}}
+<p hx-swap-oob="innerHTML:#status">{{template "status" .}}</p>
+{{template "board" .}}
 {{end}}
 
 {{define "board"}}
@@ -14,16 +31,10 @@
 <form id="board" class="board" method="post" action="/games/{{.Game.ID}}/moves"
       hx-post="/games/{{.Game.ID}}/moves" hx-target="#board"
       hx-swap="outerHTML transition:false" hx-indicator="#board">
-  <p class="status" aria-live="polite">
-    {{if eq .Game.Status "won"}}<strong>{{.Game.Winner}} wins!</strong>
-    {{else if eq .Game.Status "draw"}}<strong>It's a draw.</strong>
-    {{else}}{{.Game.Next}}'s turn{{end}}
-    {{with .Message}}<span class="message">{{.}}</span>{{end}}
-  </p>
   <div class="board-grid">
     {{range $i, $cell := .Game.Board}}
     <button class="board-cell" name="cell" value="{{$i}}"
-            aria-label="Cell {{$i}}{{with $cell}}, taken by {{.}}{{end}}"
+            aria-label="Cell {{inc $i}}{{with $cell}}, taken by {{.}}{{end}}"
             {{if or $cell (ne $.Game.Status "in_progress")}}disabled{{end}}>{{$cell}}</button>
     {{end}}
   </div>

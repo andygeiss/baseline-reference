@@ -2,6 +2,7 @@ package app
 
 import (
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	reference "github.com/andygeiss/baseline-reference"
 	"github.com/andygeiss/baseline-reference/internal/domain"
 	"github.com/andygeiss/baseline-reference/internal/store"
-	"io/fs"
 )
 
 type testApp struct {
@@ -35,8 +34,12 @@ func newTestApp(t *testing.T) *testApp {
 	if err != nil {
 		t.Fatalf("templates fs: %v", err)
 	}
+	staticFS, err := fs.Sub(reference.StaticFS, "web")
+	if err != nil {
+		t.Fatalf("static fs: %v", err)
+	}
 	games := store.NewGames(db)
-	a, err := New(slog.New(slog.DiscardHandler), games, templatesFS, fstest.MapFS{}, "test")
+	a, err := New(slog.New(slog.DiscardHandler), games, templatesFS, staticFS, "test")
 	if err != nil {
 		t.Fatalf("building app: %v", err)
 	}
@@ -89,6 +92,17 @@ func (ta *testApp) createGame(t *testing.T) *domain.Game {
 	return g
 }
 
+// play makes moves through the store, the way the handler does.
+func (ta *testApp) play(t *testing.T, id string, cells ...int) {
+	t.Helper()
+	for _, cell := range cells {
+		if _, err := ta.games.Update(t.Context(), id,
+			func(g *domain.Game) error { return g.Move(cell) }); err != nil {
+			t.Fatalf("seeding move %d: %v", cell, err)
+		}
+	}
+}
+
 var htmxHeaders = map[string]string{"HX-Request": "true"}
 
 func TestHome(t *testing.T) {
@@ -130,6 +144,9 @@ func TestGameShow(t *testing.T) {
 	}
 	if !strings.Contains(body, `id="board"`) || !strings.Contains(body, "X's turn") {
 		t.Error("game page missing board or turn status")
+	}
+	if !strings.Contains(body, `aria-label="Cell 1"`) || strings.Contains(body, `aria-label="Cell 0"`) {
+		t.Error("cells are labelled 1–9 for the player, not 0–8")
 	}
 
 	res, _ = ta.do(t, "GET", "/games/missing", nil, nil)
@@ -193,12 +210,7 @@ func TestMoveCreate_RuleViolations(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	g := ta.createGame(t)
-	if err := g.Move(4); err != nil {
-		t.Fatal(err)
-	}
-	if err := ta.games.Update(t.Context(), g); err != nil {
-		t.Fatal(err)
-	}
+	ta.play(t, g.ID, 4)
 
 	res, body := ta.do(t, "POST", "/games/"+g.ID+"/moves", url.Values{"cell": {"4"}}, htmxHeaders)
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "already taken") {
@@ -213,6 +225,64 @@ func TestMoveCreate_RuleViolations(t *testing.T) {
 	res, _ = ta.do(t, "POST", "/games/"+g.ID+"/moves", url.Values{"cell": {"11"}}, htmxHeaders)
 	if res.StatusCode != http.StatusBadRequest {
 		t.Errorf("out-of-range cell: status = %d, want 400", res.StatusCode)
+	}
+}
+
+func TestMoveCreate_FinishedGameRejectsMoves(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	g := ta.createGame(t)
+	ta.play(t, g.ID, 0, 3, 1, 4, 2) // X takes the top row
+
+	res, body := ta.do(t, "POST", "/games/"+g.ID+"/moves", url.Values{"cell": {"8"}}, htmxHeaders)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "game is over") {
+		t.Errorf("move after the win: status = %d, want 200 with message", res.StatusCode)
+	}
+	got, err := ta.games.Get(t.Context(), g.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Board[8] != domain.PlayerNone {
+		t.Error("move after the win was persisted")
+	}
+}
+
+// The status line lives outside the swapped board, in a live region the swap
+// leaves in place — so the fragment updates it out of band.
+func TestMoveCreate_FragmentUpdatesStatusOutOfBand(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	g := ta.createGame(t)
+
+	_, body := ta.do(t, "POST", "/games/"+g.ID+"/moves", url.Values{"cell": {"4"}}, htmxHeaders)
+	if !strings.Contains(body, `hx-swap-oob="innerHTML:#status"`) {
+		t.Error("fragment does not update the status region out of band")
+	}
+
+	_, page := ta.do(t, "GET", "/games/"+g.ID, nil, nil)
+	if !strings.Contains(page, `id="status"`) || !strings.Contains(page, `aria-live="polite"`) {
+		t.Error("page is missing the live status region the fragment targets")
+	}
+	if strings.Contains(page, "hx-swap-oob") {
+		t.Error("full page renders an out-of-band status: it would show twice")
+	}
+}
+
+func TestStaticAssets(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+
+	res, body := ta.do(t, "GET", "/static/css/app.css", nil, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "@layer") {
+		t.Fatalf("app.css: status = %d", res.StatusCode)
+	}
+	if cc := res.Header.Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q", cc)
+	}
+
+	res, _ = ta.do(t, "GET", "/static/css/", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("directory listing: status = %d, want 404", res.StatusCode)
 	}
 }
 

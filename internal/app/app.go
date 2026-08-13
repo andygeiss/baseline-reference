@@ -13,11 +13,13 @@ import (
 	"github.com/andygeiss/baseline-reference/internal/domain"
 )
 
-// GameStore is what the app needs from persistence (consumer-defined).
+// GameStore is what the app needs from persistence (consumer-defined). Update
+// takes the change as a function so the store can load, apply, and save inside
+// one transaction — the game rules stay in the domain either way.
 type GameStore interface {
 	Create(ctx context.Context, g *domain.Game) error
 	Get(ctx context.Context, id string) (*domain.Game, error)
-	Update(ctx context.Context, g *domain.Game) error
+	Update(ctx context.Context, id string, change func(*domain.Game) error) (*domain.Game, error)
 }
 
 type App struct {
@@ -36,7 +38,11 @@ func New(logger *slog.Logger, games GameStore, templatesFS, staticFS fs.FS, vers
 		staticFS:  staticFS,
 		version:   version,
 	}
-	funcs := template.FuncMap{"version": func() string { return version }}
+	funcs := template.FuncMap{
+		"version": func() string { return version },
+		// Board indices are 0-based; the labels a player hears are not.
+		"inc": func(i int) int { return i + 1 },
+	}
 	for _, page := range []string{"home.html", "game.html"} {
 		ts, err := template.New(page).Funcs(funcs).ParseFS(templatesFS, "layout.html", page)
 		if err != nil {

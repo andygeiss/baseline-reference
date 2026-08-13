@@ -2,7 +2,6 @@ package app
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"strconv"
@@ -21,7 +20,8 @@ func (a *App) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleGameCreate(w http.ResponseWriter, r *http.Request) {
-	g := domain.NewGame(newID())
+	// rand.Text: 128 unguessable bits, URL-safe, no encoding step.
+	g := domain.NewGame(rand.Text())
 	if err := a.games.Create(r.Context(), g); err != nil {
 		a.serverError(w, r, err)
 		return
@@ -43,51 +43,37 @@ func (a *App) handleGameShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleMoveCreate(w http.ResponseWriter, r *http.Request) {
-	g, err := a.games.Get(r.Context(), r.PathValue("id"))
-	if errors.Is(err, domain.ErrNotFound) {
-		a.clientError(w, r, http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-
 	cell, err := strconv.Atoi(r.PostFormValue("cell"))
 	if err != nil {
 		a.clientError(w, r, http.StatusBadRequest)
 		return
 	}
 
-	view := gameView{Game: g}
-	switch err := g.Move(cell); {
+	// The move happens inside the store's transaction; a rule violation comes
+	// back with the current game, which the response renders as the answer.
+	g, err := a.games.Update(r.Context(), r.PathValue("id"),
+		func(g *domain.Game) error { return g.Move(cell) })
+	var message string
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		a.clientError(w, r, http.StatusNotFound)
+		return
 	case errors.Is(err, domain.ErrInvalidCell):
 		a.clientError(w, r, http.StatusBadRequest)
 		return
 	case errors.Is(err, domain.ErrCellTaken):
-		view.Message = "That cell is already taken."
+		message = "That cell is already taken."
 	case errors.Is(err, domain.ErrGameOver):
-		view.Message = "The game is over — start a new one."
+		message = "The game is over — start a new one."
 	case err != nil:
 		a.serverError(w, r, err)
 		return
-	default:
-		if err := a.games.Update(r.Context(), g); err != nil {
-			a.serverError(w, r, err)
-			return
-		}
 	}
 
 	// htmx gets the board fragment; plain form posts follow POST→redirect→GET.
 	if isHTMX(r) {
-		a.render(w, r, http.StatusOK, "game.html", "board", view)
+		a.render(w, r, http.StatusOK, "game.html", "board-swap", gameView{Game: g, Message: message})
 		return
 	}
 	http.Redirect(w, r, "/games/"+g.ID, http.StatusSeeOther)
-}
-
-func newID() string {
-	b := make([]byte, 8)
-	rand.Read(b) // crypto/rand.Read never fails (panics on broken entropy)
-	return hex.EncodeToString(b)
 }

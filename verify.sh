@@ -52,6 +52,15 @@ fi
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 
+step "smoke: test ports are free"
+# Without this, a leftover server from an earlier run answers every gate below
+# and the gauntlet passes on the wrong binary.
+for P in "$PORT" "$OPS_PORT"; do
+    if curl -s -o /dev/null --max-time 2 "localhost:$P/"; then
+        fail "something is already listening on :$P — stop it, or set PORT/OPS_PORT"
+    fi
+done
+
 step "smoke test: booting server on :$PORT (ops :$OPS_PORT)"
 "$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -db "$WORKDIR/app.db" \
     >"$WORKDIR/server.log" 2>&1 &

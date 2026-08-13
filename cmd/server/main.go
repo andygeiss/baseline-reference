@@ -40,8 +40,8 @@ func run() error {
 	flag.StringVar(&cfg.opsPort, "ops-port", cmp.Or(os.Getenv("OPS_PORT"), "6060"), "ops listen port (localhost)")
 	flag.StringVar(&cfg.dbPath, "db", cmp.Or(os.Getenv("DATABASE_URL"), "app.db"), "SQLite file path")
 	flag.StringVar(&cfg.logLevel, "log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "debug|info|warn|error")
-	flag.StringVar(&cfg.env, "env", cmp.Or(os.Getenv("ENV"), "dev"), "dev|prod")
 	flag.Parse()
+	cfg.env = cmp.Or(os.Getenv("ENV"), "dev") // environment only, per the ops env contract
 
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.logLevel)); err != nil {

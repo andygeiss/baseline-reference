@@ -31,12 +31,51 @@ func (s *Games) Create(ctx context.Context, g *domain.Game) error {
 	return nil
 }
 
+const selectGame = `SELECT id, board, next, status, winner FROM games WHERE id = ?`
+
 func (s *Games) Get(ctx context.Context, id string) (*domain.Game, error) {
+	return scanGame(s.db.Read.QueryRowContext(ctx, selectGame, id), id)
+}
+
+// Update loads the game, applies change to it, and stores the result — all in
+// one write transaction. Read and write must be atomic: two clicks arriving
+// together would otherwise both read the same board, and the second write
+// would erase the first move. The write pool has a single connection, so these
+// transactions serialize instead of colliding.
+//
+// The game is returned even when change reports a rule violation: that is the
+// current board, which the caller renders back to the stale client.
+func (s *Games) Update(ctx context.Context, id string, change func(*domain.Game) error) (*domain.Game, error) {
+	tx, err := s.db.Write.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning update of game %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	g, err := scanGame(tx.QueryRowContext(ctx, selectGame, id), id)
+	if err != nil {
+		return nil, err
+	}
+	if err := change(g); err != nil {
+		return g, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE games SET board = ?, next = ?, status = ?, winner = ?, updated_at = ? WHERE id = ?`,
+		encodeBoard(g.Board), string(g.Next), string(g.Status), string(g.Winner),
+		time.Now().UTC().Format(time.RFC3339), id); err != nil {
+		return nil, fmt.Errorf("updating game %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing update of game %s: %w", id, err)
+	}
+	return g, nil
+}
+
+// scanGame reads one game row, translating "no rows" to the domain sentinel.
+func scanGame(row *sql.Row, id string) (*domain.Game, error) {
 	var g domain.Game
 	var board, next, status, winner string
-	err := s.db.Read.QueryRowContext(ctx,
-		`SELECT id, board, next, status, winner FROM games WHERE id = ?`, id).
-		Scan(&g.ID, &board, &next, &status, &winner)
+	err := row.Scan(&g.ID, &board, &next, &status, &winner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -51,24 +90,6 @@ func (s *Games) Get(ctx context.Context, id string) (*domain.Game, error) {
 	g.Status = domain.Status(status)
 	g.Winner = domain.Player(winner)
 	return &g, nil
-}
-
-func (s *Games) Update(ctx context.Context, g *domain.Game) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.Write.ExecContext(ctx,
-		`UPDATE games SET board = ?, next = ?, status = ?, winner = ?, updated_at = ? WHERE id = ?`,
-		encodeBoard(g.Board), string(g.Next), string(g.Status), string(g.Winner), now, g.ID)
-	if err != nil {
-		return fmt.Errorf("updating game %s: %w", g.ID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("updating game %s: %w", g.ID, err)
-	}
-	if n == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
 }
 
 // encodeBoard packs the board as 9 characters, '.' for empty.
