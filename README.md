@@ -50,6 +50,11 @@ Recorded per the baseline's rules:
   session-less apps.
 - **No backups/Litestream** (`patterns/go-sqlite.md` §Backups waived): throwaway demo
   data. Everything else in that document (pragmas, pools, migrations) is implemented.
+- **Never deployed** (`operations/web-application.md` and the checklist's Ship section
+  waived): this repo is an acceptance test, not a service. The binary holds up its end
+  of that contract — the env vars, `127.0.0.1` by default, `/healthz` with the version,
+  graceful shutdown — but there is no Caddy, no systemd unit, no `GOMEMLIMIT`, and no
+  previous binary to roll back to.
 - **Rule-violation moves return 200 with a message, not 422:** the 422 flow in the
   baseline targets *form validation*; a stale-board click is not invalid input — the
   response replaces the stale board with current truth. (htmx 2 also doesn't swap
