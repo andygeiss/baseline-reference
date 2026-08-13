@@ -5,7 +5,6 @@
   /* Margin trim by element list, never `* { margin: 0 }` — the universal trim
      strips the UA's `dialog { margin: auto }` centering (stack/css.md). */
   body, h1, h2, h3, p, figure, blockquote, dl, dd, ul, ol, form { margin: 0; }
-  button { font: inherit; }
 }
 
 @layer tokens {
@@ -80,6 +79,7 @@
   }
   button {
     cursor: pointer;
+    font: inherit; /* UA controls use a small system face and ignore the page's */
     /* An icon sits beside the label, centered with it (patterns/css-icons.md). */
     display: inline-flex;
     align-items: center;
