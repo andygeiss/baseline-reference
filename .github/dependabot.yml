@@ -1,0 +1,19 @@
+# Weekly grouped dependency updates, per the baseline's operations/ci.md.
+# Green CI is the merge criterion; major bumps of the pinned stack (Go, htmx)
+# go through the baseline's VERSIONS.md first, never auto-merged.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-dependencies:
+        patterns: ["*"]
