@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -265,6 +267,49 @@ func TestMoveCreate_FragmentUpdatesStatusOutOfBand(t *testing.T) {
 	}
 	if strings.Contains(page, "hx-swap-oob") {
 		t.Error("full page renders an out-of-band status: it would show twice")
+	}
+}
+
+// failingStore fails every call, so the handlers' unexpected-error path runs.
+// The message is a stand-in for the kind of internal detail a real driver error
+// carries — it must never reach the browser.
+type failingStore struct{}
+
+const storeFailure = "table games is locked"
+
+func (failingStore) Create(context.Context, *domain.Game) error { return errors.New(storeFailure) }
+
+func (failingStore) Get(context.Context, string) (*domain.Game, error) {
+	return nil, errors.New(storeFailure)
+}
+
+func (failingStore) Update(context.Context, string, func(*domain.Game) error) (*domain.Game, error) {
+	return nil, errors.New(storeFailure)
+}
+
+func TestHandlers_StoreFailureIs500WithoutTheDetail(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.App.games = failingStore{} // before the first request: no concurrent use
+
+	tests := []struct {
+		name, method, path string
+		form               url.Values
+	}{
+		{"create", "POST", "/games", url.Values{}},
+		{"show", "GET", "/games/testgame", nil},
+		{"move", "POST", "/games/testgame/moves", url.Values{"cell": {"0"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, body := ta.do(t, tt.method, tt.path, tt.form, nil)
+			if res.StatusCode != http.StatusInternalServerError {
+				t.Errorf("status = %d, want 500", res.StatusCode)
+			}
+			if strings.Contains(body, storeFailure) {
+				t.Errorf("response leaks the internal error: %q", body)
+			}
+		})
 	}
 }
 
