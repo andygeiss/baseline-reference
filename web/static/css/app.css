@@ -219,9 +219,10 @@
       aspect-ratio: 1;
       font-size: clamp(1.5rem, 0.5rem + 5vw, 2.5rem); /* rem term: WCAG 1.4.4 */
       font-weight: 700;
+      /* The grid sizes the square; the button's text padding would only set a
+         min-content floor that overflows three columns at large text sizes. */
+      padding: 0;
 
-      /* Hover eases via the base-layer button transition — no rule here. */
-      &:hover:not(:disabled) { background: var(--color-bg); }
       &:disabled { border-color: var(--color-border); opacity: 1; }
     }
 
