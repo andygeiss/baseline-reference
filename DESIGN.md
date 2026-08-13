@@ -57,7 +57,9 @@ invent one when it is missing. `surface` is the resting fill of buttons and
 board cells. `error` is reserved for validation failures; the game
 currently renders none — a rule-breaking move comes back as `text-muted`
 advice, not an error. Hover feedback swaps roles at the use site — a
-hovered cell trades `surface` for `bg` — never extra shade tokens.
+hovered button trades `surface` for `bg`. The primary button's fill hides
+that ground, so it mixes toward `text` with `color-mix()` instead. Neither
+adds a shade token.
 
 The manifest's `background_color`/`theme_color` and the two `theme-color`
 metas are `bg` converted to sRGB (`#fbfcfd` light, `#0f1216` dark) — those
@@ -68,9 +70,12 @@ carries its own blue, `oklch(55% 0.18 255)` = `#026fd7`: brighter than
 theme; it changes only when the mark is redrawn. The maskable and Apple icons
 are padded with light `bg` (`#fbfcfd`): both platforms need an opaque square.
 
-Measured contrast (2026-08-12): every text role on both backgrounds ≥ 6.6:1
+Measured contrast (2026-08-13): every text role on both backgrounds ≥ 6.6:1
 in both schemes; `border` on both backgrounds ≥ 3.2:1; the primary button
-≥ 7.4:1. After any color change, re-measure and update these numbers.
+≥ 7.4:1 at rest and ≥ 8.5:1 hovered — its mix moves the fill away from the
+label, never toward it. A plain button hovers to `bg`, already one of the
+two measured backgrounds. After any color change, re-measure and update
+these numbers.
 
 ## Typography
 
@@ -106,7 +111,8 @@ Every component composes the roles above, and every interactive state
 
 - **Button** — primary actions use the `button` composite above: `accent`
   background, `bg` text. Secondary actions are plain buttons: `surface`
-  fill inside a `border` boundary.
+  fill inside a `border` boundary. Every button answers a hover, sinks
+  `1px` while pressed, and shows an `accent` focus ring.
 - **Board** — nine square cell buttons in a three-column grid. The mark
   inside a cell is the second fluid size in the app,
   `clamp(1.5rem, 0.5rem + 5vw, 2.5rem)`. A taken or finished cell is

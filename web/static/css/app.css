@@ -91,6 +91,10 @@
     color: var(--color-text);
     padding: var(--space-sm) var(--space);
 
+    /* The four interactive states (stack/css.md rule 4). Hover swaps ground
+       roles and the press nudges the control — neither needs a shade token. */
+    &:hover:not(:disabled) { background: var(--color-bg); }
+    &:active:not(:disabled) { translate: 0 1px; }
     &:focus-visible {
       outline: 2px solid var(--color-accent);
       outline-offset: 2px;
@@ -130,6 +134,8 @@
       color: inherit;
       font-weight: 600;
       text-decoration: none;
+
+      &:hover { text-decoration: underline; }
     }
   }
   main {
@@ -184,6 +190,14 @@
     border-color: var(--color-accent);
     color: var(--color-bg);
     font-weight: 600;
+
+    /* The base hover swaps in a ground role this fill would hide, so the
+       primary mixes its own fill instead (patterns/css-tokens.md rule 5).
+       Toward text is toward more contrast with the label, in both schemes. */
+    &:hover:not(:disabled) {
+      background: color-mix(in oklch, var(--color-accent), var(--color-text) 15%);
+      border-color: color-mix(in oklch, var(--color-accent), var(--color-text) 15%);
+    }
   }
 
   /* Reserved height: the line grows a message without shifting the board. */
