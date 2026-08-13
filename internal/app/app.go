@@ -27,16 +27,17 @@ type App struct {
 	games     GameStore
 	templates map[string]*template.Template
 	staticFS  fs.FS
-	version   string
 }
 
+// New parses the page templates once, failing the boot on any error. version is
+// the asset cache-buster: it reaches the pages as a template function, so no
+// handler has to carry it in its view data.
 func New(logger *slog.Logger, games GameStore, templatesFS, staticFS fs.FS, version string) (*App, error) {
 	a := &App{
 		logger:    logger,
 		games:     games,
 		templates: make(map[string]*template.Template),
 		staticFS:  staticFS,
-		version:   version,
 	}
 	funcs := template.FuncMap{
 		"version": func() string { return version },
