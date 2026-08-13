@@ -69,6 +69,19 @@ curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/" | grep -q "Start a new game" 
 grep -qi "content-security-policy: default-src 'self'; frame-ancestors 'none'" "$WORKDIR/headers" || fail "CSP header"
 grep -qi "strict-transport-security" "$WORKDIR/headers" || fail "HSTS header"
 
+step "smoke: install manifest linked, served as application/manifest+json"
+curl -fsS "localhost:$PORT/" | grep -q 'rel="manifest"' || fail "manifest not linked from layout"
+curl -fsS -D "$WORKDIR/mheaders" "localhost:$PORT/static/manifest.webmanifest" \
+    | grep -q '"start_url": "/"' || fail "manifest body"
+# Go's built-in mime table has no .webmanifest entry and the Unix mime files it
+# merges vary by host: this gate proves main.go's AddExtensionType is doing it.
+grep -qi "content-type: application/manifest+json" "$WORKDIR/mheaders" || fail "manifest content-type"
+
+step "smoke: install icons served"
+for ICON in icon-192.png icon-512.png icon-512-maskable.png apple-touch-icon.png; do
+    curl -fsS -o /dev/null "localhost:$PORT/static/$ICON" || fail "icon missing: $ICON"
+done
+
 step "smoke: plain form flow (create game -> 303 -> page)"
 GAME_URL="$(curl -fsS -o /dev/null -w '%{redirect_url}' -X POST "localhost:$PORT/games")"
 case "$GAME_URL" in */games/*) ;; *) fail "create redirect: $GAME_URL";; esac

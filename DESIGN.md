@@ -59,6 +59,12 @@ currently renders none — a rule-breaking move comes back as `text-muted`
 advice, not an error. Hover feedback swaps roles at the use site — a
 hovered cell trades `surface` for `bg` — never extra shade tokens.
 
+Two sets of static values are conversions of these tokens and change with
+them in the same commit: the manifest's `background_color`/`theme_color` and
+the two `theme-color` metas are sRGB `bg` (`#fbfcfd` light, `#0f1216` dark),
+and the install icons are exported from `favicon.svg` with `accent` as sRGB
+`#026fd7` — the exporter cannot read `oklch()`.
+
 Measured contrast (2026-08-12): every text role on both backgrounds ≥ 6.6:1
 in both schemes; `border` on both backgrounds ≥ 3.2:1; the primary button
 ≥ 7.4:1. After any color change, re-measure and update these numbers.

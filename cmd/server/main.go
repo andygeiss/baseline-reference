@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -70,6 +71,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("static fs: %w", err)
 	}
+
+	// Go's built-in mime table lacks .webmanifest, and the system mime files it
+	// merges on Unix vary by host — without this line, so does the served type.
+	// The error is impossible for these valid literals.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
 
 	ver := version() // read once at boot; the ops handler and the asset cache-buster share it
 

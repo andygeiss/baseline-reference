@@ -17,7 +17,8 @@ as a server-rendered web application, built strictly per the baseline's
 Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
 only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
 grid layout, oklch, media-query dark mode, motion-as-feedback with view-transition
-swaps) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) ·
+swaps) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool) · installable
+(web app manifest + four icons, no service worker) ·
 single static binary with all assets embedded.
 
 ## Run
