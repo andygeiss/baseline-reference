@@ -3,7 +3,7 @@ module github.com/andygeiss/baseline-reference
 go 1.26
 
 require (
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	modernc.org/sqlite v1.56.0
 )
 
