@@ -34,6 +34,10 @@ make check                     # default target: every CI gate, gate-for-gate
 ./verify.sh                    # full acceptance gauntlet
 ```
 
+`make run` sources a `.env` when one is present (`stack/makefile.md` rule 6). This
+app needs no secret, so the file is optional here and gitignored; `make check` and
+`make test` ignore it on purpose, because a gate must not depend on one machine.
+
 Configuration: `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, and `LOG_LEVEL` are flags
 with env-var defaults (the flag wins); `ENV` is read from the environment only.
 `server -h` prints the whole contract, including the environment-only variables.

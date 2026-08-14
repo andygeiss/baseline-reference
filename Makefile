@@ -22,8 +22,11 @@ check:
 test:
 	go test -race -shuffle=on ./...
 
+# Loads .env when it is there, so a local start is one command. Only run:
+# check and test MUST NOT depend on a developer's machine (rule 6). One shell
+# line, because each recipe line gets its own shell.
 run:
-	go run $(MAIN)
+	set -a; if [ -f .env ]; then . ./.env; fi; set +a; go run $(MAIN)
 
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
