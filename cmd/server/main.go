@@ -2,8 +2,8 @@
 package main
 
 import (
-	"cmp"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -25,31 +25,30 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	// Config is parsed and validated before anything opens a file or binds a
+	// port: a bad value costs one line on stderr, not a half-started process.
+	cfg, err := parseConfig(os.Args[1:], os.Stderr)
+	switch {
+	case err == nil:
+	case errors.Is(err, flag.ErrHelp):
+		return // -h: usage already printed, exit 0
+	case errors.Is(err, errUsage):
+		os.Exit(2) // the FlagSet already said what was wrong
+	default:
+		fmt.Fprintf(os.Stderr, "server: %v\n", err)
+		os.Exit(2)
+	}
+
+	if err := run(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	var cfg struct {
-		host, port, opsPort, dbPath, logLevel, env string
-	}
-	flag.StringVar(&cfg.host, "host", cmp.Or(os.Getenv("HOST"), "127.0.0.1"), "bind address (the proxy is the public listener)")
-	flag.StringVar(&cfg.port, "port", cmp.Or(os.Getenv("PORT"), "8080"), "app listen port")
-	flag.StringVar(&cfg.opsPort, "ops-port", cmp.Or(os.Getenv("OPS_PORT"), "6060"), "ops listen port (localhost)")
-	flag.StringVar(&cfg.dbPath, "db", cmp.Or(os.Getenv("DATABASE_URL"), "app.db"), "SQLite file path")
-	flag.StringVar(&cfg.logLevel, "log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "debug|info|warn|error")
-	flag.Parse()
-	cfg.env = cmp.Or(os.Getenv("ENV"), "dev") // environment only, per the ops env contract
-
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(cfg.logLevel)); err != nil {
-		return fmt.Errorf("parsing log level: %w", err)
-	}
-	opts := &slog.HandlerOptions{Level: level}
+func run(cfg Config) error {
+	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
 	var handler slog.Handler = slog.NewTextHandler(os.Stdout, opts)
-	if cfg.env == "prod" {
+	if cfg.Env == "prod" {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
 	logger := slog.New(handler)
@@ -57,7 +56,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := store.Open(ctx, cfg.dbPath)
+	db, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -85,7 +84,7 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Addr:              net.JoinHostPort(cfg.host, cfg.port),
+		Addr:              net.JoinHostPort(cfg.Host, cfg.Port),
 		Handler:           a.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -94,7 +93,7 @@ func run() error {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 	opsSrv := &http.Server{
-		Addr:              net.JoinHostPort("127.0.0.1", cfg.opsPort),
+		Addr:              net.JoinHostPort("127.0.0.1", cfg.OpsPort),
 		Handler:           app.OpsHandler(db.Read, ver),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -112,7 +111,7 @@ func run() error {
 	g.Go(func() error { return serve(gctx, srv) })
 	g.Go(func() error { return serve(gctx, opsSrv) })
 	g.Go(func() error { <-gctx.Done(); logger.Info("shutting down"); return nil })
-	logger.Info("started", "addr", srv.Addr, "ops", opsSrv.Addr, "version", ver, "env", cfg.env)
+	logger.Info("started", "version", ver, "config", cfg)
 	return g.Wait()
 }
 
