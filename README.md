@@ -36,6 +36,9 @@ make check                     # default target: every CI gate, gate-for-gate
 
 Configuration: `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, and `LOG_LEVEL` are flags
 with env-var defaults (the flag wins); `ENV` is read from the environment only.
+`server -h` prints the whole contract, including the environment-only variables.
+The `Config` struct and its parser live in `cmd/server/config.go`, validated
+before anything binds a port or opens a file — `patterns/go-config.md`.
 
 ## Baseline deviations
 
@@ -69,6 +72,15 @@ Recorded per the baseline's rules:
   control here. The scale's rules still hold: no root `font-size`, no size tokens,
   and a `rem` term in every `clamp()`, which verify.sh gates. No web font: the
   system stack is the pattern's default answer, not a waiver.
+- **No outbound HTTP** (`patterns/go-http-client.md` not exercised): the app calls
+  no external API, so nothing here builds an `http.Client`. The pattern is
+  unexercised rather than waived — the first feature that needs a third-party call
+  adopts it whole.
+- **No secrets** (`patterns/go-config.md` §Secrets not exercised): nothing in this
+  app needs a credential, so there is no `LoadCredential` and no
+  `$CREDENTIALS_DIRECTORY` read. `Config.LogValue` is implemented anyway, listing
+  every field — the allowlist shape is what keeps a future secret out of the logs
+  by default.
 - **No `<dialog>` in the UI** (`patterns/css-motion.md` dialog entry not exercised):
   the game has no modal. The rest of the pattern is implemented — motion tokens,
   base-layer state transitions, the indicator fade with its 100 ms entry delay,
