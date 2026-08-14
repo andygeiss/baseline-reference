@@ -70,6 +70,19 @@ BAD="$(grep -c -- "--icon:.*#" web/static/css/app.css || true)"
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 
+step "config: an invalid value is refused before anything is created"
+# The baseline's go-config.md rule: parse and validate first, so a bad value
+# costs one line on stderr instead of a half-started process. The database
+# assertion is the part with teeth — it fails if validation drifts below the
+# call to store.Open.
+set +e
+"$WORKDIR/server" -port 99999 -database-url "$WORKDIR/never.db" >"$WORKDIR/badcfg.log" 2>&1
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "invalid port: exit $CODE, want 2"
+grep -q "want a number from 0 to 65535" "$WORKDIR/badcfg.log" || fail "invalid port: no usable message"
+[ ! -e "$WORKDIR/never.db" ] || fail "database created despite invalid config"
+
 step "smoke: test ports are free"
 # Without this, a leftover server from an earlier run answers every gate below
 # and the gauntlet passes on the wrong binary.
@@ -80,7 +93,7 @@ for P in "$PORT" "$OPS_PORT"; do
 done
 
 step "smoke test: booting server on :$PORT (ops :$OPS_PORT)"
-"$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -db "$WORKDIR/app.db" \
+"$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -database-url "$WORKDIR/app.db" \
     >"$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -94,9 +107,13 @@ curl -fsS "localhost:$OPS_PORT/healthz" | grep -q '"status":"ok"' || fail "healt
 step "smoke: home page with CSP header"
 curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/" | grep -q "Start a new game" || fail "home body"
 # img-src must keep data:, or the browser blocks every mask icon in app.css.
-grep -qi "content-security-policy: default-src 'self'; img-src 'self' data:; frame-ancestors 'none'" \
+# base-uri and form-action have no default-src fallback, so dropping either is
+# silent: the page keeps working and the protection is simply gone.
+grep -qi "content-security-policy: default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" \
     "$WORKDIR/headers" || fail "CSP header"
 grep -qi "strict-transport-security" "$WORKDIR/headers" || fail "HSTS header"
+grep -qi "x-content-type-options: nosniff" "$WORKDIR/headers" || fail "nosniff header"
+grep -qi "referrer-policy: same-origin" "$WORKDIR/headers" || fail "Referrer-Policy header"
 
 step "smoke: install manifest linked, served as application/manifest+json"
 curl -fsS "localhost:$PORT/" | grep -q 'rel="manifest"' || fail "manifest not linked from layout"
@@ -132,7 +149,7 @@ CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GAME_URL/moves" \
 
 step "smoke: state survives restart"
 kill -TERM "$SERVER_PID" && wait "$SERVER_PID" 2>/dev/null || true
-"$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -db "$WORKDIR/app.db" \
+"$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -database-url "$WORKDIR/app.db" \
     >>"$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
