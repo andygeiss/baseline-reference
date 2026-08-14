@@ -75,7 +75,11 @@ Recorded per the baseline's rules:
 - **No outbound HTTP** (`patterns/go-http-client.md` not exercised): the app calls
   no external API, so nothing here builds an `http.Client`. The pattern is
   unexercised rather than waived — the first feature that needs a third-party call
-  adopts it whole.
+  adopts it whole. **This is the acceptance test's one real coverage hole**, and
+  v1.14.2 fixed a genuine bug in that pattern (a retry that resent an unreplayable
+  body as an empty one) which this repo could not have caught. That fix was verified
+  by compiling the pattern's snippet standalone against an `httptest.Server`; until
+  some reference app makes an outbound call, go-http-client has no continuous gate.
 - **No secrets** (`patterns/go-config.md` §Secrets not exercised): nothing in this
   app needs a credential, so there is no `LoadCredential` and no
   `$CREDENTIALS_DIRECTORY` read. `Config.LogValue` is implemented anyway, listing
@@ -87,18 +91,29 @@ Recorded per the baseline's rules:
   view-transition swaps (board moves opt out as rapid-fire controls), and the
   reduced-motion kill switch.
 
+## Fed back into the baseline
+
+Findings from this repo that the baseline has since adopted — the reproduction
+protocol working as intended. Kept as a record; none of them is a deviation anymore.
+
+- **`img-src 'self' data:` in the CSP** → baseline v1.14.0. Mask icons are data URIs
+  and a CSS image is an image request, so `default-src 'self'` alone made Chrome
+  refuse every mask. The directive now lives in `patterns/security-headers.md`, which
+  owns the whole policy, and the checklist gates it.
+- **`fs.Usage` naming the environment-only variables** → baseline v1.14.2. `ENV` is
+  read from the environment and appears in no flag's help text, so `-h` was a partial
+  contract until the usage function named it. `patterns/go-config.md` rule 5 always
+  required this; its canonical snippet did not implement it.
+- **Exit 2 for a configuration error** → baseline v1.14.2. `cmd/server/main.go` exits
+  2 on any `parseConfig` failure, where `patterns/go-cli.md`'s `default` branch exits
+  1. The baseline now states the divergence and why a config error is always a usage
+  error rather than presenting the two switches as identical.
+
 ## Beyond the baseline
 
-Five things this implementation adds that the baseline does not spell out. Each is a
+Four things this implementation adds that the baseline does not spell out. Each is a
 candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.md).
 
-- **The CSP carries `img-src 'self' data:`** (`internal/app/middleware.go`). Without
-  it no icon paints. Mask icons are data URIs, a CSS image is an image request, and
-  `'self'` never matches `data:`, so the baseline's exact header (`default-src
-  'self'; frame-ancestors 'none'`) makes Chrome refuse the mask: *"Loading the image
-  'data:image/svg+xml,…' violates the following Content Security Policy directive.
-  The action has been blocked."* `patterns/css-icons.md` and the checklist's CSP line
-  both need this directive.
 - **A move is one write transaction** (`internal/store/games.go`). The pattern's
   handler reads the game, applies the rule, then saves it. Two clicks that arrive
   together read the same board, and the second save erases the first move — it
