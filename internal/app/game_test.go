@@ -116,12 +116,8 @@ func TestHome(t *testing.T) {
 	if !strings.Contains(body, "<html") || !strings.Contains(body, "Start a new game") {
 		t.Error("home page missing document or new-game form")
 	}
-	if csp := res.Header.Get("Content-Security-Policy"); csp != "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'" {
-		t.Errorf("CSP = %q", csp)
-	}
-	if res.Header.Get("Strict-Transport-Security") == "" {
-		t.Error("missing Strict-Transport-Security header")
-	}
+	// The security headers are asserted once, in TestSecureHeaders — the same
+	// single-owner rule the baseline applies to the policy itself.
 }
 
 func TestGameCreate_RedirectsToGame(t *testing.T) {
