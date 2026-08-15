@@ -46,15 +46,19 @@ before anything binds a port or opens a file — `patterns/go-config.md`.
 
 ## Baseline deviations
 
-Recorded per the baseline's rules:
+Recorded per the baseline's rules. Entries marked **waived** carry the six fields the
+baseline's *Which rules can be waived* requires — rule, document, date, decider, why,
+and what contains it. The rest are conformance notes and unexercised patterns, labelled
+as such: a reader hunting for gaps counts every bullet here, so each one says which it
+is.
 
-- **No auth/sessions** (`patterns/go-auth-sessions.md` skipped): the app has no user
-  accounts, so there is **one list, shared by everyone who opens the page**. That is
-  honest for an acceptance test and wrong for a real todo app — the first feature
-  that needs a private list adopts the whole pattern.
-- **No flash messages** (`patterns/go-forms-validation.md` §Flash skipped): flash
-  requires sessions (skipped above), so results render on the target page, as that
-  pattern prescribes for session-less apps. One consequence: with htmx switched off,
+- **No auth/sessions** (`patterns/go-auth-sessions.md`) — waived 2026-08-10 by Andy.
+  The app has no user accounts, so there is **one list, shared by everyone who opens
+  the page**. That is honest for an acceptance test and wrong for a real todo app —
+  the first feature that needs a private list adopts the whole pattern.
+- **No flash messages** (`patterns/go-forms-validation.md` §Flash) — waived 2026-08-15
+  by Andy. Flash requires sessions (waived above), so results render on the target
+  page, as that pattern prescribes for session-less apps. One consequence: with htmx switched off,
   "That task is gone." is lost across the redirect, and the reader sees only the
   healed list. The rest of the pattern — the validator, the 422 re-render with the
   submitted value kept, `HX-Push-Url: false` on a boosted 422 — is implemented.
@@ -65,8 +69,9 @@ Recorded per the baseline's rules:
   mechanism is nothing and the obligation is to record the decision here, which this
   bullet is. Everything else in that document (pragmas, pools, migrations) is
   implemented.
-- **Never deployed** (`operations/web-application.md` and the checklist's Ship section
-  waived): this repo is an acceptance test, not a service. The binary holds up its end
+- **Never deployed** (`operations/web-application.md`, and the checklist's Ship
+  section) — waived 2026-08-13 by Andy. This repo is an acceptance test, not a
+  service. The binary holds up its end
   of that contract — the env vars, `127.0.0.1` by default, `/healthz` with the version,
   graceful shutdown — and `verify.sh` gates every one of them. The deployment's end is
   absent on purpose: no image, no compose file, no Caddy, no `GOMEMLIMIT`, and no
@@ -75,15 +80,17 @@ Recorded per the baseline's rules:
   stopped carrying copies of its templates when the baseline split operations out. A
   copy that nothing builds only drifts, which is exactly what the `Dockerfile` here had
   done; baseline-ops builds its own template against a checkout of this repo instead.
-- **Acting on a task that is gone returns 200 with a message, not 404:** ticking off
+- **Acting on a task that is gone returns 200 with a message, not 404** — a design
+  decision, not a waiver: no baseline rule asks for 404 here. Ticking off
   or deleting a task another tab already removed is a stale list, not a bad request —
   the response replaces the stale list with current truth and says what happened. The
   422 flow is reserved for what it targets, *form validation*, and the add form uses
   it. (htmx 2 also doesn't swap 4xx responses by default.)
-- **`OPS_PORT` is a config var**, though `patterns/go-http-server.md` pins the ops
-  listener to `127.0.0.1:6060` ("fixed, not a flag"): the port is configurable so
-  `verify.sh` can boot test instances beside a running dev server. The bind address
-  stays hardcoded to localhost.
+- **`OPS_PORT` is a config var** (`patterns/go-http-server.md`, which pins the ops
+  listener to `127.0.0.1:6060` — "fixed, not a flag") — waived 2026-08-10 by Andy.
+  The port is configurable so `verify.sh` can boot test instances beside a running dev
+  server. The bind address stays hardcoded to localhost, so the listener is still
+  unreachable from off the box.
 - **Only the part of the type scale the app renders** (`patterns/css-typography.md`):
   the UI has one heading level and no `<small>`, code, or tables, so `app.css`
   carries the `h1` step alone. `font: inherit` sits on `button` and on the one text

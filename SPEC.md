@@ -8,8 +8,8 @@ working, production-grade web application?*
 ## Baseline pin
 
 Built against baseline commit
-**`6f8750e`** — tag **v3.0.1**, the operations split of 2026-08-15 plus the
-version-stamp rule this repository's own tagging turned up.
+**`baf691d`** — tag **v3.1.0**, the governance release of 2026-08-15: the tag gate,
+the rule tiers, and the 90-day staleness switch.
 
 The app under test is a mobile-first todo app (v2.0.0 swapped it in for
 tic-tac-toe). It is small on purpose, and it exercises more of the baseline than
@@ -61,9 +61,9 @@ if the module path carries the major version. It did not: on its first v3 tag,
 this repository built a binary reporting
 `v1.17.1-0.20260815164832-b67cd862f0fb`. The
 module path is now `github.com/andygeiss/baseline-reference/v3`, the stamp is the
-tag again, and the rule became **baseline v3.0.1** — which is what this pin now
-names. The reproduction protocol working end to end: the acceptance test hit a
-promise the baseline could not keep, and the baseline changed.
+tag again, and the rule became **baseline v3.0.1**. The reproduction protocol
+working end to end: the acceptance test hit a promise the baseline could not
+keep, and the baseline changed.
 
 **On the tag itself.** This repository's tag mirrors the baseline version it was
 built against, so the sync that produced baseline v3.0.1 is released here as
@@ -71,6 +71,23 @@ v3.0.1 — not v3.0.0, which was cut before the stamp was fixed and has been
 withdrawn. Rewriting a published tag is only acceptable because nothing imports
 this repository and the tags were hours old; a library would have carried the bad
 release forever and added a patch on top instead.
+
+v3.1.0 changed no rule this app implements — it added the release gate, the rule
+tiers, and a 90-day staleness switch — so no Go, CSS, or template line moved in
+this sync. What did move is the README's deviations section. The baseline now
+requires six fields on a waived rule (rule, document, date, decider, why, what
+contains it), and the five real waivers here carried everything but the date and
+the decider; those came out of `git log -S`. Three bullets that were never
+waivers — no backups, no outbound HTTP, the partial type scale — now say so
+plainly, because a reader hunting for gaps counts every bullet in that section.
+
+**Found by this sync, fixed in the baseline before the tag:** the waiver format
+first mandated the heading `## Waived baseline rules`. This repository's section
+holds waivers and conformance notes together, so that heading would have
+relabelled "this app needs no backups" as a waived rule. The baseline now
+requires the fields and lets the heading fit the list. The first release under
+the new gate found a defect in that release — which is the gate working, one
+sync earlier than the two runs that shipped without it.
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a
