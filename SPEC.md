@@ -7,8 +7,14 @@ working, production-grade web application?*
 
 ## Baseline pin
 
-Built against baseline **v1.15.0** — commit
-**`637cfa1eef0dae09a56706b2e818df938f3bf099`** (2026-08-14).
+Built against baseline **v1.16.0** — commit
+**`3774d12e3edd4cd3d53fd423b0c0077f3349bff7`** (2026-08-15).
+
+v1.16.0's one addition — the bottom-navigation rule in `patterns/css-layout.md` —
+is the rare rule this test cannot exercise: tic-tac-toe has two routes and a text
+wordmark in the header, and a five-destination tab bar here would be a feature
+invented to satisfy a document. The gate re-ran green against the new pin; the
+rule's first real user is [lysk](https://github.com/andygeiss/lysk).
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a
