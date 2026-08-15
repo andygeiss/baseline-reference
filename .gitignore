@@ -1,6 +1,8 @@
 /server
 /bin/
 .env
+.token
+*.token
 *.db
 *.db-wal
 *.db-shm
