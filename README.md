@@ -63,8 +63,13 @@ Recorded per the baseline's rules:
 - **Never deployed** (`operations/web-application.md` and the checklist's Ship section
   waived): this repo is an acceptance test, not a service. The binary holds up its end
   of that contract — the env vars, `127.0.0.1` by default, `/healthz` with the version,
-  graceful shutdown — but there is no Caddy, no systemd unit, no `GOMEMLIMIT`, and no
-  previous binary to roll back to.
+  graceful shutdown — and `verify.sh` gates every one of them. The deployment's end is
+  absent on purpose: no image, no compose file, no Caddy, no `GOMEMLIMIT`, and no
+  previous version to roll back to. Those belong to the operations repository,
+  [baseline-ops](https://github.com/andygeiss/baseline-ops), and this repository
+  stopped carrying copies of its templates when the baseline split operations out. A
+  copy that nothing builds only drifts, which is exactly what the `Dockerfile` here had
+  done; baseline-ops builds its own template against a checkout of this repo instead.
 - **Acting on a task that is gone returns 200 with a message, not 404:** ticking off
   or deleting a task another tab already removed is a stale list, not a bad request —
   the response replaces the stale list with current truth and says what happened. The

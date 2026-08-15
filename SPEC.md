@@ -8,7 +8,7 @@ working, production-grade web application?*
 ## Baseline pin
 
 Built against baseline commit
-**`8c492e8`** — tag **v2.0.1**, the full-corpus sweep of 2026-08-15.
+**`e5b978e`** — tag **v3.0.0**, the operations split of 2026-08-15.
 
 The app under test is a mobile-first todo app (v2.0.0 swapped it in for
 tic-tac-toe). It is small on purpose, and it exercises more of the baseline than
@@ -24,6 +24,25 @@ reader in `patterns/go-cli.md` — instead of hand-assembling `vcs.revision`. Th
 sweep's remaining fixes are about rules this app does not use (Caddy,
 bottom navigation, the two-pool snippet this repo already had right) or about
 wording, which `DESIGN.md` picked up.
+
+v2.1.0 added `patterns/go-ports-adapters.md` and changed nothing here: the
+`TaskStore` port in `internal/app/app.go` was already consumer-defined, in domain
+words, at four methods. The pattern's real subject — an adapter for *somebody
+else's* system — is unexercised for the same reason `go-http-client.md` is, and
+the README records that hole.
+
+v3.0.0 moved servers, runbooks, and the container templates into
+[baseline-ops](https://github.com/andygeiss/baseline-ops), leaving the baseline
+with the deployment *contract* alone. This sync applies the split to this
+repository: the binary's side of that contract stays and stays gated, and the
+deployment's side is gone — `Dockerfile`, `.dockerignore`, and the
+`release.yml` that pushed an image to GHCR and deployed it over SSH. That
+workflow contradicted the operations repository it was meant to serve, which
+sanctions no registry and no CD pipeline for a web application; it named deploy
+secrets this repository does not have; and it targeted a server this repository
+is never on. The templates it duplicated are verified where they are owned:
+baseline-ops builds its own `templates/Dockerfile` against a checkout of this
+repository.
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a
