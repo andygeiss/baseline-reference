@@ -7,13 +7,14 @@ working, production-grade web application?*
 
 ## Baseline pin
 
-Built against baseline **v1.16.0** — commit
-**`3774d12e3edd4cd3d53fd423b0c0077f3349bff7`** (2026-08-15).
+Built against baseline **v1.17.0** — commit
+**`804418e1b484739a2be15e86e1074ac0af63f263`** (2026-08-15).
 
-v1.16.0's one addition — the bottom-navigation rule in `patterns/css-layout.md` —
-is the rare rule this test cannot exercise: tic-tac-toe has two routes and a text
-wordmark in the header, and a five-destination tab bar here would be a feature
-invented to satisfy a document. The gate re-ran green against the new pin; the
+v1.17.0's one addition — rule 6 of `patterns/design-system.md`, on deriving what a
+design tool receives — is the second rule in a row this test cannot exercise: this
+repo uploads its theme to no design tool, so there is no upload here to derive, and
+a sync script added anyway would be a build step invented to satisfy a document.
+The gate re-ran green against the new pin. As with v1.16.0's bottom navigation, the
 rule's first real user is [lysk](https://github.com/andygeiss/lysk).
 
 When the baseline changes materially, re-run this test (see protocol below) and update
