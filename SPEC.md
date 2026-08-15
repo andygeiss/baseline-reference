@@ -44,6 +44,21 @@ is never on. The templates it duplicated are verified where they are owned:
 baseline-ops builds its own `templates/Dockerfile` against a checkout of this
 repository.
 
+The same release rewrote ten pattern documents to stop naming one runtime, and
+two of those reach the code. `cmd/server/config.go` no longer says the unit file
+sets `ENV`; the deployment does. And `go-sqlite.md` §Backups became a question
+with three legitimate answers rather than a choice of two mechanisms, so this
+app's throwaway data is now the first row rather than a waiver — the README
+records the decision, which is what that row asks for. Everything else in the
+ten was wording this repository never copied: `cfg.Env` already picked the log
+handler, `LogLevel` was already a `slog.Level`, and the `host` flag already
+called the proxy the public listener.
+
+**Found by this sync, and open in the baseline:** §Version stamping promises
+`info.Main.Version` is the tag when HEAD sits on one. It is not, past v2 — see
+the README deviation. This repository is tagged v3.0.0 and the binary it builds
+says `v1.17.1-0.…`.
+
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a
 newer baseline commit fails, the baseline regressed — not this repo.

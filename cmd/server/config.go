@@ -50,7 +50,7 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 		return Config{}, errUsage // fs already printed the message and the usage
 	}
 
-	c.Env = cmp.Or(os.Getenv("ENV"), "dev") // not a flag: the unit file sets it
+	c.Env = cmp.Or(os.Getenv("ENV"), "dev") // not a flag: the deployment sets it, never a command line
 
 	if err := c.LogLevel.UnmarshalText([]byte(*level)); err != nil {
 		return Config{}, fmt.Errorf("log-level %q: want debug, info, warn, or error", *level)

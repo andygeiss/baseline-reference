@@ -58,8 +58,13 @@ Recorded per the baseline's rules:
   "That task is gone." is lost across the redirect, and the reader sees only the
   healed list. The rest of the pattern — the validator, the 422 re-render with the
   submitted value kept, `HX-Push-Url: false` on a boosted 422 — is implemented.
-- **No backups/Litestream** (`patterns/go-sqlite.md` §Backups waived): throwaway demo
-  data. Everything else in that document (pragmas, pools, migrations) is implemented.
+- **No backups** — and since baseline v3.0.0 that is conformance, not a waiver.
+  `patterns/go-sqlite.md` §Backups now asks one question, *if the server disappears
+  right now, what have you lost?*, and offers three legitimate answers. This app's is
+  the first row, "nothing that matters": the data is throwaway demo data, so the
+  mechanism is nothing and the obligation is to record the decision here, which this
+  bullet is. Everything else in that document (pragmas, pools, migrations) is
+  implemented.
 - **Never deployed** (`operations/web-application.md` and the checklist's Ship section
   waived): this repo is an acceptance test, not a service. The binary holds up its end
   of that contract — the env vars, `127.0.0.1` by default, `/healthz` with the version,
@@ -70,6 +75,16 @@ Recorded per the baseline's rules:
   stopped carrying copies of its templates when the baseline split operations out. A
   copy that nothing builds only drifts, which is exactly what the `Dockerfile` here had
   done; baseline-ops builds its own template against a checkout of this repo instead.
+- **The version stamp is not the tag** (`operations/web-application.md` §Version
+  stamping diverges here): that section says `info.Main.Version` is "the tag when HEAD
+  sits on one". It stops being true the moment a repository crosses v2. This module
+  path carries no `/v2`, so Go rejects every v2 and v3 tag for the main module and
+  falls back to a pseudo-version off the last tag it will accept — on tag v3.0.0 the
+  binary reports `v1.17.1-0.<date>-<sha>`, with no error and no warning. It costs this
+  repository nothing, because it is never deployed. It would cost a real one the answer
+  to "what is running?", since the operations repository tags each image by the version
+  and identifies a rollback by it. **Open in the baseline**: the fix is a decision about
+  module paths and tagging, not a code change here.
 - **Acting on a task that is gone returns 200 with a message, not 404:** ticking off
   or deleting a task another tab already removed is a stale list, not a bad request —
   the response replaces the stale list with current truth and says what happened. The
