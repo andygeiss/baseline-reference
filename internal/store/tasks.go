@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/internal/domain"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
 type Tasks struct {

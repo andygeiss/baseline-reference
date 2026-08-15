@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/andygeiss/baseline-reference/internal/domain"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
 // TaskStore is what the app needs from persistence (consumer-defined). Update

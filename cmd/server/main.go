@@ -19,9 +19,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	reference "github.com/andygeiss/baseline-reference"
-	"github.com/andygeiss/baseline-reference/internal/app"
-	"github.com/andygeiss/baseline-reference/internal/store"
+	reference "github.com/andygeiss/baseline-reference/v3"
+	"github.com/andygeiss/baseline-reference/v3/internal/app"
+	"github.com/andygeiss/baseline-reference/v3/internal/store"
 )
 
 func main() {

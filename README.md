@@ -75,16 +75,6 @@ Recorded per the baseline's rules:
   stopped carrying copies of its templates when the baseline split operations out. A
   copy that nothing builds only drifts, which is exactly what the `Dockerfile` here had
   done; baseline-ops builds its own template against a checkout of this repo instead.
-- **The version stamp is not the tag** (`operations/web-application.md` §Version
-  stamping diverges here): that section says `info.Main.Version` is "the tag when HEAD
-  sits on one". It stops being true the moment a repository crosses v2. This module
-  path carries no `/v2`, so Go rejects every v2 and v3 tag for the main module and
-  falls back to a pseudo-version off the last tag it will accept — on tag v3.0.0 the
-  binary reports `v1.17.1-0.<date>-<sha>`, with no error and no warning. It costs this
-  repository nothing, because it is never deployed. It would cost a real one the answer
-  to "what is running?", since the operations repository tags each image by the version
-  and identifies a rollback by it. **Open in the baseline**: the fix is a decision about
-  module paths and tagging, not a code change here.
 - **Acting on a task that is gone returns 200 with a message, not 404:** ticking off
   or deleting a task another tab already removed is a stale list, not a bad request —
   the response replaces the stale list with current truth and says what happened. The
@@ -135,6 +125,17 @@ protocol working as intended. Kept as a record; none of them is a deviation anym
   read from the environment and appears in no flag's help text, so `-h` was a partial
   contract until the usage function named it. `patterns/go-config.md` rule 5 always
   required this; its canonical snippet did not implement it.
+- **The module path carries the major version** → baseline v3.0.1. §Version stamping
+  promised `info.Main.Version` is "the tag when HEAD sits on one"; past v1 that holds
+  only when `go.mod` ends in the matching `/vN`. Without the suffix Go refuses the tag
+  for the main module and says nothing, stamping a pseudo-version off the last v1 tag
+  instead. Tagged v3.0.0, this repository built a binary reporting
+  `v1.17.1-0.20260815164832-b67cd862f0fb` — and baseline-ops' templates gate read
+  exactly that off the running container, which is the acceptance test and the
+  operations gate catching the same defect from two directions. The path is now
+  `github.com/andygeiss/baseline-reference/v3`; the rule landed in
+  `operations/web-application.md`, `patterns/go-cli.md`, `operations/cli-release.md`,
+  and the checklist's Ship section.
 - **Exit 2 for a configuration error** → baseline v1.14.2. `cmd/server/main.go` exits
   2 on any `parseConfig` failure, where `patterns/go-cli.md`'s `default` branch exits
   1. The baseline now states the divergence and why a config error is always a usage

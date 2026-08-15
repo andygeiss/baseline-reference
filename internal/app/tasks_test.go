@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	reference "github.com/andygeiss/baseline-reference"
-	"github.com/andygeiss/baseline-reference/internal/domain"
-	"github.com/andygeiss/baseline-reference/internal/store"
+	reference "github.com/andygeiss/baseline-reference/v3"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v3/internal/store"
 )
 
 type testApp struct {

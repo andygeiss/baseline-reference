@@ -1,4 +1,4 @@
-module github.com/andygeiss/baseline-reference
+module github.com/andygeiss/baseline-reference/v3
 
 go 1.26
 

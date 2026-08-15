@@ -8,7 +8,8 @@ working, production-grade web application?*
 ## Baseline pin
 
 Built against baseline commit
-**`e5b978e`** — tag **v3.0.0**, the operations split of 2026-08-15.
+**`6f8750e`** — tag **v3.0.1**, the operations split of 2026-08-15 plus the
+version-stamp rule this repository's own tagging turned up.
 
 The app under test is a mobile-first todo app (v2.0.0 swapped it in for
 tic-tac-toe). It is small on purpose, and it exercises more of the baseline than
@@ -54,10 +55,18 @@ ten was wording this repository never copied: `cfg.Env` already picked the log
 handler, `LogLevel` was already a `slog.Level`, and the `host` flag already
 called the proxy the public listener.
 
-**Found by this sync, and open in the baseline:** §Version stamping promises
-`info.Main.Version` is the tag when HEAD sits on one. It is not, past v2 — see
-the README deviation. This repository is tagged v3.0.0 and the binary it builds
-says `v1.17.1-0.…`.
+**Found by this sync, fixed here and fed back:** §Version stamping promised
+`info.Main.Version` is the tag when HEAD sits on one, and past v1 that holds only
+if the module path carries the major version. It did not: tagged v3.0.0, this
+repository built a binary reporting `v1.17.1-0.20260815164832-b67cd862f0fb`. The
+module path is now `github.com/andygeiss/baseline-reference/v3`, the stamp is the
+tag again, and the rule became **baseline v3.0.1** — which is what this pin now
+names. The reproduction protocol working end to end: the acceptance test hit a
+promise the baseline could not keep, and the baseline changed.
+
+`v3.0.0` was tagged before the fix and **moved** onto the corrected commit rather
+than left pointing at a binary that misreports itself. Safe here because nothing
+imports this repository; a library would have needed a new patch tag instead.
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a

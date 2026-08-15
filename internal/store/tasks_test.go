@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/internal/domain"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
 // newTestDB opens a real SQLite file with production pragmas and migrations.

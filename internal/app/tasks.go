@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"unicode/utf8"
 
-	"github.com/andygeiss/baseline-reference/internal/domain"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
 // tasksView is the template data for tasks.html and every fragment in it.
