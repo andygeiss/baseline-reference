@@ -57,16 +57,20 @@ called the proxy the public listener.
 
 **Found by this sync, fixed here and fed back:** §Version stamping promised
 `info.Main.Version` is the tag when HEAD sits on one, and past v1 that holds only
-if the module path carries the major version. It did not: tagged v3.0.0, this
-repository built a binary reporting `v1.17.1-0.20260815164832-b67cd862f0fb`. The
+if the module path carries the major version. It did not: on its first v3 tag,
+this repository built a binary reporting
+`v1.17.1-0.20260815164832-b67cd862f0fb`. The
 module path is now `github.com/andygeiss/baseline-reference/v3`, the stamp is the
 tag again, and the rule became **baseline v3.0.1** — which is what this pin now
 names. The reproduction protocol working end to end: the acceptance test hit a
 promise the baseline could not keep, and the baseline changed.
 
-`v3.0.0` was tagged before the fix and **moved** onto the corrected commit rather
-than left pointing at a binary that misreports itself. Safe here because nothing
-imports this repository; a library would have needed a new patch tag instead.
+**On the tag itself.** This repository's tag mirrors the baseline version it was
+built against, so the sync that produced baseline v3.0.1 is released here as
+v3.0.1 — not v3.0.0, which was cut before the stamp was fixed and has been
+withdrawn. Rewriting a published tag is only acceptable because nothing imports
+this repository and the tags were hours old; a library would have carried the bad
+release forever and added a patch on top instead.
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a

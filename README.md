@@ -129,7 +129,7 @@ protocol working as intended. Kept as a record; none of them is a deviation anym
   promised `info.Main.Version` is "the tag when HEAD sits on one"; past v1 that holds
   only when `go.mod` ends in the matching `/vN`. Without the suffix Go refuses the tag
   for the main module and says nothing, stamping a pseudo-version off the last v1 tag
-  instead. Tagged v3.0.0, this repository built a binary reporting
+  instead. On its first v3 tag, this repository built a binary reporting
   `v1.17.1-0.20260815164832-b67cd862f0fb` — and baseline-ops' templates gate read
   exactly that off the running container, which is the acceptance test and the
   operations gate catching the same defect from two directions. The path is now
