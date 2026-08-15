@@ -78,7 +78,7 @@ func run(cfg Config) error {
 
 	ver := version() // read once at boot; the ops handler and the asset cache-buster share it
 
-	a, err := app.New(logger, store.NewGames(db), templatesFS, staticFS, ver)
+	a, err := app.New(logger, store.NewTasks(db), templatesFS, staticFS, ver)
 	if err != nil {
 		return fmt.Errorf("building app: %w", err)
 	}

@@ -10,10 +10,12 @@ import (
 func (a *App) Routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /{$}", a.handleHome)
-	mux.HandleFunc("POST /games", a.handleGameCreate)
-	mux.HandleFunc("GET /games/{id}", a.handleGameShow)
-	mux.HandleFunc("POST /games/{id}/moves", a.handleMoveCreate)
+	mux.HandleFunc("GET /{$}", a.handleTasksShow)
+	mux.HandleFunc("POST /tasks", a.handleTaskAdd)
+	// POST, not DELETE: a plain form can only GET or POST, and every action
+	// here must work with htmx switched off.
+	mux.HandleFunc("POST /tasks/{id}/toggle", a.handleTaskToggle)
+	mux.HandleFunc("POST /tasks/{id}/delete", a.handleTaskDelete)
 
 	// Static sits outside the middleware chain: CSRF and the body cap have
 	// nothing to check on a bodiless GET, and FileServerFS sets the right

@@ -13,18 +13,19 @@ import (
 	"github.com/andygeiss/baseline-reference/internal/domain"
 )
 
-// GameStore is what the app needs from persistence (consumer-defined). Update
+// TaskStore is what the app needs from persistence (consumer-defined). Update
 // takes the change as a function so the store can load, apply, and save inside
-// one transaction — the game rules stay in the domain either way.
-type GameStore interface {
-	Create(ctx context.Context, g *domain.Game) error
-	Get(ctx context.Context, id string) (*domain.Game, error)
-	Update(ctx context.Context, id string, change func(*domain.Game) error) (*domain.Game, error)
+// one transaction — the task rules stay in the domain either way.
+type TaskStore interface {
+	Add(ctx context.Context, t *domain.Task) error
+	All(ctx context.Context) ([]domain.Task, error)
+	Update(ctx context.Context, id string, change func(*domain.Task) error) error
+	Delete(ctx context.Context, id string) error
 }
 
 type App struct {
 	logger    *slog.Logger
-	games     GameStore
+	tasks     TaskStore
 	templates map[string]*template.Template
 	staticFS  fs.FS
 }
@@ -32,19 +33,17 @@ type App struct {
 // New parses the page templates once, failing the boot on any error. version is
 // the asset cache-buster: it reaches the pages as a template function, so no
 // handler has to carry it in its view data.
-func New(logger *slog.Logger, games GameStore, templatesFS, staticFS fs.FS, version string) (*App, error) {
+func New(logger *slog.Logger, tasks TaskStore, templatesFS, staticFS fs.FS, version string) (*App, error) {
 	a := &App{
 		logger:    logger,
-		games:     games,
+		tasks:     tasks,
 		templates: make(map[string]*template.Template),
 		staticFS:  staticFS,
 	}
 	funcs := template.FuncMap{
 		"version": func() string { return version },
-		// Board indices are 0-based; the labels a player hears are not.
-		"inc": func(i int) int { return i + 1 },
 	}
-	for _, page := range []string{"home.html", "game.html"} {
+	for _, page := range []string{"tasks.html"} {
 		ts, err := template.New(page).Funcs(funcs).ParseFS(templatesFS, "layout.html", page)
 		if err != nil {
 			return nil, fmt.Errorf("parsing template %s: %w", page, err)

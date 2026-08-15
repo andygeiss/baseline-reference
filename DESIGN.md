@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: baseline-reference
-description: A two-player hot-seat tic-tac-toe web application.
+description: A mobile-first todo app — a simple way to organize tasks.
 colors:
   bg: "oklch(99% 0.002 260)"
   surface: "oklch(96% 0.005 260)"
@@ -54,18 +54,21 @@ use a raw color value. `accent` colors everything interactive: links, the
 primary button, focus rings. `primary` restates the `accent` values
 character for character: the spec requires a `primary` palette, and tools
 invent one when it is missing. `surface` is the resting fill of buttons and
-board cells. `error` is reserved for validation failures; the game
-currently renders none — a rule-breaking move comes back as `text-muted`
-advice, not an error. Hover feedback swaps roles at the use site — a
-hovered button trades `surface` for `bg`. The primary button's fill hides
+task rows. `error` colors one thing: the message under a field the reader
+must fix. Acting on a task that is already gone is not a validation failure
+— that comes back as `text-muted` advice beside the count. Hover feedback
+swaps roles at the use site — a hovered button trades `surface` for `bg`.
+Both row controls sit on the row's `surface`, so the same swap works on
+them without a second boundary inside the card. The primary button's fill hides
 that ground, so it mixes toward `text` with `color-mix()` instead. Neither
 adds a shade token.
 
 The manifest's `background_color`/`theme_color` and the two `theme-color`
 metas are `bg` converted to sRGB (`#fbfcfd` light, `#0f1216` dark) — those
 formats cannot read `oklch()` — and they change with `bg` in the same commit.
-The app mark (`favicon.svg` and the four install icons exported from it)
-carries its own blue, `oklch(55% 0.18 255)` = `#026fd7`: brighter than
+The app mark (`favicon.svg` and the four install icons exported from it) is a
+white check mark on a rounded square. It carries its own blue,
+`oklch(55% 0.18 255)` = `#026fd7`: brighter than
 `accent`, which is dark enough to pass as text. The mark does not follow the
 theme; it changes only when the mark is redrawn. The maskable and Apple icons
 are padded with light `bg` (`#fbfcfd`): both platforms need an opaque square.
@@ -89,9 +92,11 @@ term, so type still grows when a reader raises that default (WCAG 1.4.4).
 
 One fluid spacing value drives all whitespace: `clamp(1rem, 0.5rem + 2vw, 2rem)`,
 with quarter, half, and double steps derived from it. The content column
-measures `30rem` — game UI, not prose — and card and sidebar pages cap at
+measures `30rem` — app UI, not prose — and card and sidebar pages cap at
 `80rem`. Layout is mobile-first: the base styles are the 320 px layout, and
-wider screens only add columns.
+wider screens only add columns. Every control a thumb aims at — the field,
+the Add button, both row controls — is at least `3rem` (48 px) tall, above
+the 44 px floor WCAG 2.5.5 sets.
 
 ## Elevation & Depth
 
@@ -101,8 +106,8 @@ design needing a taller stack than that gets redesigned flatter.
 
 ## Shapes
 
-One radius, `0.375rem`, on every rounded box: buttons and board cells.
-Pills and circles are not part of this system.
+One radius, `0.375rem`, on every rounded box: buttons, the text field, and
+task rows. Pills and circles are not part of this system.
 
 ## Components
 
@@ -113,19 +118,28 @@ Every component composes the roles above, and every interactive state
   background, `bg` text. Secondary actions are plain buttons: `surface`
   fill inside a `border` boundary. Every button answers a hover, sinks
   `1px` while pressed, and shows an `accent` focus ring.
-- **Board** — nine square cell buttons in a three-column grid. The mark
-  inside a cell is the second fluid size in the app,
-  `clamp(1.5rem, 0.5rem + 5vw, 2.5rem)`. A taken or finished cell is
-  disabled but keeps full-contrast text — the mark is content, not a
-  control state. While a move is in flight the grid dims, hidden until the
-  request runs past 100 ms.
-- **Status line** — one line above the board announcing the turn or the
-  result, with rule-breaking moves explained in `text-muted`.
+- **Text field** — the one input in the app. `bg` fill inside a `border`
+  boundary, one radius, `3rem` tall, and the same `accent` focus ring every
+  other control shows. It takes `font: inherit`, because a UA control
+  otherwise picks a small system face of its own.
+- **Field error** — one line in `error`, directly under the field it names,
+  and the field points at it with `aria-describedby`. It appears only on a
+  422 answer, next to the value the reader typed.
+- **Task row** — a `surface` card inside a `border` boundary, holding two
+  controls: the row itself toggles the task, and a trash button at its end
+  deletes it. Both are `3rem` tall and sit on the card's own ground, so
+  neither draws a second boundary inside it. A done row keeps the check
+  mark *and* strikes its title through in `text-muted`: state carried by an
+  icon alone would have no text equivalent. While a change is in flight the
+  list dims, hidden until the request runs past 100 ms.
+- **Status line** — one line above the list counting what is still open,
+  with a stale action ("That task is gone.") explained in `text-muted`.
 - **Icon** — a CSS mask, `1em` square, painted with the surrounding text
-  color, so it needs no color and no size of its own. One shape ships: a
-  plus on Lucide's 24-unit grid with a 2-unit round-capped stroke, on both
-  "start a new game" buttons. It decorates a labeled control; the label is
-  the accessible name.
+  color, so it needs no color and no size of its own. Four shapes ship on
+  Lucide's 24-unit grid with a 2-unit round-capped stroke: plus (Add),
+  circle and check (a row's two states), and trash (delete). The first
+  decorates a labeled control; the rest sit in controls that carry their own
+  accessible name.
 
 ## Do's and Don'ts
 

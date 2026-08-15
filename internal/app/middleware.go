@@ -6,7 +6,7 @@ import (
 )
 
 // middleware is the one canonical chain, outermost → innermost. No session
-// middleware: the game has no users (recorded deviation).
+// middleware: the app has no users (recorded deviation).
 func (a *App) middleware(mux http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
 	h := http.MaxBytesHandler(mux, 1<<20)

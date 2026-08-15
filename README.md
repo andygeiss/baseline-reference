@@ -1,9 +1,9 @@
 # baseline-reference
 
 Reference implementation and **reproducible acceptance test** of the
-[engineering baseline](https://github.com/andygeiss/baseline): two-player tic-tac-toe
-as a server-rendered web application, built strictly per the baseline's
-`project-types/web-application.md`.
+[engineering baseline](https://github.com/andygeiss/baseline): a mobile-first todo
+app — a simple way to organize tasks — as a server-rendered web application, built
+strictly per the baseline's `project-types/web-application.md`.
 
 - **[SPEC.md](SPEC.md)** — what this test is: the task, the pinned baseline commit,
   the acceptance criteria, and the protocol for reproducing the test from scratch.
@@ -21,7 +21,7 @@ swaps, system font stack, mask icons) · SQLite (`modernc.org/sqlite`, WAL,
 single-writer pool) · installable (web app manifest + four icons, no service
 worker) · single static binary with all assets embedded.
 
-The one UI icon is a CSS mask. Its path data comes from
+The four UI icons are CSS masks. Their path data comes from
 [Lucide](https://lucide.dev), which ships under the ISC license, with the parts it
 inherits from Feather under MIT.
 
@@ -48,13 +48,16 @@ before anything binds a port or opens a file — `patterns/go-config.md`.
 
 Recorded per the baseline's rules:
 
-- **No auth/sessions** (`patterns/go-auth-sessions.md` skipped): the game has no user
-  accounts. Games are addressed by unguessable IDs only.
-- **No form validator or flash messages** (`patterns/go-forms-validation.md` not
-  exercised): no form takes typed input — every POST is a bare button or a board
-  cell, and the domain rules decide legality. Flash also requires sessions (skipped
-  above); results render on the target page, as that pattern prescribes for
-  session-less apps.
+- **No auth/sessions** (`patterns/go-auth-sessions.md` skipped): the app has no user
+  accounts, so there is **one list, shared by everyone who opens the page**. That is
+  honest for an acceptance test and wrong for a real todo app — the first feature
+  that needs a private list adopts the whole pattern.
+- **No flash messages** (`patterns/go-forms-validation.md` §Flash skipped): flash
+  requires sessions (skipped above), so results render on the target page, as that
+  pattern prescribes for session-less apps. One consequence: with htmx switched off,
+  "That task is gone." is lost across the redirect, and the reader sees only the
+  healed list. The rest of the pattern — the validator, the 422 re-render with the
+  submitted value kept, `HX-Push-Url: false` on a boosted 422 — is implemented.
 - **No backups/Litestream** (`patterns/go-sqlite.md` §Backups waived): throwaway demo
   data. Everything else in that document (pragmas, pools, migrations) is implemented.
 - **Never deployed** (`operations/web-application.md` and the checklist's Ship section
@@ -62,18 +65,19 @@ Recorded per the baseline's rules:
   of that contract — the env vars, `127.0.0.1` by default, `/healthz` with the version,
   graceful shutdown — but there is no Caddy, no systemd unit, no `GOMEMLIMIT`, and no
   previous binary to roll back to.
-- **Rule-violation moves return 200 with a message, not 422:** the 422 flow in the
-  baseline targets *form validation*; a stale-board click is not invalid input — the
-  response replaces the stale board with current truth. (htmx 2 also doesn't swap
-  4xx responses by default.)
+- **Acting on a task that is gone returns 200 with a message, not 404:** ticking off
+  or deleting a task another tab already removed is a stale list, not a bad request —
+  the response replaces the stale list with current truth and says what happened. The
+  422 flow is reserved for what it targets, *form validation*, and the add form uses
+  it. (htmx 2 also doesn't swap 4xx responses by default.)
 - **`OPS_PORT` is a config var**, though `patterns/go-http-server.md` pins the ops
   listener to `127.0.0.1:6060` ("fixed, not a flag"): the port is configurable so
   `verify.sh` can boot test instances beside a running dev server. The bind address
   stays hardcoded to localhost.
 - **Only the part of the type scale the app renders** (`patterns/css-typography.md`):
   the UI has one heading level and no `<small>`, code, or tables, so `app.css`
-  carries the `h1` step alone. `font: inherit` sits on `button` — the only form
-  control here. The scale's rules still hold: no root `font-size`, no size tokens,
+  carries the `h1` step alone. `font: inherit` sits on `button` and on the one text
+  field. The scale's rules still hold: no root `font-size`, no size tokens,
   and a `rem` term in every `clamp()`, which verify.sh gates. No web font: the
   system stack is the pattern's default answer, not a waiver.
 - **No outbound HTTP** (`patterns/go-http-client.md` not exercised): the app calls
@@ -90,10 +94,13 @@ Recorded per the baseline's rules:
   every field — the allowlist shape is what keeps a future secret out of the logs
   by default.
 - **No `<dialog>` in the UI** (`patterns/css-motion.md` dialog entry not exercised):
-  the game has no modal. The rest of the pattern is implemented — motion tokens,
+  the app has no modal; deleting a task asks with `hx-confirm`, which is the
+  browser's own dialog. The rest of the pattern is implemented — motion tokens,
   base-layer state transitions, the indicator fade with its 100 ms entry delay,
-  view-transition swaps (board moves opt out as rapid-fire controls), and the
-  reduced-motion kill switch.
+  view-transition swaps (list changes opt out as rapid-fire controls, swap rule 1),
+  and the reduced-motion kill switch.
+- **No bottom navigation** (`patterns/css-layout.md` §Bottom navigation not
+  exercised): the app is one page, and a bar with one destination navigates nothing.
 
 ## Fed back into the baseline
 
@@ -118,18 +125,20 @@ protocol working as intended. Kept as a record; none of them is a deviation anym
 Four things this implementation adds that the baseline does not spell out. Each is a
 candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.md).
 
-- **A move is one write transaction** (`internal/store/games.go`). The pattern's
-  handler reads the game, applies the rule, then saves it. Two clicks that arrive
-  together read the same board, and the second save erases the first move — it
-  happened in 25 of 30 tries before the fix. The store now takes the change as a
-  function and does read, apply, and write inside one transaction on the
-  single-writer pool.
-- **The status line sits outside the swapped board** (`web/templates/game.html`).
+- **A change is one write transaction** (`internal/store/tasks.go`). The pattern's
+  handler reads the row, applies the rule, then saves it. Two taps that arrive
+  together read the same task, and the second save undoes the first. The store now
+  takes the change as a function and does read, apply, and write inside one
+  transaction on the single-writer pool.
+- **The status line sits outside the swapped region** (`web/templates/tasks.html`).
   A screen reader does not reliably announce a live region that arrives with its
-  text already in it. So the region stays put and the move response fills it out of
+  text already in it. So the region stays put and the response fills it out of
   band (`hx-swap-oob="innerHTML:#status"`).
 - **Static directory URLs answer 404** (`internal/app/routes.go`). `FileServerFS`
   otherwise renders a browsable index of the embedded tree — an HTML page that no
   page links to, served outside the security headers and cached for a year.
-- **Cell labels count from 1** (`web/templates/game.html`). Board indices start at
-  zero; what a player hears should not. A one-line `inc` template function does it.
+- **List order comes from a counter, not a clock**
+  (`internal/store/migrations/0001_create_tasks.sql`). Two tasks added in the same
+  second sort at random by `created_at`, and a second-resolution timestamp is what
+  `go-sqlite.md` stores. An `AUTOINCREMENT` column orders them by insert, and never
+  hands a number back out, so deleting the last task cannot reorder the next one.

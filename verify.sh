@@ -67,6 +67,13 @@ BAD="$(grep -- '--icon:' web/static/css/app.css | grep -cv "xmlns='http://www.w3
 BAD="$(grep -c -- "--icon:.*#" web/static/css/app.css || true)"
 [ "$BAD" = "0" ] || fail "$BAD icon data URI(s) contain a # — it truncates the shape"
 
+step "css: every icon a template asks for is defined"
+# A misspelled icon class is silent in both files: the stylesheet keeps its
+# shapes and the span renders as a solid 1em square.
+for CLASS in $(grep -oh 'icon-[a-z][a-z-]*' web/templates/*.html | sort -u); do
+    grep -q -- "\.$CLASS *{" web/static/css/app.css || fail "a template uses .$CLASS, which app.css does not define"
+done
+
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 
@@ -105,7 +112,7 @@ step "smoke: health endpoint reports ok"
 curl -fsS "localhost:$OPS_PORT/healthz" | grep -q '"status":"ok"' || fail "healthz"
 
 step "smoke: home page with CSP header"
-curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/" | grep -q "Start a new game" || fail "home body"
+curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/" | grep -q "Your list is empty" || fail "home body"
 # img-src must keep data:, or the browser blocks every mask icon in app.css.
 # base-uri and form-action have no default-src fallback, so dropping either is
 # silent: the page keeps working and the protection is simply gone.
@@ -128,23 +135,39 @@ for ICON in icon-192.png icon-512.png icon-512-maskable.png apple-touch-icon.png
     curl -fsS -o /dev/null "localhost:$PORT/static/$ICON" || fail "icon missing: $ICON"
 done
 
-step "smoke: plain form flow (create game -> 303 -> page)"
-GAME_URL="$(curl -fsS -o /dev/null -w '%{redirect_url}' -X POST "localhost:$PORT/games")"
-case "$GAME_URL" in */games/*) ;; *) fail "create redirect: $GAME_URL";; esac
-curl -fsS "$GAME_URL" | grep -q 'id="board"' || fail "game page"
+step "smoke: plain form flow (add task -> 303 -> list)"
+CODE="$(curl -fsS -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/tasks" -d "title=Buy milk")"
+[ "$CODE" = "303" ] || fail "plain add: got $CODE, want 303"
+curl -fsS "localhost:$PORT/" | grep -q "Buy milk" || fail "the added task is not on the list"
 
-step "smoke: plain move is POST-redirect-GET"
-CODE="$(curl -fsS -o /dev/null -w '%{http_code}' -X POST "$GAME_URL/moves" -d cell=0)"
-[ "$CODE" = "303" ] || fail "plain move: got $CODE, want 303"
-
-step "smoke: htmx move returns board fragment, not a page"
-FRAGMENT="$(curl -fsS -X POST "$GAME_URL/moves" -H 'HX-Request: true' -d cell=4)"
-echo "$FRAGMENT" | grep -q 'id="board"' || fail "fragment missing board"
+step "smoke: htmx add returns the list fragment, not a page"
+FRAGMENT="$(curl -fsS -X POST "localhost:$PORT/tasks" -H 'HX-Request: true' -d "title=Call Ada")"
+echo "$FRAGMENT" | grep -q 'id="todo"' || fail "fragment missing the task region"
 echo "$FRAGMENT" | grep -q '<html' && fail "fragment is a full page"
 
+step "smoke: an invalid title is refused with 422 and a message"
+# 422 is the contract the htmx-config meta tag exists for: htmx 2 does not swap
+# 4xx responses without it, so a silent 200 here would look identical in tests
+# and break the form in the browser.
+CODE="$(curl -s -o "$WORKDIR/invalid.html" -w '%{http_code}' -X POST "localhost:$PORT/tasks" \
+    -H 'HX-Request: true' -d "title=%20%20")"
+[ "$CODE" = "422" ] || fail "blank title: got $CODE, want 422"
+grep -q "Write down what you need to do" "$WORKDIR/invalid.html" || fail "422 without a message"
+
+step "smoke: ticking a task off and deleting it"
+# The first row is the oldest open task, "Buy milk". "Call Ada" stays on the
+# list, so the restart gate below has something to find.
+TASK_ID="$(curl -fsS "localhost:$PORT/" \
+    | sed -n 's|.*action="/tasks/\([^/]*\)/toggle".*|\1|p' | head -1)"
+[ -n "$TASK_ID" ] || fail "no task id on the list page"
+curl -fsS -X POST "localhost:$PORT/tasks/$TASK_ID/toggle" -H 'HX-Request: true' \
+    | grep -q 'aria-pressed="true"' || fail "the toggled task is not marked done"
+curl -fsS -X POST "localhost:$PORT/tasks/$TASK_ID/delete" -H 'HX-Request: true' >/dev/null
+curl -fsS "localhost:$PORT/" | grep -q "Buy milk" && fail "the deleted task is still on the list"
+
 step "smoke: cross-site POST rejected (CSRF)"
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$GAME_URL/moves" \
-    -H 'Sec-Fetch-Site: cross-site' -d cell=1)"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/tasks" \
+    -H 'Sec-Fetch-Site: cross-site' -d "title=Nope")"
 [ "$CODE" = "403" ] || fail "CSRF: got $CODE, want 403"
 
 step "smoke: state survives restart"
@@ -156,7 +179,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     curl -fsS "localhost:$OPS_PORT/healthz" >/dev/null 2>&1 && break
     sleep 0.3
 done
-curl -fsS "$GAME_URL" | grep -q ">X</button>" || fail "game state lost after restart"
+curl -fsS "localhost:$PORT/" | grep -q "Call Ada" || fail "the list was lost after the restart"
 
 step "smoke: graceful shutdown"
 kill -TERM "$SERVER_PID"

@@ -7,15 +7,18 @@ working, production-grade web application?*
 
 ## Baseline pin
 
-Built against baseline **v1.17.0** — commit
-**`804418e1b484739a2be15e86e1074ac0af63f263`** (2026-08-15).
+Built against baseline commit
+**`bf451cfd74bb65470acc861b9c45f836ad0bde89`** (2026-08-15), one docs commit past
+**v1.17.0**.
 
-v1.17.0's one addition — rule 6 of `patterns/design-system.md`, on deriving what a
-design tool receives — is the second rule in a row this test cannot exercise: this
-repo uploads its theme to no design tool, so there is no upload here to derive, and
-a sync script added anyway would be a build step invented to satisfy a document.
-The gate re-ran green against the new pin. As with v1.16.0's bottom navigation, the
-rule's first real user is [lysk](https://github.com/andygeiss/lysk).
+That commit and this rewrite are one change: the app under test is a mobile-first
+todo app now, not tic-tac-toe, and the baseline's examples moved with it. No rule
+changed, so the whole gauntlet is what proves the swap — it re-ran green.
+
+The app is small on purpose, and it exercises more of the baseline than the game
+did: the add form is the first real user of `patterns/go-forms-validation.md` here,
+so the 422 answer, the kept value, and `HX-Push-Url: false` on a boosted failure are
+all under gate now.
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a
@@ -23,26 +26,28 @@ newer baseline commit fails, the baseline regressed — not this repo.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
-> Build a two-player hot-seat tic-tac-toe web application by following
+> Build a mobile-first todo app — a simple way to organize tasks — by following
 > `project-types/web-application.md` of the engineering baseline. Use only what the
 > baseline mandates or approves; record every deviation in the README as the baseline
 > requires.
 >
 > Functional requirements:
-> 1. The home page offers "start a new game". A new game gets an unguessable ID and
->    its own URL (`/games/{id}`).
-> 2. Players alternate placing X and O by clicking board cells; X goes first.
-> 3. The game detects all eight winning lines and the draw; finished boards accept no
->    further moves.
-> 4. Every interaction works with htmx disabled (plain forms, full-page renders).
-> 5. Game state survives a server restart.
+> 1. One page shows the list: a form to add a task, then the tasks themselves, open
+>    ones first.
+> 2. A task can be added, ticked off, ticked back on, and deleted.
+> 3. A title is trimmed and capped; an empty or oversized one is refused with the
+>    reason next to the field and the typed value kept.
+> 4. Acting on a task that is already gone heals the list instead of failing.
+> 5. Every interaction works with htmx disabled (plain forms, full-page renders).
+> 6. The list survives a server restart.
 
 ## Acceptance criteria
 
 1. `./verify.sh` exits 0 — it runs every mechanical gate from the baseline's
    `operations/ci.md` **plus** a live smoke test of the running binary
-   (health endpoint, CSP header, plain-form flow, htmx fragment flow, CSRF
-   rejection, graceful shutdown).
+   (health endpoint, CSP header, plain-form flow, htmx fragment flow, the 422
+   validation answer, ticking a task off and deleting it, CSRF rejection,
+   state across a restart, graceful shutdown).
 2. The baseline's `checklists/web-application.md` walks clean, with deviations
    waived in the README.
 3. The vendored htmx file matches the version pinned in the baseline's

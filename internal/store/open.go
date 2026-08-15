@@ -1,4 +1,4 @@
-// Package store persists games in SQLite, configured per the engineering
+// Package store persists tasks in SQLite, configured per the engineering
 // baseline: WAL mode, pooled readers, a single writer.
 package store
 

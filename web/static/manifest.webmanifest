@@ -1,6 +1,6 @@
 {
-  "name": "Tic-Tac-Toe",
-  "short_name": "Tic-Tac-Toe",
+  "name": "Todo",
+  "short_name": "Todo",
   "id": "/",
   "start_url": "/",
   "scope": "/",
