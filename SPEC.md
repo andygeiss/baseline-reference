@@ -8,8 +8,10 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`551b787`** — tag **v3.3.0**, which added live updates, machine tokens, the
-CLI's secret rule, and the rule that a CLI checks its name against the PATH.
+**`c55c8ec`** — tag **v3.3.1**, the full-corpus re-review that corrected two
+claims this repository had fed back, on top of v3.3.0's live updates, machine
+tokens, CLI secret rule, and the rule that a CLI checks its name against the
+PATH.
 
 The app under test is **Go Chat**: a mobile-first chat application with a
 command-line client. v3.2.0 swapped it in for the todo app, which had swapped in
@@ -39,18 +41,23 @@ the reasoning for why SSE is not in this baseline yet.
 
 **Found by building it, fixed in the baseline:**
 
-1. **A `Secure` session cookie cannot be exercised over the HTTP this baseline
+1. **A `Secure` session cookie does not survive the HTTP this baseline
    mandates.** `patterns/go-auth-sessions.md` set the flag unconditionally, and
    `project-types/web-application.md` says the binary only ever speaks plain
-   HTTP behind a TLS proxy. Together they make an app nobody can sign in to in
-   development, and an acceptance test that cannot reach a single authenticated
-   route. Two rules that are each correct and do not compose — the class of
-   defect only a running application finds.
+   HTTP behind a TLS proxy. Two rules that are each correct and do not compose —
+   the class of defect only a running application finds. *(Corrected in v3.3.1,
+   twice over: the baseline itself was never fixed, only this repository, and
+   both tellings overstated the damage. Loopback is a secure context, so `curl`
+   and browsers do return the flagged cookie over `http://localhost` — this very
+   acceptance run included. LAN addresses, containers, and plain-HTTP staging are
+   what break.)*
 2. **htmx's 286 poll-stop depends on the `responseHandling` array.** Traced
    through the vendored htmx 2.0.10: the cancel sits inside the swap branch, so
    the canonical `htmx-config` meta works by way of its `[23]..` rule rather
-   than by design. Tightening that pattern would leave polls running forever,
-   silently.
+   than by design. *(Corrected in v3.3.1: "tightening that pattern" was the wrong
+   warning — `2..` still matches `286`. htmx takes the first match, unanchored,
+   so the real traps are replacing `[23]..` with the codes the app returns, and
+   grouping `422` after `[45]..`, which silently kills form validation.)*
 3. **`patterns/go-ports-adapters.md` had no checklist box in any checklist,**
    and `go-ports-adapters.md` itself was missing from the README's file tree —
    both since the pattern shipped. A pattern the checklists never name is a

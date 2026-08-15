@@ -203,8 +203,10 @@ CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "loca
 
 step "smoke: the session cookie carries its flags"
 # scs defaults HttpOnly to true and SameSite to Lax, but Secure to false. This
-# binary speaks plain HTTP behind a TLS proxy, so Secure follows ENV — it is off
-# here, and a gate that demanded it would be demanding a cookie no client sends.
+# binary speaks plain HTTP behind a TLS proxy, so Secure follows ENV and is off in
+# this dev run. Only the two unconditional flags are gated: demanding Secure here
+# would pin a production-only setting, and this run over loopback cannot tell the
+# difference anyway — curl returns a Secure cookie to localhost either way.
 grep -q "session" "$JAR" || fail "no session cookie was set"
 curl -s -D "$WORKDIR/cookieheaders" -c "$JAR" -b "$JAR" -o /dev/null "localhost:$PORT/rooms"
 FLAGS="$(grep -i '^set-cookie: session' "$WORKDIR/cookieheaders" || true)"

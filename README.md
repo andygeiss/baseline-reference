@@ -166,16 +166,19 @@ protocol working as intended. Kept as a record; none of them is a deviation anym
   2 on any `parseConfig` failure, where `patterns/go-cli.md`'s `default` branch exits
   1. The baseline now states the divergence and why a config error is always a usage
   error rather than presenting the two switches as identical.
-- **A `Secure` session cookie cannot be exercised over the HTTP this baseline
-  mandates** → the sync that produced this app. `patterns/go-auth-sessions.md` sets
-  `sessions.Cookie.Secure = true` flat, and `project-types/web-application.md` says
-  the binary only ever speaks plain HTTP behind a TLS proxy. A cookie marked `Secure`
-  is never sent back over `http://`, so `make run` cannot sign anybody in and
-  `verify.sh` cannot reach a single authenticated route. Two rules that are each
-  correct and do not compose — which is the class of defect only a running
-  application finds. Here the flag follows `ENV`, which the deployment sets and which
-  is the thing that knows whether TLS is in front: `Secure` in production, off in
-  dev, `HttpOnly` and `SameSite=Lax` always.
+- **A `Secure` session cookie does not survive the HTTP this baseline mandates**
+  → baseline v3.3.1. `patterns/go-auth-sessions.md` set `sessions.Cookie.Secure = true`
+  flat, and `project-types/web-application.md` says the binary only ever speaks plain
+  HTTP behind a TLS proxy. Two rules that are each correct and do not compose — the
+  class of defect only a running application finds. It took two goes to state
+  correctly, because the first telling was measured against nothing: loopback *is* a
+  secure context, so `curl` and a browser both return the flagged cookie over
+  `http://localhost`, and the flat flag looks fine on a laptop and in `verify.sh`.
+  Over a LAN address the cookie is not stored at all — a phone checking the
+  mobile-first layout, a container reached by hostname, and a plain-HTTP staging box
+  each fail to sign anybody in. Here the flag follows `ENV`, which the deployment sets
+  and which is the thing that knows whether TLS is in front: `Secure` in production,
+  off in dev, `HttpOnly` and `SameSite=Lax` always.
 - **One authenticator, two middlewares, two credential failures** → the same sync.
   `patterns/go-auth-sessions.md` said `requireAuth` takes either credential and
   stopped there. Building a second surface showed what it left out: the lookup is
