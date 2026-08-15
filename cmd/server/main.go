@@ -130,25 +130,17 @@ func serve(ctx context.Context, srv *http.Server) error {
 	}
 }
 
-// version returns the VCS revision embedded by the toolchain.
+// version returns the build version the toolchain embedded — the tag when HEAD
+// sits on one, a pseudo-version otherwise, "+dirty" when the tree was modified.
+// One string for three jobs: the boot log line, the /healthz field, and the
+// static-asset cache-buster (operations/web-application.md).
 func version() string {
-	info, ok := debug.ReadBuildInfo()
+	info, ok := debug.ReadBuildInfo() // nil outside module mode — reading it would panic at boot
 	if !ok {
 		return "unknown"
 	}
-	var rev, modified string
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			rev = s.Value
-		case "vcs.modified":
-			if s.Value == "true" {
-				modified = "-dirty"
-			}
-		}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v // go install @version, or VCS-derived since Go 1.24
 	}
-	if rev == "" {
-		return "unknown"
-	}
-	return rev[:min(12, len(rev))] + modified
+	return "unknown" // "(devel)" means no VCS metadata — vcs.* is absent too
 }

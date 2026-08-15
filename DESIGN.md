@@ -52,8 +52,10 @@ two files change in the same commit.
 Every color `app.css` writes comes from the roles above — components never
 use a raw color value. `accent` colors everything interactive: links, the
 primary button, focus rings. `primary` restates the `accent` values
-character for character: the spec requires a `primary` palette, and tools
-invent one when it is missing. `surface` is the resting fill of buttons and
+character for character — a file without a `primary` palette makes a design
+tool generate a color of its own, so this theme names it instead. The spec
+does not require it; writing it down is how the theme keeps the decision.
+`surface` is the resting fill of buttons and
 task rows. `error` colors one thing: the message under a field the reader
 must fix. Acting on a task that is already gone is not a validation failure
 — that comes back as `text-muted` advice beside the count. Hover feedback
@@ -122,8 +124,10 @@ Every component composes the roles above, and every interactive state
   boundary, one radius, `3rem` tall, and the same `accent` focus ring every
   other control shows. It takes `font: inherit`, because a UA control
   otherwise picks a small system face of its own.
-- **Field error** — one line in `error`, directly under the field it names,
-  and the field points at it with `aria-describedby`. It appears only on a
+- **Field error** — one line in `error`, directly under the field it names.
+  Adjacent placement is for the eye; the field also points at the message
+  with `aria-describedby` and marks itself `aria-invalid`, so a screen reader
+  gets both the reason and which field failed. All three appear only on a
   422 answer, next to the value the reader typed.
 - **Task row** — a `surface` card inside a `border` boundary, holding two
   controls: the row itself toggles the task, and a trash button at its end
@@ -131,7 +135,9 @@ Every component composes the roles above, and every interactive state
   neither draws a second boundary inside it. A done row keeps the check
   mark *and* strikes its title through in `text-muted`: state carried by an
   icon alone would have no text equivalent. While a change is in flight the
-  list dims, hidden until the request runs past 100 ms.
+  list dims, hidden until the request runs past 100 ms. The rows sit in a
+  `ul` with its markers dropped, so the markup carries `role="list"` — Safari
+  drops the semantics along with the marker.
 - **Status line** — one line above the list counting what is still open,
   with a stale action ("That task is gone.") explained in `text-muted`.
 - **Icon** — a CSS mask, `1em` square, painted with the surrounding text

@@ -258,7 +258,10 @@
   .task-list {
     display: grid;
     gap: var(--space-sm);
-    list-style: none; /* the minimal reset keeps ul markers and padding */
+    /* The minimal reset keeps ul markers and padding, so dropping them is a
+       local decision — and the markup carries role="list" to keep the
+       semantics Safari drops with them. */
+    list-style: none;
     padding: 0;
   }
 

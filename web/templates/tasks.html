@@ -41,9 +41,13 @@
   <!-- required and maxlength are the first line only; the handler decides.
        maxlength counts UTF-16 code units and the server counts runes, so an
        emoji reaches the client cap early — stricter, never looser. -->
+  <!-- Adjacent is enough for the eye and nothing for a screen reader, so a
+       failing control points at its message: aria-describedby reads it out on
+       focus, aria-invalid says this is the field that failed. Both appear only
+       when the error does (go-forms-validation.md). -->
   <input id="title" name="title" value="{{.Form.Title}}" required
          maxlength="{{.MaxTitleLen}}" autocomplete="off"
-         {{with .Form.FieldErrors.title}}aria-describedby="title-error"{{end}}>
+         {{with .Form.FieldErrors.title}}aria-invalid="true" aria-describedby="title-error"{{end}}>
   <!-- The icon decorates a labeled control, so it is hidden from assistive
        technology and the button text carries the name (css-icons.md rule 1). -->
   <button class="button-primary">
@@ -54,8 +58,11 @@
 </form>
 {{end}}
 
+{{/* role="list" because app.css drops the markers: Safari then hands the list
+     to VoiceOver as plain content and never announces "list, N items"
+     (css-layout.md). */}}
 {{define "task-list"}}
-<ul class="task-list">
+<ul class="task-list" role="list">
   {{range .Tasks}}
   <li class="task">
     <form method="post" action="/tasks/{{.ID}}/toggle" hx-post="/tasks/{{.ID}}/toggle">

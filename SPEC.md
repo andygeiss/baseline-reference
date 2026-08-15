@@ -8,17 +8,22 @@ working, production-grade web application?*
 ## Baseline pin
 
 Built against baseline commit
-**`bf451cfd74bb65470acc861b9c45f836ad0bde89`** (2026-08-15), one docs commit past
-**v1.17.0**.
+**`8c492e8`** — tag **v2.0.1**, the full-corpus sweep of 2026-08-15.
 
-That commit and this rewrite are one change: the app under test is a mobile-first
-todo app now, not tic-tac-toe, and the baseline's examples moved with it. No rule
-changed, so the whole gauntlet is what proves the swap — it re-ran green.
+The app under test is a mobile-first todo app (v2.0.0 swapped it in for
+tic-tac-toe). It is small on purpose, and it exercises more of the baseline than
+the game did: the add form is the first real user of
+`patterns/go-forms-validation.md` here, so the 422 answer, the kept value, and
+`HX-Push-Url: false` on a boosted failure are all under gate now.
 
-The app is small on purpose, and it exercises more of the baseline than the game
-did: the add form is the first real user of `patterns/go-forms-validation.md` here,
-so the 422 answer, the kept value, and `HX-Push-Url: false` on a boosted failure are
-all under gate now.
+v2.0.1 fixed seven defects across eight documents. Three of them reach this repo,
+and this sync applies all three: the failing field now carries `aria-invalid` next
+to its `aria-describedby`, the task list carries `role="list"` because the CSS
+drops its markers, and `version()` reads `info.Main.Version` — the canonical
+reader in `patterns/go-cli.md` — instead of hand-assembling `vcs.revision`. The
+sweep's remaining fixes are about rules this app does not use (Caddy,
+bottom navigation, the two-pool snippet this repo already had right) or about
+wording, which `DESIGN.md` picked up.
 
 When the baseline changes materially, re-run this test (see protocol below) and update
 this pin. The pin is the "known-good baseline state" marker: if a rebuild against a

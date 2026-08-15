@@ -74,6 +74,19 @@ for CLASS in $(grep -oh 'icon-[a-z][a-z-]*' web/templates/*.html | sort -u); do
     grep -q -- "\.$CLASS *{" web/static/css/app.css || fail "a template uses .$CLASS, which app.css does not define"
 done
 
+step "css: a list that drops its markers keeps its semantics"
+# css-layout.md: Safari hands a marker-less list to VoiceOver as plain content,
+# so "list, N items" is never announced. role="list" is the one sanctioned ARIA
+# patch — and nothing in either file shows when it is missing.
+for CLASS in $(awk '
+    /^[[:space:]]*\.[a-z][a-z-]*[[:space:]]*\{/ { sel = $1; sub(/^\./, "", sel) }
+    /list-style:[[:space:]]*none/ && sel != ""   { print sel }
+' web/static/css/app.css | sort -u); do
+    if grep -hE "class=\"[^\"]*\<$CLASS\>" web/templates/*.html | grep -qv 'role="list"'; then
+        fail ".$CLASS drops its markers, but a template writes it without role=\"list\""
+    fi
+done
+
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 
@@ -153,6 +166,17 @@ CODE="$(curl -s -o "$WORKDIR/invalid.html" -w '%{http_code}' -X POST "localhost:
     -H 'HX-Request: true' -d "title=%20%20")"
 [ "$CODE" = "422" ] || fail "blank title: got $CODE, want 422"
 grep -q "Write down what you need to do" "$WORKDIR/invalid.html" || fail "422 without a message"
+# go-forms-validation.md: adjacent is enough for the eye and nothing for a
+# screen reader, so the failing control points at the message it just grew.
+grep -q 'aria-invalid="true"' "$WORKDIR/invalid.html" || fail "422 without aria-invalid on the field"
+grep -q 'aria-describedby="title-error"' "$WORKDIR/invalid.html" || fail "422 without aria-describedby on the field"
+grep -q 'id="title-error"' "$WORKDIR/invalid.html" || fail "aria-describedby points at no element"
+# Both appear only when the error does — a permanently invalid field says nothing.
+curl -fsS -o "$WORKDIR/valid.html" "localhost:$PORT/"
+if grep -q 'aria-invalid' "$WORKDIR/valid.html"; then
+    fail "aria-invalid on a form with no error"
+fi
+grep -q 'role="list"' "$WORKDIR/valid.html" || fail "the rendered list lost its role=\"list\""
 
 step "smoke: ticking a task off and deleting it"
 # The first row is the oldest open task, "Buy milk". "Call Ada" stays on the
