@@ -99,7 +99,7 @@ DEPS="$(go list -deps ./internal/chatapi | grep baseline-reference | grep -v 'in
 
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
-CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/chat" ./cmd/chat
+CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/gochat" ./cmd/gochat
 
 step "config: an invalid value is refused before anything is created"
 # The baseline's go-config.md rule: parse and validate first, so a bad value
@@ -356,36 +356,36 @@ grep -q '"error"' "$WORKDIR/api401.json" || fail "a 401 from /api with no reason
 
 step "smoke: the command-line client talks to the server"
 printf '%s\n' "$SECRET" > "$WORKDIR/token"
-export CHAT_ADDR="http://localhost:$PORT"
-export CHAT_TOKEN_FILE="$WORKDIR/token"
-[ "$("$WORKDIR/chat" whoami)" = "Ada" ] || fail "chat whoami did not name the token's owner"
-"$WORKDIR/chat" rooms | grep -q "^general-chat	General Chat$" || fail "chat rooms did not list the room"
-SEQ="$("$WORKDIR/chat" post general-chat "hello from the command line")"
-[ -n "$SEQ" ] || fail "chat post printed no cursor for a script to carry on from"
-"$WORKDIR/chat" read -json general-chat | grep -q '"body":"hello from the command line"' \
-    || fail "chat read -json did not bring the message back"
+export GOCHAT_ADDR="http://localhost:$PORT"
+export GOCHAT_TOKEN_FILE="$WORKDIR/token"
+[ "$("$WORKDIR/gochat" whoami)" = "Ada" ] || fail "gochat whoami did not name the token's owner"
+"$WORKDIR/gochat" rooms | grep -q "^general-chat	General Chat$" || fail "gochat rooms did not list the room"
+SEQ="$("$WORKDIR/gochat" post general-chat "hello from the command line")"
+[ -n "$SEQ" ] || fail "gochat post printed no cursor for a script to carry on from"
+"$WORKDIR/gochat" read -json general-chat | grep -q '"body":"hello from the command line"' \
+    || fail "gochat read -json did not bring the message back"
 # stdout is data and stderr is everything else, so the cursor must not be in
-# the pipe: `chat read | wc -l` counts messages, never notes.
-"$WORKDIR/chat" read general-chat 2>/dev/null | grep -q "next cursor" \
+# the pipe: `gochat read | wc -l` counts messages, never notes.
+"$WORKDIR/gochat" read general-chat 2>/dev/null | grep -q "next cursor" \
     && fail "the cursor was written to stdout, where the data goes"
 # The message the browser posted and the one the CLI posted are the same room.
 curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
     | grep -q "hello from the command line" || fail "the CLI's message is not on the page"
 
 step "smoke: the client reads a message from a pipe"
-echo "piped in" | "$WORKDIR/chat" post general-chat - >/dev/null || fail "chat post could not read stdin"
-"$WORKDIR/chat" read -json general-chat | grep -q '"body":"piped in"' || fail "the piped message did not arrive"
+echo "piped in" | "$WORKDIR/gochat" post general-chat - >/dev/null || fail "gochat post could not read stdin"
+"$WORKDIR/gochat" read -json general-chat | grep -q '"body":"piped in"' || fail "the piped message did not arrive"
 
 step "smoke: the client's exit codes"
 set +e
-"$WORKDIR/chat" dance >/dev/null 2>&1; CODE=$?
+"$WORKDIR/gochat" dance >/dev/null 2>&1; CODE=$?
 set -e
 [ "$CODE" = "2" ] || fail "an unknown command exited $CODE, want 2"
 set +e
-CHAT_TOKEN_FILE="" CHAT_TOKEN="gochat_nope" "$WORKDIR/chat" rooms >/dev/null 2>&1; CODE=$?
+GOCHAT_TOKEN_FILE="" CHAT_TOKEN="gochat_nope" "$WORKDIR/gochat" rooms >/dev/null 2>&1; CODE=$?
 set -e
 [ "$CODE" = "1" ] || fail "a refused token exited $CODE, want 1"
-unset CHAT_ADDR CHAT_TOKEN_FILE
+unset GOCHAT_ADDR GOCHAT_TOKEN_FILE
 
 step "smoke: revoking a token stops it"
 TOKEN_ID="$(curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" \

@@ -6,7 +6,7 @@ mobile-first chat app with a command-line client, built strictly per the
 baseline's `project-types/web-application.md` and `project-types/cli-tool.md`.
 
 Two binaries, one module. The server renders HTML for people and JSON for
-programs; `chat` is the program.
+programs; `gochat` is the program.
 
 - **[SPEC.md](SPEC.md)** — what this test is: the task, the pinned baseline commit,
   the acceptance criteria, and the protocol for reproducing the test from scratch.
@@ -47,16 +47,16 @@ Open the app, make an account, make a room, say something. Then make a token on
 the **You** page and talk to the same rooms from a terminal:
 
 ```sh
-go install github.com/andygeiss/baseline-reference/v3/cmd/chat@latest
+go install github.com/andygeiss/baseline-reference/v3/cmd/gochat@latest
 
 echo "$TOKEN" > ~/.config/gochat/token
-export CHAT_ADDR=http://localhost:8080 CHAT_TOKEN_FILE=~/.config/gochat/token
+export GOCHAT_ADDR=http://localhost:8080 GOCHAT_TOKEN_FILE=~/.config/gochat/token
 
-chat rooms                          # slug and name, one room per line
-chat post general "ship it"         # prints the new cursor
-git log --oneline -5 | chat post general -
-chat read -json general             # one JSON object per line
-watch -n3 chat read general         # a live tail, composed rather than built in
+gochat rooms                        # slug and name, one room per line
+gochat post general "ship it"         # prints the new cursor
+git log --oneline -5 | gochat post general -
+gochat read -json general             # one JSON object per line
+watch -n3 gochat read general         # a live tail, composed rather than built in
 ```
 
 `make run` sources a `.env` when one is present (`stack/makefile.md` rule 6). This
@@ -74,7 +74,7 @@ validated before anything binds a port or opens a file — `patterns/go-config.m
 ## Two surfaces, on purpose
 
 The pages answer in HTML because a browser renders HTML. `/api` answers in JSON
-because `chat` cannot render anything. They are separate surfaces rather than two
+because `gochat` cannot render anything. They are separate surfaces rather than two
 representations of one: nothing negotiates on `Accept`, one URL means one thing,
 and the two are free to differ — `/api` has no forms, no redirects, and no flash
 messages. A signed-out reader gets a redirect to the sign-in page; a program gets
@@ -109,7 +109,7 @@ is.
   built against, so a release cut from one would announce "baseline v3.2.0" rather
   than anything about the tool's own contract, and the semver promise
   `cli-release.md` asks for would be hostage to a document release. Contained by
-  distribution channel 1 alone: `go install …/cmd/chat@<tag>` works, version
+  distribution channel 1 alone: `go install …/cmd/gochat@<tag>` works, version
   stamping is gated, and the stdout and `-json` shapes are treated as a contract in
   the code and its tests. **This is the acceptance test's one remaining coverage
   hole**, and it is a real one — nothing here exercises the artifact workflow, the
@@ -140,7 +140,7 @@ is.
 - **The library project type is unexercised** (`project-types/library.md`,
   `patterns/go-library.md`, `checklists/library.md`) — and for the reason that
   document itself gives. Libraries are *extracted when a second project needs the
-  code*; here the second consumer, `cmd/chat`, lives in the same module, so
+  code*; here the second consumer, `cmd/gochat`, lives in the same module, so
   `internal/` is exactly where the shared code belongs. Extracting it to earn a
   checkmark would be the ceremony that document warns about. The first genuine
   second consumer changes this.
@@ -212,7 +212,7 @@ candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.
 - **A name may be two characters** (`internal/domain/user.go`). A three-character
   floor is an English-nickname number, and it refuses 李雷 — a whole name in plenty
   of scripts.
-- **Flags before positionals, said out loud** (`cmd/chat/run.go`). Go's `flag` stops
-  at the first plain argument, so `chat read general -json` silently treats the flag
+- **Flags before positionals, said out loud** (`cmd/gochat/run.go`). Go's `flag` stops
+  at the first plain argument, so `gochat read general -json` silently treats the flag
   as an extra argument. The tool spots that shape and says which order to use
   instead of complaining that a room is missing from a command line that has one.

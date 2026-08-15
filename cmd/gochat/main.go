@@ -1,8 +1,8 @@
-// Command chat talks to a Go Chat server from the command line.
+// Command gochat talks to a Go Chat server from the command line.
 //
 // It starts, does one job, and exits. There is no prompt and no live tail: a
 // tool that holds a conversation with a person is a web application, and this
-// baseline has one of those. `watch -n3 chat read general` is a live tail, and
+// baseline has one of those. `watch -n3 gochat read general` is a live tail, and
 // it composes out of parts that already exist.
 package main
 
@@ -25,7 +25,7 @@ func main() {
 	case errors.Is(err, errUsage):
 		os.Exit(2) // the message was already printed where the problem was found
 	default:
-		fmt.Fprintf(os.Stderr, "chat: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gochat: %v\n", err)
 		os.Exit(1)
 	}
 }

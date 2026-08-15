@@ -21,25 +21,25 @@ import (
 // so main only has to pick the exit code.
 var errUsage = errors.New("usage error")
 
-const usage = `chat — talk to a Go Chat server.
+const usage = `gochat — talk to a Go Chat server.
 
 Usage:
-  chat rooms [-json]                     list the rooms
-  chat read [-since N] [-json] <room>    print what was said, oldest first
-  chat post [-json] <room> [message]     say something; "-" or no message reads stdin
-  chat whoami                            print the name the token belongs to
-  chat version                           print the version
+  gochat rooms [-json]                     list the rooms
+  gochat read [-since N] [-json] <room>    print what was said, oldest first
+  gochat post [-json] <room> [message]     say something; "-" or no message reads stdin
+  gochat whoami                            print the name the token belongs to
+  gochat version                           print the version
 
-Flags come before the room name: "chat read -json general", not
-"chat read general -json". That is how Go's flag parsing works — the first
+Flags come before the room name: "gochat read -json general", not
+"gochat read general -json". That is how Go's flag parsing works — the first
 argument that is not a flag ends the flags.
 
 Every command takes:
-  -addr        server address (env CHAT_ADDR, default http://localhost:8080)
-  -token-file  file holding the API token (env CHAT_TOKEN_FILE)
+  -addr        server address (env GOCHAT_ADDR, default http://localhost:8080)
+  -token-file  file holding the API token (env GOCHAT_TOKEN_FILE)
   -json        one JSON object per line, for other programs
 
-The token comes from -token-file, or from $CHAT_TOKEN_FILE, or from $CHAT_TOKEN.
+The token comes from -token-file, or from $GOCHAT_TOKEN_FILE, or from $GOCHAT_TOKEN.
 Prefer a file: an environment variable is inherited by every process this one
 starts, and printed by anything that inspects it. Make a token on the server's
 "You" page.
@@ -84,10 +84,10 @@ type common struct {
 func (c *common) bind(fs *flag.FlagSet) {
 	// cmp.Or takes the first non-zero value, so flags-over-env-over-default is
 	// one stdlib call.
-	fs.StringVar(&c.addr, "addr", cmp.Or(os.Getenv("CHAT_ADDR"), "http://localhost:8080"),
-		"server address (env CHAT_ADDR)")
-	fs.StringVar(&c.tokenFile, "token-file", os.Getenv("CHAT_TOKEN_FILE"),
-		"file holding the API token (env CHAT_TOKEN_FILE; CHAT_TOKEN also works)")
+	fs.StringVar(&c.addr, "addr", cmp.Or(os.Getenv("GOCHAT_ADDR"), "http://localhost:8080"),
+		"server address (env GOCHAT_ADDR)")
+	fs.StringVar(&c.tokenFile, "token-file", os.Getenv("GOCHAT_TOKEN_FILE"),
+		"file holding the API token (env GOCHAT_TOKEN_FILE; GOCHAT_TOKEN also works)")
 	fs.BoolVar(&c.asJSON, "json", false, "emit one JSON object per line")
 }
 
@@ -101,12 +101,12 @@ func (c *common) client() (*chatapi.Client, error) {
 	return chatapi.New(c.addr, token), nil
 }
 
-// readToken prefers the file, because $CHAT_TOKEN leaks into every child
+// readToken prefers the file, because $GOCHAT_TOKEN leaks into every child
 // process and into anything that dumps the environment. A flag is worse still —
 // its value shows up in ps and in shell history — so there is no -token flag.
 func readToken(path string) (string, error) {
 	if path == "" {
-		return os.Getenv("CHAT_TOKEN"), nil
+		return os.Getenv("GOCHAT_TOKEN"), nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -171,7 +171,7 @@ func runRead(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		return errUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintf(stderr, "chat read needs exactly one room\n%s%s", flagOrderHint(fs.Args()), usage)
+		fmt.Fprintf(stderr, "gochat read needs exactly one room\n%s%s", flagOrderHint(fs.Args()), usage)
 		return errUsage
 	}
 	client, err := c.client()
@@ -208,7 +208,7 @@ func runPost(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		return err
 	}
 	if fs.NArg() < 1 || fs.NArg() > 2 {
-		fmt.Fprintf(stderr, "chat post needs a room and a message\n%s%s", flagOrderHint(fs.Args()), usage)
+		fmt.Fprintf(stderr, "gochat post needs a room and a message\n%s%s", flagOrderHint(fs.Args()), usage)
 		return errUsage
 	}
 	client, err := c.client()
@@ -221,7 +221,7 @@ func runPost(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		body = fs.Arg(1)
 	}
 	// No message, or the conventional "-": read it from stdin, so `git log |
-	// chat post general -` works.
+	// gochat post general -` works.
 	if body == "" || body == "-" {
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, int64(domain.MaxBodyLen)*4+1))
 		if err != nil {
@@ -322,7 +322,7 @@ func advise(err error) error {
 	case errors.Is(err, domain.ErrUnauthorized):
 		return fmt.Errorf("%w\nMake a token on the server's \"You\" page, then point -token-file at it", err)
 	case errors.Is(err, domain.ErrNotFound):
-		return fmt.Errorf("%w\nRun `chat rooms` to see what there is", err)
+		return fmt.Errorf("%w\nRun `gochat rooms` to see what there is", err)
 	default:
 		return err
 	}

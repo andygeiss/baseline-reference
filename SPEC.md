@@ -8,12 +8,18 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`bb9f527`** — tag **v3.2.0**, the release that added live updates, machine
-tokens, and the CLI's secret rule.
+**`551b787`** — tag **v3.3.0**, which added live updates, machine tokens, the
+CLI's secret rule, and the rule that a CLI checks its name against the PATH.
 
 The app under test is **Go Chat**: a mobile-first chat application with a
 command-line client. v3.2.0 swapped it in for the todo app, which had swapped in
 for tic-tac-toe.
+
+**The client is `gochat`, and it was `chat` for a day.** `/usr/sbin/chat` is a
+PPP utility on every macOS box, so the tool a person installed was not the tool
+that ran. The rename took the environment variables with it — `GOCHAT_ADDR`,
+`GOCHAT_TOKEN_FILE`, `GOCHAT_TOKEN` — and the baseline gained a rule and a
+checklist box for it.
 
 **Why the product changed.** The todo app's own README named the holes it could
 not close: `patterns/go-http-client.md` was "the acceptance test's one real
@@ -76,7 +82,7 @@ produce that JSON.
 >    Without htmx, "appears by itself" degrades to reloading the page.
 > 5. A person can make tokens for programs, see when each was last used, and
 >    revoke one. A token is shown once.
-> 6. A `chat` command lists rooms, reads a room, and posts to it, using a token.
+> 6. A `gochat` command lists rooms, reads a room, and posts to it, using a token.
 >    It starts, does its job, and exits.
 > 7. The conversation survives a server restart.
 
@@ -88,7 +94,7 @@ produce that JSON.
    of the logs, session cookie flags, token renewal on sign-in, rate limiting,
    plain-form and htmx flows, the poll's 204 and 200 answers, escaping, the 422
    validation answer, machine tokens end to end, CSRF rejection, the backup
-   snapshot, state across a restart, graceful shutdown, and the `chat` client
+   snapshot, state across a restart, graceful shutdown, and the `gochat` client
    talking to all of it).
 2. The baseline's `checklists/web-application.md` and `checklists/cli-tool.md`
    both walk clean, with deviations waived in the README.

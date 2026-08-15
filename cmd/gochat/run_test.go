@@ -224,7 +224,7 @@ func TestRunUsageErrors(t *testing.T) {
 	}
 }
 
-// TestRunHelpExitsZero keeps `chat -h | less` from looking like a failure.
+// TestRunHelpExitsZero keeps `gochat -h | less` from looking like a failure.
 func TestRunHelpExitsZero(t *testing.T) {
 	t.Parallel()
 
@@ -306,7 +306,7 @@ func TestTokenComesFromTheFileFirst(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	// Both are set. The file wins, because the variable is the leaky one.
-	t.Setenv("CHAT_TOKEN", "gochat_from_env")
+	t.Setenv("GOCHAT_TOKEN", "gochat_from_env")
 	path := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(path, []byte("gochat_from_file\n"), 0o600); err != nil {
 		t.Fatalf("writing the token file: %v", err)
@@ -331,8 +331,8 @@ func TestTokenFallsBackToTheEnvironment(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	t.Setenv("CHAT_TOKEN", "gochat_from_env")
-	t.Setenv("CHAT_TOKEN_FILE", "")
+	t.Setenv("GOCHAT_TOKEN", "gochat_from_env")
+	t.Setenv("GOCHAT_TOKEN_FILE", "")
 
 	var out, errs bytes.Buffer
 	if err := run(t.Context(), []string{"whoami", "-addr", srv.URL}, &out, &errs); err != nil {
