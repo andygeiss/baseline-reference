@@ -1,0 +1,41 @@
+{{define "title"}}Rooms{{end}}
+
+{{define "main"}}
+<h1>Rooms</h1>
+
+{{/* The invoker button opens the dialog with no script (stack/html.md).
+     /rooms/new is the same form as a page, for a browser that does not know
+     invoker commands — and it is where a rejected name lands, because an open
+     dialog is never a swap target (patterns/css-motion.md). */}}
+<p class="room-actions">
+  <button type="button" command="show-modal" commandfor="new-room">
+    <span class="icon icon-plus" aria-hidden="true"></span>New room
+  </button>
+</p>
+
+<dialog id="new-room" aria-labelledby="new-room-title">
+  <h2 id="new-room-title">New room</h2>
+  <form class="card-form" method="post" action="/rooms">
+    <label for="dialog-name">Name it</label>
+    <input id="dialog-name" name="name" required maxlength="{{.MaxRoomNameLen}}">
+    <div class="dialog-actions">
+      <button type="button" command="close" commandfor="new-room">Cancel</button>
+      <button class="button-primary" type="submit">Create</button>
+    </div>
+  </form>
+</dialog>
+
+{{if .Rooms}}
+  <ul class="rooms" role="list">
+    {{range .Rooms}}
+      <li class="room">
+        <a href="/rooms/{{.Slug}}">
+          <span class="icon icon-hash" aria-hidden="true"></span>{{.Name}}
+        </a>
+      </li>
+    {{end}}
+  </ul>
+{{else}}
+  <p class="empty">No rooms yet. <a href="/rooms/new">Make the first one</a>.</p>
+{{end}}
+{{end}}

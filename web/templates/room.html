@@ -1,0 +1,72 @@
+{{define "title"}}{{.Room.Name}}{{end}}
+
+{{define "main"}}
+<h1>{{.Room.Name}}</h1>
+{{template "chat" .}}
+{{end}}
+
+{{/* chat is the whole region: the messages, the poller, and the form. The
+     sender swaps all of it, so their cursor and their form come from one read
+     and cannot go stale against each other. A poll swaps only the new rows —
+     re-rendering the list on a timer would throw away the reader's scroll
+     position (patterns/htmx-live-updates.md). */}}
+{{define "chat"}}
+<div id="chat" class="chat">
+  <ul id="messages" class="messages" role="list">
+    {{range .Messages}}{{template "message" .}}{{end}}
+    {{template "poller" .}}
+  </ul>
+  <span id="latest"></span>
+  {{template "say" .}}
+</div>
+{{end}}
+
+{{define "message"}}
+<li class="message">
+  <p class="message-meta">
+    <strong>{{.Author}}</strong>
+    <small>{{.CreatedAt.Format "15:04"}}</small>
+  </p>
+  <p class="message-body">{{.Body}}</p>
+</li>
+{{end}}
+
+{{/* The poller is the last row of the list, and it is also what a poll's answer
+     replaces. That is what lets the cursor move on with htmx core alone: the
+     answer is the new rows followed by a new poller, and swapping this element
+     for all of it lands the rows in order, at the end, with the next cursor
+     already in place. No out-of-band swap, no second copy of the cursor.
+
+     It is an <li> because a <div> between list items is not valid markup, and
+     hidden because it is machinery rather than something to read. */}}
+{{define "poller"}}
+<li id="poll" hidden
+    hx-get="/rooms/{{.Room.Slug}}/messages?since={{.Since}}"
+    hx-trigger="every 3s"
+    hx-swap="outerHTML transition:false"></li>
+{{end}}
+
+{{define "say"}}
+<form class="say" method="post" action="/rooms/{{.Room.Slug}}/messages"
+      hx-post="/rooms/{{.Room.Slug}}/messages"
+      hx-target="#chat" hx-swap="outerHTML transition:false"
+      hx-indicator="#sending">
+  <label class="visually-hidden" for="body">Your message</label>
+  <textarea id="body" name="body" rows="2" required
+            maxlength="{{.MaxBodyLen}}" placeholder="Say something"
+            {{with .Form.FieldErrors.body}}aria-invalid="true" aria-describedby="body-error"{{end}}>{{.Form.Body}}</textarea>
+  {{with .Form.FieldErrors.body}}<p class="field-error" id="body-error">{{.}}</p>{{end}}
+  <button class="button-primary" type="submit">
+    <span class="icon icon-send" aria-hidden="true"></span>Send
+    <span id="sending" class="htmx-indicator visually-hidden">Sending…</span>
+  </button>
+</form>
+{{end}}
+
+{{/* One poll's answer: the new rows for the list, and the poller with the
+     cursor moved on. Nothing at all when there is nothing new — the handler
+     answers 204 and htmx leaves the old poller in place. */}}
+{{define "poll-update"}}
+{{range .Messages}}{{template "message" .}}{{end}}
+{{template "poller" .}}
+{{end}}

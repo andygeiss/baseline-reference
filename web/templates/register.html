@@ -1,0 +1,30 @@
+{{define "title"}}Make an account{{end}}
+
+{{define "main"}}
+<h1>Make an account</h1>
+
+<form class="card-form" method="post" action="/register">
+  <label for="name">Your name</label>
+  <input id="name" name="name" value="{{.Form.Name}}" autocomplete="username"
+         required autocapitalize="none"
+         {{with .Form.FieldErrors.name}}aria-invalid="true" aria-describedby="name-error"{{end}}>
+  {{with .Form.FieldErrors.name}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password"
+         autocomplete="new-password" required
+         {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="password-error"{{end}}>
+  {{with .Form.FieldErrors.password}}<p class="field-error" id="password-error">{{.}}</p>{{end}}
+
+  {{if .InviteRequired}}
+    <label for="invite">Invite code</label>
+    <input id="invite" name="invite" value="{{.Form.Invite}}" required
+           {{with .Form.FieldErrors.invite}}aria-invalid="true" aria-describedby="invite-error"{{end}}>
+    {{with .Form.FieldErrors.invite}}<p class="field-error" id="invite-error">{{.}}</p>{{end}}
+  {{end}}
+
+  <button class="button-primary" type="submit">Make my account</button>
+</form>
+
+<p>Already have one? <a href="/login">Sign in</a>.</p>
+{{end}}

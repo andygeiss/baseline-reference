@@ -1,0 +1,21 @@
+{{define "title"}}Sign in{{end}}
+
+{{define "main"}}
+<h1>Sign in</h1>
+
+<form class="card-form" method="post" action="/login">
+  {{with .Form.FormError}}<p class="field-error" role="alert">{{.}}</p>{{end}}
+
+  <label for="name">Your name</label>
+  <input id="name" name="name" value="{{.Form.Name}}" autocomplete="username"
+         required autocapitalize="none">
+
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password"
+         autocomplete="current-password" required>
+
+  <button class="button-primary" type="submit">Sign in</button>
+</form>
+
+<p>New here? <a href="/register">Make an account</a>.</p>
+{{end}}

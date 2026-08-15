@@ -40,6 +40,9 @@
     /* Motion — two speeds, feedback and movement (patterns/css-motion.md). */
     --motion-fast: 150ms; /* state feedback: hover, presses, indicator fades */
     --motion-slow: 300ms; /* movement and entry: dialogs, revealed content */
+
+    /* The bottom bar's height, so the page can keep its last row clear of it. */
+    --bar: 3.5rem;
   }
 
   /* Dark scheme = color tokens redefined. Nothing else forks. */
@@ -69,17 +72,36 @@
   input, select, textarea { max-inline-size: 100%; }
   fieldset { min-inline-size: 0; }
   a { color: var(--color-accent); }
-  /* The heading step from patterns/css-typography.md. The rem term is
-     load-bearing: a vw-only size ignores the user's font-size setting
-     (WCAG 1.4.4). Only h1 ships — no page renders a deeper level. */
-  h1 {
-    font-size: clamp(1.75rem, 1.2rem + 2.4vw, 2.5rem);
+
+  /* The type scale from patterns/css-typography.md. There are no size tokens:
+     sizes are fluid clamp() on the elements themselves. The rem term in each
+     clamp is load-bearing — a vw-only size ignores the reader's font-size
+     setting (WCAG 1.4.4). Only the steps this app renders ship. */
+  h1, h2 {
     line-height: 1.2;
     text-wrap: balance; /* Baseline Newly — older browsers just wrap normally */
   }
+  h1 { font-size: clamp(1.75rem, 1.2rem + 2.4vw, 2.5rem); }
+  h2 { font-size: clamp(1.375rem, 1.1rem + 1.2vw, 1.875rem); }
+
+  small { font-size: 0.875em; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.9375em; /* mono faces run large; em so nesting compounds correctly */
+  }
+
+  th, td {
+    font-variant-numeric: tabular-nums; /* digits share a width, so columns line up */
+    text-align: start;
+  }
+
+  input, button, select, textarea {
+    font: inherit; /* UA controls use a small system face and ignore the page's */
+  }
+
   button {
     cursor: pointer;
-    font: inherit; /* UA controls use a small system face and ignore the page's */
     /* An icon sits beside the label, centered with it (patterns/css-icons.md). */
     display: inline-flex;
     align-items: center;
@@ -102,6 +124,17 @@
     &:disabled { cursor: default; }
   }
 
+  /* The dialog's own box. Element defaults belong here (stack/css.md); the
+     entry motion is in the reduced-motion wrapper below. */
+  dialog {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+    padding: var(--space);
+    inline-size: min(100% - 2 * var(--space), var(--measure));
+  }
+
   /* State feedback + smooth-scroll glide (patterns/css-motion.md). Only the
      motion sits inside the wrapper; state rules stay outside. */
   @media (prefers-reduced-motion: no-preference) {
@@ -113,6 +146,22 @@
                   background-color var(--motion-fast) ease-out,
                   border-color var(--motion-fast) ease-out,
                   box-shadow var(--motion-fast) ease-out;
+    }
+
+    /* Entry only, and only through showModal(): :modal never matches a
+       server-rendered <dialog open>, so nothing animates on page load.
+       @starting-style supplies the first rendered frame, which is what a plain
+       transition cannot animate from. Exit is instant by design. */
+    dialog:modal {
+      transition: opacity var(--motion-slow) ease-out,
+                  translate var(--motion-slow) ease-out;
+    }
+
+    @starting-style {
+      dialog:modal {
+        opacity: 0;
+        translate: 0 0.75rem;
+      }
     }
   }
 }
@@ -138,6 +187,11 @@
       &:hover { text-decoration: underline; }
     }
   }
+  .site-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-sm);
+  }
   main {
     inline-size: min(100% - 2 * var(--space), var(--measure));
     margin-inline: auto;
@@ -145,6 +199,48 @@
     gap: var(--space);
     align-content: start;
     padding-block: var(--space-lg);
+  }
+
+  /* Bottom navigation (patterns/css-layout.md). The bar is fixed, so it takes
+     no space in the flow — but a footer with padding would still hold a row
+     open, so the footer that carries only the bar has none. */
+  .site-footer:has(nav) { padding: 0; }
+
+  footer nav {
+    position: fixed;
+    inset-block-end: 0;
+    inset-inline: 0;
+    display: flex;
+    justify-content: space-around;
+    padding-block: var(--space-xs);
+    /* Without the inset the phone's home indicator sits on the last row of targets. */
+    padding-block-end: calc(var(--space-xs) + env(safe-area-inset-bottom));
+    border-block-start: 1px solid var(--color-border);
+    background: var(--color-surface); /* opaque: the page scrolls behind the bar */
+  }
+
+  footer nav a {
+    display: flex;
+    flex-direction: column; /* icon over word */
+    align-items: center;
+    gap: 0.125rem;
+    min-inline-size: 3.5rem;
+    min-block-size: 3.5rem; /* 56px — the target size, not the 44px floor */
+    padding: var(--space-xs);
+    font-size: 0.875rem;
+
+    /* Color alone would carry the state for everybody except the readers who
+       cannot see it. The weight carries it too, and aria-current carries it
+       to a screen reader. */
+    &[aria-current="page"] {
+      color: var(--color-accent);
+      font-weight: 700;
+    }
+  }
+
+  /* The bar floats over the page, so the last row of content clears it. */
+  body:has(footer nav) main {
+    padding-block-end: calc(var(--space-lg) + var(--bar) + env(safe-area-inset-bottom));
   }
 }
 
@@ -181,12 +277,13 @@
     .icon { background-color: CanvasText; }
   }
 
-  /* Four shapes from Lucide, each on its 24-unit grid with a 2-unit
+  /* Five shapes from Lucide, each on its 24-unit grid with a 2-unit
      round-capped stroke. */
   .icon-plus { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E"); }
-  .icon-check { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E"); }
-  .icon-circle { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3C/svg%3E"); }
   .icon-trash { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6'/%3E%3C/svg%3E"); }
+  .icon-hash { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h16M4 15h16M10 3 8 21M16 3l-2 18'/%3E%3C/svg%3E"); }
+  .icon-user { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E"); }
+  .icon-send { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 2 11 13M22 2l-7 20-4-9-9-4Z'/%3E%3C/svg%3E"); }
 
   .button-primary {
     /* The measured primary-button recipe from patterns/css-tokens.md. */
@@ -204,39 +301,26 @@
     }
   }
 
-  /* Reserved height: the line grows a message without shifting the list. */
-  .status {
-    min-height: 1.5lh;
+  .site-who { font-weight: 600; }
 
-    & .message { color: var(--color-text-muted); }
+  .flash {
+    padding: var(--space-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
   }
 
-  /* The whole interactive region: the add form and the list, swapped together
-     because every action changes both. */
-  .todo {
+  .field-error { color: var(--color-error); }
+
+  .empty { color: var(--color-text-muted); }
+
+  /* One stacked form: label, control, error, then the button. */
+  .card-form {
     display: grid;
-    gap: var(--space);
-
-    &.htmx-request .task-list { opacity: 0.6; }
-
-    /* The list dims like an indicator: the 100 ms entry delay keeps
-       sub-100ms responses from flashing (patterns/css-motion.md). */
-    @media (prefers-reduced-motion: no-preference) {
-      & .task-list { transition: opacity var(--motion-fast) ease-out; }
-      &.htmx-request .task-list { transition-delay: 100ms; }
-    }
-  }
-
-  .task-form {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--space-sm);
+    justify-items: stretch;
 
-    /* The label and the error span the row; the field and the button share it. */
-    & label, & .field-error { grid-column: 1 / -1; }
-
-    & input {
-      font: inherit; /* UA controls use a small system face and ignore the page's */
+    & input, & textarea {
       min-block-size: 3rem; /* 48px — the thumb target, above the 44px floor */
       padding: var(--space-sm);
       border: 1px solid var(--color-border);
@@ -253,9 +337,13 @@
     & button { min-block-size: 3rem; }
   }
 
-  .field-error { color: var(--color-error); }
+  .dialog-actions {
+    display: flex;
+    justify-content: end;
+    gap: var(--space-sm);
+  }
 
-  .task-list {
+  .rooms {
     display: grid;
     gap: var(--space-sm);
     /* The minimal reset keeps ul markers and padding, so dropping them is a
@@ -265,45 +353,107 @@
     padding: 0;
   }
 
-  .task {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+  .room {
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     background: var(--color-surface);
 
-    /* Each control is its own form, so the form is the grid item and the
-       button fills it. */
-    & > form { display: flex; }
-  }
+    & a {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      min-block-size: 3rem;
+      padding: var(--space-sm) var(--space);
+      color: var(--color-text);
+      text-decoration: none;
 
-  /* Both row controls sit on the row's own surface: no second boundary inside
-     the card, and the base hover still swaps the ground under the thumb. */
-  .task-toggle, .task-delete {
-    min-block-size: 3rem;
-    border-color: transparent;
-    background: none;
-  }
-
-  .task-toggle {
-    inline-size: 100%;
-    justify-content: start; /* buttons center; a row of text starts */
-    gap: var(--space-sm);
-    text-align: start;
-
-    /* Done shows on the words as well as on the icon: a state carried by a
-       check mark alone has no text equivalent (patterns/css-icons.md rule 2). */
-    &[aria-pressed="true"] .task-title {
-      color: var(--color-text-muted);
-      text-decoration: line-through;
+      &:hover { background: var(--color-bg); }
+      &:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: -2px;
+      }
     }
   }
 
-  .task-delete { color: var(--color-text-muted); }
+  .chat {
+    display: grid;
+    gap: var(--space);
+  }
 
-  .task-empty {
-    padding-block: var(--space-sm);
+  .messages {
+    display: grid;
+    gap: var(--space-sm);
+    list-style: none; /* the markup carries role="list" — see .rooms */
+    padding: 0;
+  }
+
+  .message {
+    padding: var(--space-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+  }
+
+  .message-meta {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    color: var(--color-text-muted);
+  }
+
+  /* Line breaks are how people write lists and paste code, and the server
+     keeps them, so the stylesheet shows them. */
+  .message-body { white-space: pre-wrap; }
+
+  .say {
+    display: grid;
+    gap: var(--space-sm);
+
+    & textarea {
+      padding: var(--space-sm);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      background: var(--color-bg);
+      color: var(--color-text);
+      resize: vertical;
+
+      &:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: 2px;
+      }
+    }
+
+    & button { min-block-size: 3rem; }
+  }
+
+  .secret {
+    padding: var(--space-sm);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+  }
+
+  /* The one thing on the page worth selecting in a hurry. */
+  .secret-value { user-select: all; }
+
+  .tokens {
+    inline-size: 100%;
+    border-collapse: collapse;
+
+    & th, & td {
+      padding: var(--space-xs) var(--space-sm);
+      border-block-end: 1px solid var(--color-border);
+    }
+
+    & tbody th { font-weight: 600; }
+  }
+
+  .token-revoke {
+    min-block-size: 2.75rem; /* 44px — the floor, inside a dense table row */
+    min-inline-size: 2.75rem;
+    padding: var(--space-xs);
+    border-color: transparent;
+    background: none;
     color: var(--color-text-muted);
   }
 }

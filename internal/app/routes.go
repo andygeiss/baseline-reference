@@ -6,16 +6,46 @@ import (
 	"strings"
 )
 
-// Routes registers every route and wraps the mux in the standard middleware chain.
+// Routes registers every route and wraps the mux in the standard middleware
+// chain. Every mutation is a POST: a plain form can only GET or POST, and every
+// action here must work with htmx switched off.
 func (a *App) Routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /{$}", a.handleTasksShow)
-	mux.HandleFunc("POST /tasks", a.handleTaskAdd)
-	// POST, not DELETE: a plain form can only GET or POST, and every action
-	// here must work with htmx switched off.
-	mux.HandleFunc("POST /tasks/{id}/toggle", a.handleTaskToggle)
-	mux.HandleFunc("POST /tasks/{id}/delete", a.handleTaskDelete)
+	// Public: the two ways in, and the way out.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/rooms", http.StatusSeeOther)
+	})
+	mux.HandleFunc("GET /login", a.handleLoginForm)
+	mux.HandleFunc("POST /login", a.handleLogin)
+	mux.HandleFunc("GET /register", a.handleRegisterForm)
+	mux.HandleFunc("POST /register", a.handleRegister)
+	mux.HandleFunc("POST /logout", a.handleLogout)
+
+	// Everything else needs a user. requireAuth takes either credential — a
+	// browser session or a machine token — so the CLI reaches the same routes.
+	private := func(h http.HandlerFunc) http.Handler { return a.requireAuth(h) }
+	mux.Handle("GET /rooms", private(a.handleRoomList))
+	mux.Handle("POST /rooms", private(a.handleRoomCreate))
+	mux.Handle("GET /rooms/new", private(a.handleRoomNew))
+	mux.Handle("GET /rooms/{slug}", private(a.handleRoomShow))
+	mux.Handle("GET /rooms/{slug}/messages", private(a.handleMessagePoll))
+	mux.Handle("POST /rooms/{slug}/messages", private(a.handleMessagePost))
+	mux.Handle("GET /profile", private(a.handleProfile))
+	mux.Handle("POST /profile/tokens", private(a.handleTokenCreate))
+	mux.Handle("POST /profile/tokens/{id}/delete", private(a.handleTokenDelete))
+
+	// The JSON surface, for programs. A separate surface rather than a second
+	// representation of the pages: a command-line client cannot render HTML,
+	// and an API has no forms, no redirects, and no flash messages to render.
+	// It is guarded by its own middleware, because 303 to a sign-in page is not
+	// an answer a program can act on.
+	api := func(h http.HandlerFunc) http.Handler { return a.requireAPIAuth(h) }
+	mux.Handle("GET /api/me", api(a.handleAPIMe))
+	mux.Handle("GET /api/rooms", api(a.handleAPIRoomList))
+	mux.Handle("POST /api/rooms", api(a.handleAPIRoomCreate))
+	mux.Handle("GET /api/rooms/{slug}/messages", api(a.handleAPIMessageList))
+	mux.Handle("POST /api/rooms/{slug}/messages", api(a.handleAPIMessageCreate))
 
 	// Static sits outside the middleware chain: CSRF and the body cap have
 	// nothing to check on a bodiless GET, and FileServerFS sets the right

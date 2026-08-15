@@ -1,17 +1,143 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/andygeiss/baseline-reference/v3/internal/auth"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
-// middleware is the one canonical chain, outermost → innermost. No session
-// middleware: the app has no users (recorded deviation).
+// middleware is the one canonical chain, outermost → innermost.
 func (a *App) middleware(mux http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
 	h := http.MaxBytesHandler(mux, 1<<20)
+	h = a.sessions.LoadAndSave(h)
 	h = csrf.Handler(h)
 	return a.logRequests(a.recoverPanic(a.secureHeaders(h)))
+}
+
+// contextKey keeps this package's context keys from colliding with anybody
+// else's — a plain string would.
+type contextKey string
+
+const userKey contextKey = "user"
+
+// userFrom returns the signed-in user, or the zero User when nobody is signed
+// in. Handlers behind requireAuth always get a real one.
+func userFrom(ctx context.Context) domain.User {
+	u, _ := ctx.Value(userKey).(domain.User)
+	return u
+}
+
+// The two ways a request can fail to name somebody, which are not the same
+// thing. Neither is worth logging: both are normal ways to arrive.
+var (
+	// errNoCredential means nothing was presented. On the pages that is a
+	// reader who is signed out, and the answer is the sign-in page.
+	errNoCredential = errors.New("no credential")
+
+	// errBadCredential means a token was presented and refused — revoked,
+	// mistyped, or from another deployment. That is 401 on both surfaces: a
+	// client whose token stopped working has to be told, and quietly treating
+	// it as "signed out" hides the revocation behind a login page.
+	errBadCredential = errors.New("bad credential")
+)
+
+// authenticate resolves whoever is making this request from either credential —
+// a machine token or a browser session.
+//
+// It answers nothing itself. The two surfaces disagree about what a missing
+// credential means: a browser should be sent to the sign-in page, and a program
+// should be told 401 in a language it reads. So the middlewares below decide,
+// and this decides only who is asking.
+func (a *App) authenticate(r *http.Request) (domain.User, error) {
+	if secret := auth.BearerToken(r.Header.Get("Authorization")); secret != "" {
+		user, err := a.tokens.UserByHash(r.Context(), auth.HashToken(secret))
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.User{}, errBadCredential
+		}
+		if err != nil {
+			return domain.User{}, err
+		}
+		return user, nil
+	}
+
+	id := a.sessions.GetString(r.Context(), "userID")
+	if id == "" {
+		return domain.User{}, errNoCredential
+	}
+	user, err := a.users.ByID(r.Context(), id)
+	if errors.Is(err, domain.ErrNotFound) {
+		// The account is gone but the cookie is not. Drop the session rather
+		// than looping the reader through a sign-in they already did.
+		_ = a.sessions.Destroy(r.Context())
+		return domain.User{}, errNoCredential
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	return user, nil
+}
+
+// requireAuth guards the pages. A signed-out reader is sent to the sign-in page.
+func (a *App) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, err := a.authenticate(r)
+		switch {
+		case err == nil:
+			next.ServeHTTP(w, withUser(r, user))
+		case errors.Is(err, errNoCredential):
+			a.toLogin(w, r)
+		case errors.Is(err, errBadCredential):
+			// Not the sign-in page: whoever sent a token is a program, and a
+			// 200 full of HTML would read as success to it.
+			a.clientError(w, r, http.StatusUnauthorized)
+		default:
+			a.serverError(w, r, err)
+		}
+	})
+}
+
+// requireAPIAuth guards /api. A program gets 401 and a JSON body: a redirect to
+// a sign-in page would be 200 of HTML it cannot read, and it would look like
+// success to anything checking only the status.
+func (a *App) requireAPIAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, err := a.authenticate(r)
+		switch {
+		case err == nil:
+			next.ServeHTTP(w, withUser(r, user))
+		case errors.Is(err, errNoCredential):
+			a.apiError(w, r, http.StatusUnauthorized, "Send a token: Authorization: Bearer <token>.")
+		case errors.Is(err, errBadCredential):
+			a.apiError(w, r, http.StatusUnauthorized, "That token is not valid. It may have been revoked.")
+		default:
+			a.apiServerError(w, r, err)
+		}
+	})
+}
+
+func withUser(r *http.Request, user domain.User) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), userKey, user))
+}
+
+// toLogin sends a signed-out reader to the login page.
+//
+// An htmx request gets 200 with HX-Redirect rather than a 303: the XHR would
+// follow a redirect by itself and swap the whole login page into whatever
+// fragment the reader was looking at. Both answers vary by HX-Request and
+// neither goes through render, so they set the Vary header themselves.
+func (a *App) toLogin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "HX-Request, HX-Boosted")
+	if isHTMX(r) {
+		w.Header().Set("HX-Redirect", "/login")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 type statusRecorder struct {

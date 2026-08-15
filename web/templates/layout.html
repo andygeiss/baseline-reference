@@ -10,7 +10,7 @@
     {"code":"[23]..","swap":true},
     {"code":"422","swap":true},
     {"code":"[45]..","swap":false,"error":true}]}'>
-  <title>{{template "title" .}} · Todo</title>
+  <title>{{template "title" .}} · Go Chat</title>
   <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
   <link rel="icon" href="/static/favicon.svg?v={{version}}" type="image/svg+xml">
   <link rel="manifest" href="/static/manifest.webmanifest?v={{version}}">
@@ -20,15 +20,28 @@
 </head>
 <body hx-boost="true">
   <header class="site-header">
-    <nav>
-      <a href="/">Todo</a>
-    </nav>
+    <a href="/rooms">Go Chat</a>
+    {{with .User.Name}}<span class="site-who">{{.}}</span>{{end}}
   </header>
   <main>
+    {{with .Flash}}<p class="flash" role="status">{{.}}</p>{{end}}
     {{template "main" .}}
   </main>
   <footer class="site-footer">
-    <p>Server-rendered with Go + htmx — no JavaScript written.</p>
+    {{if .User.ID}}
+      {{/* The bar is position: fixed, so this footer collapses to a zero-height
+           grid row and the page shell needs no change (css-layout.md). */}}
+      <nav aria-label="Sections">
+        <a href="/rooms" {{if eq .Nav "rooms"}}aria-current="page"{{end}}>
+          <span class="icon icon-hash" aria-hidden="true"></span>Rooms
+        </a>
+        <a href="/profile" {{if eq .Nav "profile"}}aria-current="page"{{end}}>
+          <span class="icon icon-user" aria-hidden="true"></span>You
+        </a>
+      </nav>
+    {{else}}
+      <p>Server-rendered with Go + htmx — no JavaScript written.</p>
+    {{end}}
   </footer>
   <script src="/static/js/htmx.min.js?v={{version}}"></script>
 </body>

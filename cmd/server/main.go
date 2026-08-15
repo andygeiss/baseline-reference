@@ -13,14 +13,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"golang.org/x/sync/errgroup"
 
 	reference "github.com/andygeiss/baseline-reference/v3"
 	"github.com/andygeiss/baseline-reference/v3/internal/app"
+	"github.com/andygeiss/baseline-reference/v3/internal/auth"
 	"github.com/andygeiss/baseline-reference/v3/internal/store"
 )
 
@@ -78,7 +81,42 @@ func run(cfg Config) error {
 
 	ver := version() // read once at boot; the ops handler and the asset cache-buster share it
 
-	a, err := app.New(logger, store.NewTasks(db), templatesFS, staticFS, ver)
+	sessions := scs.New()
+	sessions.Lifetime = 12 * time.Hour
+	sessions.IdleTimeout = 2 * time.Hour
+	// All three are set explicitly: scs defaults HttpOnly to true and SameSite
+	// to Lax, but Secure to false. Do not "simplify" these away.
+	sessions.Cookie.HttpOnly = true
+	sessions.Cookie.SameSite = http.SameSiteLaxMode
+	// Secure follows the deployment, not a constant. This binary only ever
+	// speaks plain HTTP — TLS terminates in the proxy in front of it — so a
+	// cookie marked Secure in dev is a cookie no client sends back, and the app
+	// cannot be exercised over the HTTP it actually serves. ENV is set by the
+	// deployment, which is the thing that knows whether TLS is in front.
+	sessions.Cookie.Secure = cfg.Env == "prod"
+	sessionStore := store.NewSessions(db)
+	sessions.Store = sessionStore
+
+	// Built once: it costs a real argon2id run, and the login path needs it on
+	// every attempt against a name nobody has.
+	dummyHash, err := auth.DummyHash()
+	if err != nil {
+		return fmt.Errorf("building the dummy password hash: %w", err)
+	}
+
+	a, err := app.New(app.Options{
+		Logger:      logger,
+		Users:       store.NewUsers(db),
+		Rooms:       store.NewRooms(db),
+		Messages:    store.NewMessages(db),
+		Tokens:      store.NewTokens(db),
+		Sessions:    sessions,
+		TemplatesFS: templatesFS,
+		StaticFS:    staticFS,
+		Version:     ver,
+		DummyHash:   dummyHash,
+		InviteCode:  cfg.InviteCode,
+	})
 	if err != nil {
 		return fmt.Errorf("building app: %w", err)
 	}
@@ -110,9 +148,69 @@ func run(cfg Config) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return serve(gctx, srv) })
 	g.Go(func() error { return serve(gctx, opsSrv) })
+	g.Go(func() error { return sweepSessions(gctx, logger, sessionStore) })
+	g.Go(func() error { return snapshot(gctx, logger, db, cfg.DBPath) })
 	g.Go(func() error { <-gctx.Done(); logger.Info("shutting down"); return nil })
 	logger.Info("started", "version", ver, "config", cfg)
 	return g.Wait()
+}
+
+// sweepSessions deletes expired session rows every few minutes. This only
+// reclaims disk: an expired session stops working the moment it expires,
+// because the store's Find refuses to return it.
+func sweepSessions(ctx context.Context, logger *slog.Logger, sessions *store.Sessions) error {
+	return every(ctx, 5*time.Minute, func() {
+		if err := sessions.DeleteExpired(ctx); err != nil {
+			logger.Error("sweeping sessions", "err", err)
+		}
+	})
+}
+
+// snapshot answers the question patterns/go-sqlite.md makes every project
+// answer: if the server disappears right now, what have you lost? This app's
+// answer is "up to a day", so it writes a consistent copy beside the database
+// once at boot and once a day after that.
+//
+// Getting that copy off the machine is a separate job with its own credentials,
+// and it belongs to the deployment — the snapshot alone shares a disk with the
+// thing it protects.
+func snapshot(ctx context.Context, logger *slog.Logger, db *store.DB, dbPath string) error {
+	write := func() {
+		// The snapshot goes beside the database, built from that file's own
+		// directory: every other path may be read-only, and VACUUM INTO
+		// resolves a relative path against the process's working directory,
+		// not the database's.
+		dst := filepath.Join(filepath.Dir(dbPath), "snapshot-"+time.Now().UTC().Format("2006-01-02")+".db")
+		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger.Error("clearing yesterday's snapshot", "path", dst, "err", err)
+			return
+		}
+		// The read pool, never the write pool: this statement only reads, so
+		// running it on the single write connection would starve writes for its
+		// whole duration.
+		if _, err := db.Read.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
+			logger.Error("writing snapshot", "path", dst, "err", err)
+			return
+		}
+		logger.Info("snapshot written", "path", dst)
+	}
+	write() // at boot, so a fresh deployment is never a day away from its first copy
+	return every(ctx, 24*time.Hour, write)
+}
+
+// every runs do on a ticker until ctx is canceled — an owned lifecycle, so the
+// goroutine stops when the process does.
+func every(ctx context.Context, d time.Duration, do func()) error {
+	ticker := time.NewTicker(d)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			do()
+		}
+	}
 }
 
 // serve runs srv until ctx is canceled, then shuts it down gracefully so

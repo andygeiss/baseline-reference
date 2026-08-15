@@ -3,7 +3,10 @@ module github.com/andygeiss/baseline-reference/v3
 go 1.26
 
 require (
+	github.com/alexedwards/scs/v2 v2.9.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/time v0.15.0
 	modernc.org/sqlite v1.56.0
 )
 

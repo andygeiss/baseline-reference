@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: baseline-reference
-description: A mobile-first todo app — a simple way to organize tasks.
+description: Go Chat — a mobile-first chat app, with a command-line client.
 colors:
   bg: "oklch(99% 0.002 260)"
   surface: "oklch(96% 0.005 260)"
@@ -51,28 +51,27 @@ two files change in the same commit.
 
 Every color `app.css` writes comes from the roles above — components never
 use a raw color value. `accent` colors everything interactive: links, the
-primary button, focus rings. `primary` restates the `accent` values
-character for character — a file without a `primary` palette makes a design
-tool generate a color of its own, so this theme names it instead. The spec
-does not require it; writing it down is how the theme keeps the decision.
-`surface` is the resting fill of buttons and
-task rows. `error` colors one thing: the message under a field the reader
-must fix. Acting on a task that is already gone is not a validation failure
-— that comes back as `text-muted` advice beside the count. Hover feedback
-swaps roles at the use site — a hovered button trades `surface` for `bg`.
-Both row controls sit on the row's `surface`, so the same swap works on
-them without a second boundary inside the card. The primary button's fill hides
-that ground, so it mixes toward `text` with `color-mix()` instead. Neither
-adds a shade token.
+primary button, focus rings, and the section the reader is in. `primary`
+restates the `accent` values character for character — a file without a
+`primary` palette makes a design tool generate a color of its own, so this
+theme names it instead. The spec does not require it; writing it down is how
+the theme keeps the decision. `surface` is the resting fill of buttons,
+message cards, room rows, and the bottom bar. `error` colors one thing: the
+message under a field the reader must fix. Hover feedback swaps roles at the
+use site — a hovered button trades `surface` for `bg`. The primary button's
+fill hides that ground, so it mixes toward `text` with `color-mix()` instead.
+Neither adds a shade token.
 
 The manifest's `background_color`/`theme_color` and the two `theme-color`
 metas are `bg` converted to sRGB (`#fbfcfd` light, `#0f1216` dark) — those
 formats cannot read `oklch()` — and they change with `bg` in the same commit.
 The app mark (`favicon.svg` and the four install icons exported from it) is a
-white check mark on a rounded square. It carries its own blue,
-`oklch(55% 0.18 255)` = `#026fd7`: brighter than
+white speech bubble, three dots inside it, on a rounded square. It carries its
+own blue, `oklch(55% 0.18 255)` = `#026fd7`: brighter than
 `accent`, which is dark enough to pass as text. The mark does not follow the
-theme; it changes only when the mark is redrawn. The maskable and Apple icons
+theme; it changes only when the mark is redrawn. The PNGs are rasterized from
+`favicon.svg` with `rsvg-convert`, which cannot read `oklch()`, so the raster
+source restates that one blue as its sRGB hex. The maskable and Apple icons
 are padded with light `bg` (`#fbfcfd`): both platforms need an opaque square.
 
 Measured contrast (2026-08-13): every text role on both backgrounds ≥ 6.6:1
@@ -84,11 +83,18 @@ these numbers.
 
 ## Typography
 
-The system font stack, no web fonts: `body` for text, `mono` for code. There
-is no size ladder. Body copy keeps the size the reader's browser is set to,
-and the one heading level the app renders sizes itself fluidly:
-`clamp(1.75rem, 1.2rem + 2.4vw, 2.5rem)`. Every fluid size keeps a `rem`
+The system font stack, no web fonts: `body` for text, `mono` for the token
+secret and the header names in the help text. There is no size ladder. Body
+copy keeps the size the reader's browser is set to, and the two heading levels
+the app renders size themselves fluidly:
+`clamp(1.75rem, 1.2rem + 2.4vw, 2.5rem)` and
+`clamp(1.375rem, 1.1rem + 1.2vw, 1.875rem)`. Every fluid size keeps a `rem`
 term, so type still grows when a reader raises that default (WCAG 1.4.4).
+Three relative steps sit under them, each in `em` so it compounds correctly
+where it is nested: `0.875em` for a timestamp or a "last used" cell,
+`0.9375em` for code, because mono faces run large, and `0.875rem` for the
+words in the bottom bar. Table cells take `tabular-nums`, so a column of
+times lines up.
 
 ## Layout
 
@@ -96,20 +102,30 @@ One fluid spacing value drives all whitespace: `clamp(1rem, 0.5rem + 2vw, 2rem)`
 with quarter, half, and double steps derived from it. The content column
 measures `30rem` — app UI, not prose — and card and sidebar pages cap at
 `80rem`. Layout is mobile-first: the base styles are the 320 px layout, and
-wider screens only add columns. Every control a thumb aims at — the field,
-the Add button, both row controls — is at least `3rem` (48 px) tall, above
-the 44 px floor WCAG 2.5.5 sets.
+wider screens only add columns. Every control a thumb aims at — the fields,
+the buttons, a room row — is at least `3rem` (48 px) tall, above
+the 44 px floor WCAG 2.5.5 sets. The one exception is the revoke button inside
+a table row, at `2.75rem` (44 px): the floor exactly, because the row it sits
+in is dense by nature.
+
+**The bottom bar** is where a signed-in reader navigates from: two
+destinations, Rooms and You, each an icon over its word, each target
+`3.5rem` (56 px). It is `position: fixed`, so it takes no space in the flow —
+which means the footer holding it drops its padding, and the page reserves
+`--bar` plus the phone's `env(safe-area-inset-bottom)` under its last row.
+Signed-out pages have nowhere to navigate, so they have no bar.
 
 ## Elevation & Depth
 
 No shadows: this is the minimal surface style. Depth is one step deep:
-`surface` panels on the `bg` page ground, separated by `border` lines. A
-design needing a taller stack than that gets redesigned flatter.
+`surface` panels on the `bg` page ground, separated by `border` lines. The
+dialog is the one thing that floats, and the browser's own backdrop is what
+separates it. A design needing a taller stack than that gets redesigned flatter.
 
 ## Shapes
 
-One radius, `0.375rem`, on every rounded box: buttons, the text field, and
-task rows. Pills and circles are not part of this system.
+One radius, `0.375rem`, on every rounded box: buttons, fields, message cards,
+room rows, and the dialog. Pills and circles are not part of this system.
 
 ## Components
 
@@ -120,32 +136,46 @@ Every component composes the roles above, and every interactive state
   background, `bg` text. Secondary actions are plain buttons: `surface`
   fill inside a `border` boundary. Every button answers a hover, sinks
   `1px` while pressed, and shows an `accent` focus ring.
-- **Text field** — the one input in the app. `bg` fill inside a `border`
+- **Field** — text inputs and the message box. `bg` fill inside a `border`
   boundary, one radius, `3rem` tall, and the same `accent` focus ring every
-  other control shows. It takes `font: inherit`, because a UA control
-  otherwise picks a small system face of its own.
+  other control shows. Each takes `font: inherit`, because a UA control
+  otherwise picks a small system face of its own. The message box is the one
+  field a reader may resize, and only vertically.
 - **Field error** — one line in `error`, directly under the field it names.
   Adjacent placement is for the eye; the field also points at the message
   with `aria-describedby` and marks itself `aria-invalid`, so a screen reader
   gets both the reason and which field failed. All three appear only on a
-  422 answer, next to the value the reader typed.
-- **Task row** — a `surface` card inside a `border` boundary, holding two
-  controls: the row itself toggles the task, and a trash button at its end
-  deletes it. Both are `3rem` tall and sit on the card's own ground, so
-  neither draws a second boundary inside it. A done row keeps the check
-  mark *and* strikes its title through in `text-muted`: state carried by an
-  icon alone would have no text equivalent. While a change is in flight the
-  list dims, hidden until the request runs past 100 ms. The rows sit in a
+  422 answer, next to the value the reader typed. A failure belonging to no
+  single field — "We do not know that name and password." — sits at the top of
+  the form instead, because naming a field there would say which half was wrong.
+- **Flash** — one line in a `surface` well above the page, shown once after a
+  redirect ("Room created."), then gone. It is how a plain form reports what
+  happened, since a redirect carries no words of its own.
+- **Room row** — a `surface` card inside a `border` boundary, the whole row a
+  link at least `3rem` tall, a hash icon before the name. The rows sit in a
   `ul` with its markers dropped, so the markup carries `role="list"` — Safari
   drops the semantics along with the marker.
-- **Status line** — one line above the list counting what is still open,
-  with a stale action ("That task is gone.") explained in `text-muted`.
+- **Message** — a `surface` card holding two lines: who and when in
+  `text-muted`, then what they said. The body keeps its line breaks
+  (`white-space: pre-wrap`), because line breaks are how people write lists
+  and paste code, and the server keeps them too. The list carries `role="list"`
+  for the same reason the room list does, and its last row is the poller — a
+  hidden, empty `li` that carries the cursor and nothing else.
+- **Dialog** — the new-room form, opened by an invoker button with no script
+  at all. It fades and rises `0.75rem` on entry, and only on entry: the
+  selector is `dialog:modal`, which a server-rendered open dialog never
+  matches, so nothing animates on page load. Exit is instant by design.
+  `/rooms/new` is the same form as a page, for a browser that does not know
+  invoker commands.
+- **Token table** — the machine tokens, one row each: label, when it was last
+  used, and a revoke button. The new token's secret appears once above it, in
+  `mono` inside an `accent` boundary, selectable in one tap.
 - **Icon** — a CSS mask, `1em` square, painted with the surrounding text
-  color, so it needs no color and no size of its own. Four shapes ship on
-  Lucide's 24-unit grid with a 2-unit round-capped stroke: plus (Add),
-  circle and check (a row's two states), and trash (delete). The first
-  decorates a labeled control; the rest sit in controls that carry their own
-  accessible name.
+  color, so it needs no color and no size of its own. Five shapes ship on
+  Lucide's 24-unit grid with a 2-unit round-capped stroke: plus (new room, new
+  token), hash (a room), user (You), send (post a message), and trash
+  (revoke). Each either decorates a labeled control or sits in one carrying
+  its own accessible name.
 
 ## Do's and Don'ts
 
@@ -156,5 +186,7 @@ Every component composes the roles above, and every interactive state
   movement. Don't decorate with motion.
 - Do size type and icons in `rem` and `em`. Don't add a size-token ladder,
   and don't set a root `font-size` — both override the reader's choice.
+- Do keep the bottom bar to destinations. Don't put an action in it — "new
+  room" is a button on the page, not a place to go.
 - Do change this file and `app.css` in the same commit. Don't let them
   drift.

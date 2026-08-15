@@ -1,0 +1,17 @@
+{{define "title"}}New room{{end}}
+
+{{define "main"}}
+<h1>New room</h1>
+
+<form class="card-form" method="post" action="/rooms">
+  <label for="name">Name it</label>
+  <input id="name" name="name" value="{{.Form.Name}}" required
+         maxlength="{{.MaxRoomNameLen}}"
+         {{with .Form.FieldErrors.name}}aria-invalid="true" aria-describedby="name-error"{{end}}>
+  {{with .Form.FieldErrors.name}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+
+  <button class="button-primary" type="submit">Create</button>
+</form>
+
+<p><a href="/rooms">Back to the rooms</a></p>
+{{end}}

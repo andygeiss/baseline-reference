@@ -1,0 +1,63 @@
+{{define "title"}}You{{end}}
+
+{{define "main"}}
+<h1>You</h1>
+
+<p>Signed in as <strong>{{.User.Name}}</strong>.</p>
+
+<form method="post" action="/logout">
+  <button type="submit">Sign out</button>
+</form>
+
+<h2>Tokens for programs</h2>
+
+<p>A token lets the <code>chat</code> command sign in as you. Send it as
+  <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+
+{{with .NewSecret}}
+  <div class="secret">
+    <p><strong>Copy this now.</strong> It is not shown again.</p>
+    <p><code class="secret-value">{{.}}</code></p>
+  </div>
+{{end}}
+
+<form class="card-form" method="post" action="/profile/tokens">
+  <label for="label">What is it for?</label>
+  <input id="label" name="label" value="{{.Form.Label}}" required
+         maxlength="40" placeholder="laptop"
+         {{with .Form.FieldErrors.label}}aria-invalid="true" aria-describedby="label-error"{{end}}>
+  {{with .Form.FieldErrors.label}}<p class="field-error" id="label-error">{{.}}</p>{{end}}
+
+  <button class="button-primary" type="submit">
+    <span class="icon icon-plus" aria-hidden="true"></span>Make a token
+  </button>
+</form>
+
+{{if .Tokens}}
+  <table class="tokens">
+    <caption class="visually-hidden">Your tokens</caption>
+    <thead>
+      <tr><th scope="col">Name</th><th scope="col">Last used</th><th scope="col">Revoke</th></tr>
+    </thead>
+    <tbody>
+      {{range .Tokens}}
+        <tr>
+          <th scope="row">{{.Label}}</th>
+          <td><small>{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}never{{end}}</small></td>
+          <td>
+            <form method="post" action="/profile/tokens/{{.ID}}/delete"
+                  hx-confirm="Revoke this token? Anything using it stops working.">
+              <button type="submit" class="token-revoke">
+                <span class="icon icon-trash" aria-hidden="true"></span>
+                <span class="visually-hidden">Revoke {{.Label}}</span>
+              </button>
+            </form>
+          </td>
+        </tr>
+      {{end}}
+    </tbody>
+  </table>
+{{else}}
+  <p class="empty">No tokens yet.</p>
+{{end}}
+{{end}}

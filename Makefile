@@ -1,8 +1,8 @@
 # Copied from the baseline (stack/makefile.md). Adjust per its rule 5; record
 # any other deviation in the README.
 
-# The main package: ./cmd/server for a web application, . for a single-binary
-# CLI.
+# This module ships two binaries, so MAIN names the one `make run` starts and
+# the build target takes them both (stack/makefile.md rule 5).
 MAIN = ./cmd/server
 
 .PHONY: check test run fmt build clean
@@ -31,9 +31,9 @@ run:
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
 
-# Release-shaped local binary in bin/ (go build creates the directory).
+# Release-shaped local binaries in bin/ (go build creates the directory).
 build:
-	CGO_ENABLED=0 go build -trimpath -o bin/ $(MAIN)
+	CGO_ENABLED=0 go build -trimpath -o bin/ ./cmd/...
 
 clean:
 	rm -rf bin/
