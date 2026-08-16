@@ -14,6 +14,8 @@ programs; `gochat` is the program.
   baseline plus a live smoke test of both built binaries. `./verify.sh` must exit 0.
 - **[DESIGN.md](DESIGN.md)** — the design system: theme values and component
   inventory, lockstep with `web/static/css/app.css`.
+- **[GLOSSARY.md](GLOSSARY.md)** — the words this project owns: one per concept,
+  the runners-up under _Avoid_.
 
 ## Stack
 

@@ -8,10 +8,13 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`c55c8ec`** — tag **v3.3.1**, the full-corpus re-review that corrected two
-claims this repository had fed back, on top of v3.3.0's live updates, machine
-tokens, CLI secret rule, and the rule that a CLI checks its name against the
-PATH.
+**`74e2c4c`** — tag **v3.4.0**, which added the project glossary, on top of
+v3.3.1's full-corpus re-review and v3.3.0's live updates, machine tokens, CLI
+secret rule, and the rule that a CLI checks its name against the PATH.
+
+This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
+`patterns/glossary.md` quotes as its worked example. The two are character
+identical, so a change to either is a change to both.
 
 The app under test is **Go Chat**: a mobile-first chat application with a
 command-line client. v3.2.0 swapped it in for the todo app, which had swapped in
