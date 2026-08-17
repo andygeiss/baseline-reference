@@ -8,13 +8,24 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`b8d6b1d`** — tag **v3.6.0**, which cut what the corpus costs an agent to read (the
-web application's required reading fell 29,855 → 18,252 tokens, no rule removed) and
-redefined tier 1 by what a rule protects rather than by which checklist section it sits
-in. **No rule this repository implements changed**, so no code here changed with it. Two
-documents this repository's own notes cite moved their contents: the timeout ladder is
-now in `patterns/go-http-client.md`, and the LLM prompt rules in
-`patterns/go-llm-adapter.md`. It already satisfies both.
+**`8795f18`** — tag **v3.7.0**, which folded each project type's trigger router into its
+checklist. Routing and the definition of done are one file per project type now, one
+section per topic: the moment it fires, the document that rules it, and the boxes it is
+checked against. An ordinary change to a web application reads 6,980 tokens instead of
+8,091. The same release replaced code a competent Go engineer writes correctly from the
+rule sentence with its contract, and stopped defining tier 1 by which checklist section a
+box sits in — a wholly tier-1 section now says so in its heading.
+
+**No rule this repository implements changed**, and that was checked rather than assumed.
+The release adds three `patterns/go-sqlite.md` boxes to the CLI checklist, wired up
+because the CLI router had pointed at that document since it existed and no box ever
+checked it. SQLite here lives only in `cmd/server` and `internal/store`, so the `gochat`
+client stores nothing between runs, the trigger never fires, and those three boxes are
+**unexercised** here rather than failing — the same status as the CLI token ceiling.
+
+Two documents this repository's notes cite moved their contents in v3.6.0: the timeout
+ladder is now in `patterns/go-http-client.md`, and the LLM prompt rules in
+`patterns/llm-prompting.md`. It already satisfies both.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
@@ -83,8 +94,9 @@ the reasoning for why SSE is not in this baseline yet.
    every service that deploys more often than it cleans up. The loop looks alive,
    `g.Wait()` holds it open, and the table it was meant to trim grows forever.
    The run-once now lives inside `every`, where both workers get it, and
-   `patterns/go-http-server.md` gained the rule. *(Found in v3.5.0, by building
-   the assistant — nothing in a document review had reached it.)*
+   `patterns/go-background-work.md` owns the rule (it was in
+   `patterns/go-http-server.md` when this was found). *(Found in v3.5.0, by
+   building the assistant — nothing in a document review had reached it.)*
 
 **Two surfaces, and why.** The server renders HTML for browsers and JSON at
 `/api` for programs. These are separate surfaces, not two representations of
