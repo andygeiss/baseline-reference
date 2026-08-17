@@ -1,0 +1,21 @@
+{{define "title"}}Reset your password{{end}}
+
+{{define "main"}}
+<h1>Reset your password</h1>
+
+<p>Tell us which account, and if it has an email address we will send a link
+  that lets you set a new password. The link works for one hour.</p>
+
+{{/* The account name, not the address. Names are already on every message here,
+     so asking for one gives nothing away; asking for an address would turn this
+     page into a way to find out who is registered. */}}
+<form class="card-form" method="post" action="/reset">
+  <label for="name">Your name</label>
+  <input id="name" name="name" value="{{.Form.Name}}" autocomplete="username"
+         required autocapitalize="none">
+
+  <button class="button-primary" type="submit">Send the link</button>
+</form>
+
+<p><a href="/login">Back to signing in</a>.</p>
+{{end}}

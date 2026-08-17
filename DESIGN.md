@@ -160,7 +160,21 @@ Every component composes the roles above, and every interactive state
   (`white-space: pre-wrap`), because line breaks are how people write lists
   and paste code, and the server keeps them too. The list carries `role="list"`
   for the same reason the room list does, and its last row is the poller — a
-  hidden, empty `li` that carries the cursor and nothing else.
+  hidden, empty `li` that carries the cursor and nothing else. The time is a
+  `time` element: what it shows is relative ("3 minutes ago"), what its
+  `datetime` and `title` carry is the exact moment.
+- **Show older** — the first row of a long room, and the far end of the list
+  from the poller: one centred `accent` link that loads the page before this
+  one. It is an `li` because it lives inside the list it extends, and it is a
+  real link as well as an htmx trigger, so it works with htmx switched off. It
+  is simply absent once there is nothing older, rather than present and
+  disabled.
+- **Attachment** — a `figure` under the message it belongs to. A picture is
+  bounded by the message rather than by its own pixels (`max-inline-size:
+  100%`), rounded to `radius`, and links to itself. Anything the app does not
+  render — a PDF, a log — is a plain link instead, never a broken image. The
+  caption carries the file's name in `text-muted` and, for whoever uploaded it,
+  a `2.75rem` remove button with the trash icon.
 - **Dialog** — the new-room form, opened by an invoker button with no script
   at all. It fades and rises `0.75rem` on entry, and only on entry: the
   selector is `dialog:modal`, which a server-rendered open dialog never

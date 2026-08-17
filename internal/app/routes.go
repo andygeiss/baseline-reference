@@ -46,6 +46,14 @@ func (a *App) routes() []route {
 		{"POST /register", public, a.handleRegister},
 		{"POST /logout", public, a.handleLogout},
 
+		// Getting back in. Public because somebody who cannot sign in is the
+		// only person who ever needs these, and every one of them answers the
+		// same whether the account exists or not.
+		{"GET /reset", public, a.handleResetForm},
+		{"POST /reset", public, a.handleReset},
+		{"GET /reset/confirm", public, a.handleResetConfirmForm},
+		{"POST /reset/confirm", public, a.handleResetConfirm},
+
 		// The pages. pageAuth takes either credential — a browser session or a
 		// machine token — so the CLI reaches the same routes.
 		{"GET /rooms", pageAuth, a.handleRoomList},
@@ -54,7 +62,14 @@ func (a *App) routes() []route {
 		{"GET /rooms/{slug}", pageAuth, a.handleRoomShow},
 		{"GET /rooms/{slug}/messages", pageAuth, a.handleMessagePoll},
 		{"POST /rooms/{slug}/messages", pageAuth, a.handleMessagePost},
+		{"GET /rooms/{slug}/older", pageAuth, a.handleMessageOlder},
+		// Attachments are served by a handler, never by a file server: a file
+		// server names no reader and types a file by its extension, which is
+		// whatever the sender called it (patterns/go-file-uploads.md).
+		{"GET /rooms/{slug}/files/{id}", pageAuth, a.handleFileShow},
+		{"POST /rooms/{slug}/files/{id}/delete", pageAuth, a.handleFileDelete},
 		{"GET /profile", pageAuth, a.handleProfile},
+		{"POST /profile/email", pageAuth, a.handleEmailSet},
 		{"POST /profile/tokens", pageAuth, a.handleTokenCreate},
 		{"POST /profile/tokens/{id}/delete", pageAuth, a.handleTokenDelete},
 

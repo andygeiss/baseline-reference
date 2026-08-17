@@ -172,12 +172,15 @@ func (a *App) handleAPIMessageCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := userFrom(r.Context())
-	msg, err := domain.NewMessage(room.ID, user.ID, body)
+	// No attachment: this surface posts text. A program that wants to share a
+	// file has a filesystem and a link, and adding multipart to a JSON API buys
+	// a second upload path to keep correct.
+	msg, err := domain.NewMessage(room.ID, user.ID, body, nil)
 	if err != nil {
 		a.apiServerError(w, r, err)
 		return
 	}
-	if err := a.messages.Add(r.Context(), msg); err != nil {
+	if err := a.messages.Add(r.Context(), msg, nil); err != nil {
 		a.apiServerError(w, r, err)
 		return
 	}

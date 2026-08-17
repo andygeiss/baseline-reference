@@ -9,6 +9,21 @@
   <button type="submit">Sign out</button>
 </form>
 
+<h2>Email address</h2>
+
+<p>The only thing this is used for is a password-reset link. Nobody else sees
+  it. Leave it empty and this account cannot be recovered.</p>
+
+<form class="card-form" method="post" action="/profile/email">
+  <label for="email">Your address</label>
+  <input id="email" name="email" type="email" value="{{.EmailForm.Email}}"
+         autocomplete="email" placeholder="you@example.com"
+         {{with .EmailForm.FieldErrors.email}}aria-invalid="true" aria-describedby="email-error"{{end}}>
+  {{with .EmailForm.FieldErrors.email}}<p class="field-error" id="email-error">{{.}}</p>{{end}}
+
+  <button class="button-primary" type="submit">Save</button>
+</form>
+
 <h2>Tokens for programs</h2>
 
 <p>A token lets the <code>chat</code> command sign in as you. Send it as
@@ -43,7 +58,9 @@
       {{range .Tokens}}
         <tr>
           <th scope="row">{{.Label}}</th>
-          <td><small>{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}never{{end}}</small></td>
+          {{/* Absolute, not relative: this page does not refresh itself, so
+               "3 minutes ago" would still say that an hour later. */}}
+          <td><small>{{if .Used}}<time datetime="{{.LastUsed.ISO}}">{{.LastUsed.Absolute}}</time>{{else}}never{{end}}</small></td>
           <td>
             <form method="post" action="/profile/tokens/{{.ID}}/delete"
                   hx-confirm="Revoke this token? Anything using it stops working.">

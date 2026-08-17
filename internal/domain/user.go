@@ -43,6 +43,16 @@ type User struct {
 	ID           string
 	Name         string
 	PasswordHash string
+
+	// Email is optional and private: nothing renders it to anybody else, and
+	// the only thing it does is carry a password-reset link. Empty means the
+	// account cannot be recovered, which the profile page says out loud.
+	Email string
+
+	// PasswordChangedAt stamps the last reset. A session records the value it
+	// signed in under, so a reset ends every session opened before it —
+	// including the one whoever took the account is holding.
+	PasswordChangedAt string
 }
 
 // NormalizeName trims a name and collapses inner whitespace runs to one space.

@@ -70,7 +70,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.rehashIfWeak(r, user, password)
-	if err := a.signIn(r, user.ID); err != nil {
+	if err := a.signIn(r, user); err != nil {
 		a.serverError(w, r, err)
 		return
 	}
@@ -130,7 +130,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.signIn(r, user.ID); err != nil {
+	if err := a.signIn(r, *user); err != nil {
 		a.serverError(w, r, err)
 		return
 	}
@@ -150,11 +150,17 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // signIn starts the session. RenewToken first, always: without it, a token an
 // attacker planted in the browser before the login is still valid after it.
-func (a *App) signIn(r *http.Request, userID string) error {
+//
+// The session also records when the password last changed. authenticate
+// compares that against the account on every request, so resetting a password
+// ends every session opened before the reset — the whole point of resetting one
+// you think somebody else has.
+func (a *App) signIn(r *http.Request, user domain.User) error {
 	if err := a.sessions.RenewToken(r.Context()); err != nil {
 		return fmt.Errorf("renewing the session token: %w", err)
 	}
-	a.sessions.Put(r.Context(), "userID", userID)
+	a.sessions.Put(r.Context(), "userID", user.ID)
+	a.sessions.Put(r.Context(), "pwAt", user.PasswordChangedAt)
 	return nil
 }
 

@@ -1,0 +1,24 @@
+{{define "title"}}Set a new password{{end}}
+
+{{define "main"}}
+<h1>Set a new password</h1>
+
+<form class="card-form" method="post" action="/reset/confirm">
+  {{with .Form.FormError}}<p class="field-error" role="alert">{{.}}</p>{{end}}
+
+  {{/* The token rides the form so a password that was too short can be typed
+       again without going back to the mail for the link. It is spent on the
+       POST, once. */}}
+  <input type="hidden" name="token" value="{{.Form.Token}}">
+
+  <label for="password">New password</label>
+  <input id="password" name="password" type="password"
+         autocomplete="new-password" required
+         {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="password-error"{{end}}>
+  {{with .Form.FieldErrors.password}}<p class="field-error" id="password-error">{{.}}</p>{{end}}
+
+  <button class="button-primary" type="submit">Set it</button>
+</form>
+
+<p>Setting a new password signs you out everywhere else.</p>
+{{end}}

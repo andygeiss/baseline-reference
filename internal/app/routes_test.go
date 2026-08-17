@@ -31,6 +31,15 @@ func TestOnlyTheWayInAndOutIsPublic(t *testing.T) {
 		"GET /register":  true,
 		"POST /register": true,
 		"POST /logout":   true,
+		// Getting back in. Somebody who cannot sign in is the only person who
+		// ever reaches these, so requiring a session would be a locked door
+		// with the key behind it. Each one answers the same whether the account
+		// exists or not, which is what stops them from being a way to ask who
+		// is registered here.
+		"GET /reset":          true,
+		"POST /reset":         true,
+		"GET /reset/confirm":  true,
+		"POST /reset/confirm": true,
 	}
 
 	found := 0

@@ -33,6 +33,11 @@ type Message struct {
 	Author    string // the author's display name, joined on read
 	Body      string
 	CreatedAt time.Time
+
+	// Attachment is the file hanging on this message, or nil. It is read in the
+	// same query: one file per message, so the join that reads a room stays a
+	// join and a page of messages is still one round trip.
+	Attachment *Attachment
 }
 
 // NormalizeBody trims the whitespace around a message and drops the trailing
@@ -66,12 +71,16 @@ func ValidateBody(body string) error {
 // NewMessage returns a message with a normalized body, or an error when the
 // body breaks a rule. The HTTP edge checks the same rules first, so it can name
 // the field and word the message; this is where they are true whoever calls.
-func NewMessage(roomID, authorID, body string) (*Message, error) {
+//
+// att may be nil. When it is not, the body may be empty: a picture on its own
+// is a message, and asking for a caption before accepting one would be a rule
+// invented by the validator rather than by the chat.
+func NewMessage(roomID, authorID, body string, att *Attachment) (*Message, error) {
 	body = NormalizeBody(body)
-	if err := ValidateBody(body); err != nil {
+	if err := ValidateBody(body); err != nil && !(att != nil && errors.Is(err, ErrBodyEmpty)) {
 		return nil, err
 	}
-	return &Message{RoomID: roomID, AuthorID: authorID, Body: body}, nil
+	return &Message{RoomID: roomID, AuthorID: authorID, Body: body, Attachment: att}, nil
 }
 
 // LastSeq returns the cursor a reader polls with after seeing msgs: the

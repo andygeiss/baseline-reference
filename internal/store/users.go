@@ -59,16 +59,20 @@ func (s *Users) Add(ctx context.Context, u *domain.User) error {
 
 // ByName finds a user by name, ignoring capitals.
 func (s *Users) ByName(ctx context.Context, name string) (domain.User, error) {
-	return s.one(ctx, `SELECT id, name, password_hash FROM users WHERE name_key = ?`, nameKey(name))
+	return s.one(ctx, userColumns+` WHERE name_key = ?`, nameKey(name))
 }
 
 // ByID finds a user by ID.
 func (s *Users) ByID(ctx context.Context, id string) (domain.User, error) {
-	return s.one(ctx, `SELECT id, name, password_hash FROM users WHERE id = ?`, id)
+	return s.one(ctx, userColumns+` WHERE id = ?`, id)
 }
 
 // UpdatePasswordHash replaces somebody's stored hash. Login calls it when the
 // stored hash was written under weaker argon2id settings than today's.
+//
+// It leaves password_changed_at alone, and that is the difference from
+// SetPassword below: the password did not change, only the cost it was hashed
+// at, so nobody's other sessions should end because they signed in.
 func (s *Users) UpdatePasswordHash(ctx context.Context, id, hash string) error {
 	if _, err := s.db.Write.ExecContext(ctx,
 		`UPDATE users SET password_hash = ? WHERE id = ?`, hash, id); err != nil {
@@ -77,9 +81,36 @@ func (s *Users) UpdatePasswordHash(ctx context.Context, id, hash string) error {
 	return nil
 }
 
+// SetPassword replaces somebody's password and stamps when it happened. A reset
+// calls it, and the stamp is what ends every session opened before this moment
+// — including whichever one the reset was needed for.
+func (s *Users) SetPassword(ctx context.Context, id, hash string) (string, error) {
+	changedAt := now()
+	if _, err := s.db.Write.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?`,
+		hash, changedAt, id); err != nil {
+		return "", fmt.Errorf("setting the password of user %s: %w", id, err)
+	}
+	return changedAt, nil
+}
+
+// SetEmail stores somebody's address, or clears it when email is empty.
+func (s *Users) SetEmail(ctx context.Context, id, email string) error {
+	if _, err := s.db.Write.ExecContext(ctx,
+		`UPDATE users SET email = ? WHERE id = ?`, email, id); err != nil {
+		return fmt.Errorf("setting the email of user %s: %w", id, err)
+	}
+	return nil
+}
+
+// userColumns is the one shape every user read returns, so a column added to
+// the table is added in one place.
+const userColumns = `SELECT id, name, password_hash, email, password_changed_at FROM users`
+
 func (s *Users) one(ctx context.Context, query string, arg any) (domain.User, error) {
 	var u domain.User
-	err := s.db.Read.QueryRowContext(ctx, query, arg).Scan(&u.ID, &u.Name, &u.PasswordHash)
+	err := s.db.Read.QueryRowContext(ctx, query, arg).
+		Scan(&u.ID, &u.Name, &u.PasswordHash, &u.Email, &u.PasswordChangedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, domain.ErrNotFound
 	}

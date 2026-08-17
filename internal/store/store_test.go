@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -144,7 +145,7 @@ func TestMessages(t *testing.T) {
 	post := func(room domain.Room, body string) domain.Message {
 		t.Helper()
 		m := &domain.Message{RoomID: room.ID, AuthorID: ada.ID, Body: body}
-		if err := messages.Add(t.Context(), m); err != nil {
+		if err := messages.Add(t.Context(), m, nil); err != nil {
 			t.Fatalf("adding message: %v", err)
 		}
 		return *m
@@ -175,28 +176,217 @@ func TestMessages(t *testing.T) {
 		}
 	})
 
-	t.Run("Recent brings back the newest, oldest first", func(t *testing.T) {
-		got, err := messages.Recent(t.Context(), general.ID, 1)
+	t.Run("Page with no cursor brings back the newest, oldest first", func(t *testing.T) {
+		got, err := messages.Page(t.Context(), general.ID, 0, 1)
 		if err != nil {
-			t.Fatalf("Recent: %v", err)
+			t.Fatalf("Page: %v", err)
 		}
 		if len(got) != 1 || got[0].Body != "two" {
-			t.Errorf("Recent(1) = %v, want the newest message", got)
+			t.Errorf("Page(0, 1) = %v, want the newest message", got)
 		}
 
-		all, err := messages.Recent(t.Context(), general.ID, 10)
+		all, err := messages.Page(t.Context(), general.ID, 0, 10)
 		if err != nil {
-			t.Fatalf("Recent: %v", err)
+			t.Fatalf("Page: %v", err)
 		}
 		if len(all) != 2 || all[0].Body != "one" {
-			t.Errorf("Recent(10) = %v, want both, oldest first", all)
+			t.Errorf("Page(0, 10) = %v, want both, oldest first", all)
+		}
+	})
+
+	t.Run("Page walks backwards from a cursor", func(t *testing.T) {
+		// The keyset read: everything strictly older than the cursor, and
+		// nothing from another room.
+		got, err := messages.Page(t.Context(), general.ID, second.Seq, 10)
+		if err != nil {
+			t.Fatalf("Page: %v", err)
+		}
+		if len(got) != 1 || got[0].Body != "one" {
+			t.Fatalf("Page(second, 10) = %v, want only the first message", got)
+		}
+
+		// Past the beginning there is nothing left, which is how the page
+		// renders no "Show older" control rather than an empty one.
+		none, err := messages.Page(t.Context(), general.ID, first.Seq, 10)
+		if err != nil {
+			t.Fatalf("Page: %v", err)
+		}
+		if len(none) != 0 {
+			t.Errorf("Page(first, 10) = %v, want nothing older", none)
 		}
 	})
 
 	t.Run("the time survives the round trip", func(t *testing.T) {
-		got, _ := messages.Recent(t.Context(), general.ID, 1)
+		got, _ := messages.Page(t.Context(), general.ID, 0, 1)
 		if got[0].CreatedAt.IsZero() {
 			t.Error("CreatedAt came back zero")
+		}
+	})
+
+	t.Run("a message with an attachment reads back with it", func(t *testing.T) {
+		withFile := &domain.Message{RoomID: general.ID, AuthorID: ada.ID, Body: "look"}
+		withFile.Attachment = &domain.Attachment{
+			ID: "att-1", UploaderID: ada.ID, Name: "note.txt",
+			Kind: "text/plain; charset=utf-8", Size: 5,
+		}
+		if err := messages.Add(t.Context(), withFile, []byte("hello")); err != nil {
+			t.Fatalf("adding a message with a file: %v", err)
+		}
+		got, err := messages.Page(t.Context(), general.ID, 0, 1)
+		if err != nil {
+			t.Fatalf("Page: %v", err)
+		}
+		// The LEFT JOIN is the thing under test: one read brings the file back
+		// with the message, and messages without one still come back.
+		if len(got) != 1 || got[0].Attachment == nil {
+			t.Fatalf("Page = %v, want the newest message carrying its attachment", got)
+		}
+		if got[0].Attachment.Name != "note.txt" || got[0].Attachment.Size != 5 {
+			t.Errorf("attachment = %+v, want note.txt of 5 bytes", got[0].Attachment)
+		}
+
+		plain, err := messages.Page(t.Context(), general.ID, withFile.Seq, 1)
+		if err != nil {
+			t.Fatalf("Page: %v", err)
+		}
+		if len(plain) != 1 || plain[0].Attachment != nil {
+			t.Errorf("older message = %v, want no attachment", plain)
+		}
+	})
+}
+
+func TestAttachments(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	messages := store.NewMessages(db)
+	attachments := store.NewAttachments(db)
+	ada := addUser(t, db, "Ada")
+	bob := addUser(t, db, "Bob")
+	general := addRoom(t, db, "General")
+
+	post := func(id, uploader string) {
+		t.Helper()
+		m := &domain.Message{RoomID: general.ID, AuthorID: uploader, Body: "here"}
+		m.Attachment = &domain.Attachment{
+			ID: id, UploaderID: uploader, Name: id + ".png", Kind: "image/png", Size: 4,
+		}
+		if err := messages.Add(t.Context(), m, []byte("\x89PNG")); err != nil {
+			t.Fatalf("adding a message with a file: %v", err)
+		}
+	}
+	post("ada-file", ada.ID)
+
+	t.Run("Open brings back the bytes and the sniffed type", func(t *testing.T) {
+		file, content, err := attachments.Open(t.Context(), "ada-file")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		defer content.Close()
+		if file.Kind != "image/png" {
+			t.Errorf("Kind = %q, want image/png", file.Kind)
+		}
+		bs, err := io.ReadAll(content)
+		if err != nil {
+			t.Fatalf("reading the file: %v", err)
+		}
+		if string(bs) != "\x89PNG" {
+			t.Errorf("bytes = %q, want the bytes that went in", bs)
+		}
+	})
+
+	t.Run("Open answers ErrNotFound for a file that is not there", func(t *testing.T) {
+		if _, _, err := attachments.Open(t.Context(), "nobody"); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("Open(nobody) = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("somebody else's file cannot be deleted, and answers like one that is gone", func(t *testing.T) {
+		// The two-user test at the store: the ownership predicate is in the
+		// WHERE clause, so Bob's delete matches no row and says so exactly the
+		// way a missing file does.
+		if err := attachments.Delete(t.Context(), bob.ID, "ada-file"); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("Bob deleting Ada's file = %v, want ErrNotFound", err)
+		}
+		if _, content, err := attachments.Open(t.Context(), "ada-file"); err != nil {
+			t.Errorf("Ada's file after Bob's delete: %v, want it still there", err)
+		} else {
+			content.Close()
+		}
+		if err := attachments.Delete(t.Context(), ada.ID, "ada-file"); err != nil {
+			t.Fatalf("Ada deleting her own file: %v", err)
+		}
+		if _, _, err := attachments.Open(t.Context(), "ada-file"); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("the file after Ada's delete = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+func TestResetsAndOutbox(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	resets := store.NewResets(db)
+	outbox := store.NewOutbox(db)
+	ada := addUser(t, db, "Ada")
+
+	mail := domain.Mail{To: "ada@example.com", Subject: "Reset", Text: "https://example.com/reset?t=x"}
+	res := &domain.Reset{Hash: "hash-1", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	if err := resets.Add(t.Context(), res, mail); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	t.Run("the link and its message are written together", func(t *testing.T) {
+		queued, err := outbox.Unsent(t.Context(), 10)
+		if err != nil {
+			t.Fatalf("Unsent: %v", err)
+		}
+		if len(queued) != 1 || queued[0].Mail.To != "ada@example.com" {
+			t.Fatalf("Unsent = %v, want the one message the reset queued", queued)
+		}
+		if err := outbox.Sent(t.Context(), queued[0].ID); err != nil {
+			t.Fatalf("Sent: %v", err)
+		}
+		again, err := outbox.Unsent(t.Context(), 10)
+		if err != nil {
+			t.Fatalf("Unsent: %v", err)
+		}
+		if len(again) != 0 {
+			t.Errorf("Unsent after Sent = %v, want nothing left", again)
+		}
+	})
+
+	t.Run("a header with a line break is refused before anything is written", func(t *testing.T) {
+		bad := domain.Mail{To: "ada@example.com\r\nBcc: attacker@example.com", Subject: "Reset"}
+		err := resets.Add(t.Context(), &domain.Reset{
+			Hash: "hash-2", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		}, bad)
+		if !errors.Is(err, domain.ErrBadHeader) {
+			t.Fatalf("Add with a line break in To = %v, want ErrBadHeader", err)
+		}
+		if _, err := resets.Take(t.Context(), "hash-2", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("the reset was stored anyway: %v", err)
+		}
+	})
+
+	t.Run("a link works once", func(t *testing.T) {
+		got, err := resets.Take(t.Context(), "hash-1", time.Now().UTC())
+		if err != nil {
+			t.Fatalf("Take: %v", err)
+		}
+		if got.UserID != ada.ID {
+			t.Errorf("UserID = %q, want %q", got.UserID, ada.ID)
+		}
+		if _, err := resets.Take(t.Context(), "hash-1", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("second Take = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("an expired link is spent and refused", func(t *testing.T) {
+		old := &domain.Reset{Hash: "hash-3", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(-time.Minute)}
+		if err := resets.Add(t.Context(), old, mail); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		if _, err := resets.Take(t.Context(), "hash-3", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("Take of an expired link = %v, want ErrNotFound", err)
 		}
 	})
 }
@@ -328,7 +518,7 @@ func TestForeignKeysAreEnforced(t *testing.T) {
 
 	err := messages.Add(t.Context(), &domain.Message{
 		RoomID: "no-such-room", AuthorID: ada.ID, Body: "hello",
-	})
+	}, nil)
 	if err == nil {
 		t.Error("a message was stored in a room that does not exist")
 	}

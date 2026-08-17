@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +76,37 @@ func (f *fakeUsers) UpdatePasswordHash(_ context.Context, id, hash string) error
 	return nil
 }
 
+// SetPassword stamps the change as well as storing the hash, like the store —
+// a fake that skipped the stamp would let every session survive a reset and
+// still pass.
+func (f *fakeUsers) SetPassword(_ context.Context, id, hash string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[id]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	// Nanoseconds, not RFC 3339 seconds: a test resets a password within a
+	// second of creating the account, and a stamp that did not move would not
+	// end the old session.
+	changedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	u.PasswordHash, u.PasswordChangedAt = hash, changedAt
+	f.byID[id] = u
+	return changedAt, nil
+}
+
+func (f *fakeUsers) SetEmail(_ context.Context, id, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	u.Email = email
+	f.byID[id] = u
+	return nil
+}
+
 type fakeRooms struct {
 	mu    sync.Mutex
 	rooms []domain.Room
@@ -114,11 +147,12 @@ type fakeMessages struct {
 	mu    sync.Mutex
 	seq   int64
 	msgs  []domain.Message
-	users *fakeUsers // the store joins the author's name on read; so does this
+	users *fakeUsers       // the store joins the author's name on read; so does this
+	files *fakeAttachments // the store writes both in one transaction; so does this
 }
 
-func newFakeMessages(users *fakeUsers) *fakeMessages {
-	return &fakeMessages{users: users}
+func newFakeMessages(users *fakeUsers, files *fakeAttachments) *fakeMessages {
+	return &fakeMessages{users: users, files: files}
 }
 
 // withAuthors fills in the display names the real store gets from its JOIN. A
@@ -133,12 +167,19 @@ func (f *fakeMessages) withAuthors(msgs []domain.Message) []domain.Message {
 	return msgs
 }
 
-func (f *fakeMessages) Add(_ context.Context, m *domain.Message) error {
+func (f *fakeMessages) Add(_ context.Context, m *domain.Message, blob []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seq++ // like AUTOINCREMENT: never reused, even after a delete
 	m.Seq = f.seq
 	m.CreatedAt = time.Now().UTC()
+	if m.Attachment != nil {
+		m.Attachment.MessageSeq = m.Seq
+		m.Attachment.CreatedAt = m.CreatedAt
+		if f.files != nil {
+			f.files.put(*m.Attachment, blob)
+		}
+	}
 	f.msgs = append(f.msgs, *m)
 	return nil
 }
@@ -158,12 +199,14 @@ func (f *fakeMessages) Since(_ context.Context, roomID string, since int64) ([]d
 	return f.withAuthors(out), nil
 }
 
-func (f *fakeMessages) Recent(_ context.Context, roomID string, limit int) ([]domain.Message, error) {
+// Page is the keyset read: the newest limit messages before the cursor, oldest
+// first, with before == 0 meaning "from the newest".
+func (f *fakeMessages) Page(_ context.Context, roomID string, before int64, limit int) ([]domain.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.Message
 	for _, m := range f.msgs {
-		if m.RoomID == roomID {
+		if m.RoomID == roomID && (before == 0 || m.Seq < before) {
 			out = append(out, m)
 		}
 	}
@@ -171,6 +214,116 @@ func (f *fakeMessages) Recent(_ context.Context, roomID string, limit int) ([]do
 		out = out[len(out)-limit:]
 	}
 	return f.withAuthors(out), nil
+}
+
+// fakeAttachments keeps the bytes the message fake was handed. Delete carries
+// the uploader test the store carries in its WHERE clause: a fake that let
+// anybody delete anything would pass every two-user test written against it.
+type fakeAttachments struct {
+	mu    sync.Mutex
+	files map[string]domain.Attachment
+	bytes map[string][]byte
+}
+
+func newFakeAttachments() *fakeAttachments {
+	return &fakeAttachments{
+		files: make(map[string]domain.Attachment),
+		bytes: make(map[string][]byte),
+	}
+}
+
+func (f *fakeAttachments) put(a domain.Attachment, blob []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files[a.ID] = a
+	f.bytes[a.ID] = blob
+}
+
+func (f *fakeAttachments) Open(_ context.Context, id string) (domain.Attachment, io.ReadSeekCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.files[id]
+	if !ok {
+		return domain.Attachment{}, nil, domain.ErrNotFound
+	}
+	return a, nopCloser{bytes.NewReader(f.bytes[id])}, nil
+}
+
+func (f *fakeAttachments) Delete(_ context.Context, uploaderID, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.files[id]
+	if !ok || a.UploaderID != uploaderID {
+		// Somebody else's file answers exactly like one that is not there.
+		return domain.ErrNotFound
+	}
+	delete(f.files, id)
+	delete(f.bytes, id)
+	return nil
+}
+
+// all returns every stored attachment, so a test can find the id the server
+// generated without scraping it out of the page.
+func (f *fakeAttachments) all() []domain.Attachment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]domain.Attachment, 0, len(f.files))
+	for _, a := range f.files {
+		out = append(out, a)
+	}
+	return out
+}
+
+type nopCloser struct{ *bytes.Reader }
+
+func (nopCloser) Close() error { return nil }
+
+// fakeResets holds outstanding links and the messages that carry them, in one
+// place, because the store writes both in one transaction.
+type fakeResets struct {
+	mu     sync.Mutex
+	links  map[string]domain.Reset
+	sent   []domain.Mail
+	addErr error
+}
+
+func newFakeResets() *fakeResets {
+	return &fakeResets{links: make(map[string]domain.Reset)}
+}
+
+func (f *fakeResets) Add(_ context.Context, res *domain.Reset, mail domain.Mail) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.addErr != nil {
+		return f.addErr
+	}
+	if err := mail.Validate(); err != nil {
+		return err
+	}
+	f.links[res.Hash] = *res
+	f.sent = append(f.sent, mail)
+	return nil
+}
+
+func (f *fakeResets) Take(_ context.Context, hash string, now time.Time) (domain.Reset, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	res, ok := f.links[hash]
+	if !ok {
+		return domain.Reset{}, domain.ErrNotFound
+	}
+	delete(f.links, hash) // single use, spent whether or not it had expired
+	if res.Expired(now) {
+		return domain.Reset{}, domain.ErrNotFound
+	}
+	return res, nil
+}
+
+// mails returns a copy of everything queued so far.
+func (f *fakeResets) mails() []domain.Mail {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]domain.Mail(nil), f.sent...)
 }
 
 type fakeTokens struct {

@@ -213,6 +213,42 @@ set -e
 [ "$CODE" = "2" ] || fail "a key with -assistant=echo: exit $CODE, want 2"
 grep -q "assistant=anthropic" "$WORKDIR/pair2.log" || fail "the error does not name the fix"
 
+step "config: an unknown time zone is refused at boot, not at the first page"
+# time.LoadLocation runs once, in parseConfig. A name nobody has heard of is a
+# line on stderr, not a nil location found weeks later by the one reader who
+# looked at a timestamp (patterns/time-and-dates.md).
+set +e
+"$WORKDIR/server" -timezone Mars/Olympus -database-url "$WORKDIR/never-tz.db" \
+    >"$WORKDIR/tz.log" 2>&1
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "an unknown zone: exit $CODE, want 2"
+grep -q "Europe/Berlin" "$WORKDIR/tz.log" || fail "the error does not show what a zone name looks like"
+[ ! -e "$WORKDIR/never-tz.db" ] || fail "database created despite an unknown zone"
+
+step "config: how mail goes out is checked as one setting, not four"
+# Each of these starts fine and fails at the one moment somebody needed it — a
+# person who cannot sign in asking for a link (patterns/go-config.md rule 7).
+set +e
+"$WORKDIR/server" -mailer smtp -database-url "$WORKDIR/never-mail.db" \
+    >"$WORKDIR/mail1.log" 2>&1
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "smtp with no relay: exit $CODE, want 2"
+grep -q "smtp-addr" "$WORKDIR/mail1.log" || fail "the error does not name the flag to set"
+grep -q "mailer=log" "$WORKDIR/mail1.log" || fail "the error does not name the other way out"
+
+set +e
+ENV=prod "$WORKDIR/server" -mailer log -database-url "$WORKDIR/never-mail2.db" \
+    >"$WORKDIR/mail2.log" 2>&1
+CODE=$?
+set -e
+# logmail writes the whole message, reset link and all, to the log. That is what
+# makes it useful on a laptop and unacceptable where the log is not one person's.
+[ "$CODE" = "2" ] || fail "the logging mailer in production: exit $CODE, want 2"
+grep -q "mailer=smtp" "$WORKDIR/mail2.log" || fail "the error does not name the fix"
+[ ! -e "$WORKDIR/never-mail.db" ] || fail "database created despite a half-configured mailer"
+
 step "smoke: test ports are free"
 # Without this, a leftover server from an earlier run answers every gate below
 # and the gauntlet passes on the wrong binary.
@@ -228,8 +264,12 @@ step "smoke: booting server on :$PORT (ops :$OPS_PORT)"
 # child process inherits (patterns/go-config.md).
 mkdir -p "$WORKDIR/creds"
 printf '%s\n' "$INVITE" > "$WORKDIR/creds/invite_code"
+# -timezone is a named zone on purpose: a minimal container has no
+# /usr/share/zoneinfo, so booting with one is what proves the database is inside
+# the binary (patterns/time-and-dates.md).
 CREDENTIALS_DIRECTORY="$WORKDIR/creds" \
     "$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -database-url "$WORKDIR/app.db" \
+    -timezone Europe/Berlin \
     >"$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -403,7 +443,8 @@ step "smoke: an empty message is refused with 422 and a message"
 CODE="$(curl -s -c "$JAR" -b "$JAR" -o "$WORKDIR/invalid.html" -w '%{http_code}' \
     -X POST "localhost:$PORT/rooms/general-chat/messages" -H 'HX-Request: true' -d "body=%20%20")"
 [ "$CODE" = "422" ] || fail "an empty message: got $CODE, want 422"
-grep -q "Write something first" "$WORKDIR/invalid.html" || fail "422 without a message"
+# A picture on its own is a message, so the words name both ways to send one.
+grep -q "Write something, or attach a file" "$WORKDIR/invalid.html" || fail "422 without a message"
 # go-forms-validation.md: adjacent is enough for the eye and nothing for a
 # screen reader, so the failing control points at the message it just grew.
 grep -q 'aria-invalid="true"' "$WORKDIR/invalid.html" || fail "422 without aria-invalid on the field"
@@ -422,6 +463,72 @@ curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST "localhost:$PORT/rooms/general-
 curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/escaped.html" "localhost:$PORT/rooms/general-chat"
 grep -q '<script>alert' "$WORKDIR/escaped.html" && fail "a message reached the page as live markup"
 grep -q '&lt;script&gt;' "$WORKDIR/escaped.html" || fail "the message was not escaped into text"
+
+step "smoke: an upload is stored as what its bytes are, not what it claims"
+# A document that can carry script, named .png and declared image/png. Neither
+# the name nor the declaration is consulted (patterns/go-file-uploads.md).
+printf '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>' > "$WORKDIR/avatar.png"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/lied.html" -H 'HX-Request: true' \
+    -F 'body=totally a picture' \
+    -F "file=@$WORKDIR/avatar.png;type=image/png;filename=avatar.png" \
+    "localhost:$PORT/rooms/general-chat/messages"
+FILE_URL="$(sed -n 's|.*href="\(/rooms/general-chat/files/[^"/]*\)".*|\1|p' "$WORKDIR/lied.html" | head -1)"
+[ -n "$FILE_URL" ] || fail "the uploaded file is not linked from the room"
+curl -fsS -c "$JAR" -b "$JAR" -D "$WORKDIR/file.head" -o /dev/null "localhost:$PORT$FILE_URL"
+grep -qi '^content-type: *image/' "$WORKDIR/file.head" && fail "an SVG came back as an image"
+grep -qi '^content-type:.*\(svg\|html\)' "$WORKDIR/file.head" && fail "an SVG came back as a document"
+# Anything the app does not render in its own pages downloads instead of opening.
+grep -qi '^content-disposition: *attachment' "$WORKDIR/file.head" \
+    || fail "a file the app does not render inline is not sent as an attachment"
+# nosniff is what makes the stored type binding rather than a hint.
+grep -qi '^x-content-type-options: *nosniff' "$WORKDIR/file.head" \
+    || fail "the download is served without nosniff"
+
+step "smoke: a picture round-trips byte for byte"
+# The usual way to lose the first 512 bytes is to sniff them off a stream and
+# store what is left, so the whole file is compared.
+printf '\211PNG\r\n\032\n' > "$WORKDIR/real.png"
+head -c 64 /dev/urandom >> "$WORKDIR/real.png"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/png.html" -H 'HX-Request: true' \
+    -F 'body=' -F "file=@$WORKDIR/real.png;type=application/octet-stream;filename=shot.png" \
+    "localhost:$PORT/rooms/general-chat/messages"
+PNG_URL="$(sed -n 's|.*<img src="\([^"]*\)".*|\1|p' "$WORKDIR/png.html" | head -1)"
+[ -n "$PNG_URL" ] || fail "the picture is not rendered in the room"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/back.png" "localhost:$PORT$PNG_URL"
+cmp -s "$WORKDIR/real.png" "$WORKDIR/back.png" || fail "the picture did not survive the round trip"
+
+step "smoke: a long room pages backwards, and the two cursors stay apart"
+i=1
+while [ "$i" -le 55 ]; do
+    curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST \
+        "localhost:$PORT/rooms/general-chat/messages" --data-urlencode "body=line $i"
+    i=$((i + 1))
+done
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/long.html" "localhost:$PORT/rooms/general-chat"
+grep -q 'older?before=' "$WORKDIR/long.html" || fail "a long room offers no way back through it"
+# One cursor walks forward at the arrival end, one backward at the far end.
+# Sharing a name is how they answer each other's questions (patterns/htmx-lists.md).
+grep -q 'messages?since=' "$WORKDIR/long.html" || fail "the poller's cursor is gone"
+grep -q 'older?since=' "$WORKDIR/long.html" && fail "the two cursors have swapped names"
+grep -q '>line 1<' "$WORKDIR/long.html" && fail "the whole room came back at once — nothing is paged"
+BEFORE="$(sed -n 's|.*older?before=\([0-9]*\).*|\1|p' "$WORKDIR/long.html" | head -1)"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/older.html" -H 'HX-Request: true' \
+    "localhost:$PORT/rooms/general-chat/older?before=$BEFORE"
+grep -q '<html' "$WORKDIR/older.html" && fail "the older fragment is a whole page"
+grep -q '>line 1<' "$WORKDIR/older.html" || fail "paging back did not reach the older messages"
+# The same URL without htmx is a whole page, which is what makes it linkable.
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/older-page.html" \
+    "localhost:$PORT/rooms/general-chat/older?before=$BEFORE"
+grep -q '<!doctype html>' "$WORKDIR/older-page.html" || fail "a plain click on Show older got a fragment"
+
+step "smoke: every time on a page is machine-readable and names its zone"
+grep -q '<time datetime="' "$WORKDIR/long.html" || fail "the room carries no machine-readable time"
+# "+0000 UTC" is what {{.CreatedAt}} prints. Finding it means a time.Time
+# reached a template (patterns/time-and-dates.md).
+grep -q '+0000 UTC' "$WORKDIR/long.html" && fail "a raw time.Time reached a template"
+# The zone the deployment named, with its abbreviation, because "11:14" is a
+# different moment for every reader. This also proves tzdata is in the binary.
+grep -qE 'CES?T' "$WORKDIR/long.html" || fail "the rendered time does not name the configured zone"
 
 step "smoke: the assistant answers a mention, and stays out of the way otherwise"
 # The whole loop with no key and no model: -assistant=echo is the default, so
@@ -529,6 +636,65 @@ curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST "localhost:$PORT/profile/tokens
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SECRET" "localhost:$PORT/rooms")"
 [ "$CODE" = "401" ] || fail "a revoked token still answers $CODE — revocation is a DELETE, not a flag"
 
+step "smoke: a reset link is delivered, works once, and ends the other sessions"
+# The whole loop with no relay and no account anywhere: -mailer=log is the
+# default, so an empty environment exercises request -> outbox -> ticker ->
+# adapter -> the link (patterns/go-email.md). It runs against the second user,
+# so the browser every gate above uses keeps its session.
+curl -fsS -c "$JAR2" -b "$JAR2" -o /dev/null -X POST "localhost:$PORT/profile/email" \
+    -d "email=intruder@example.com"
+JAR3="$WORKDIR/cookies-reset"
+# Host is whatever the client sent. A link built from it mails a working token
+# to whoever asked for one — the tier-1 rule this gate exists for.
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/reset" \
+    -H 'Host: evil.example' -H 'X-Forwarded-For: 198.51.100.8' -d "name=Intruder")"
+[ "$CODE" = "303" ] || fail "asking for a reset link: got $CODE, want 303"
+
+# The ticker drains the outbox every five seconds.
+LINK=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    LINK="$(sed -n 's|.*\(http://[^ "\\]*reset/confirm?t=[A-Za-z0-9_-]*\).*|\1|p' \
+        "$WORKDIR/server.log" | head -1)"
+    [ -n "$LINK" ] && break
+    sleep 1
+done
+[ -n "$LINK" ] || fail "no reset link was delivered within ten seconds"
+echo "$LINK" | grep -q "evil.example" && fail "the link was built from the Host header"
+echo "$LINK" | grep -q "127.0.0.1:$PORT" || fail "the link was not built from the configured base URL"
+
+TOKEN="${LINK##*t=}"
+# Its own client IP throughout: the reset endpoints are rate limited per address
+# like every other way in, and this gate is about the link, not about how often
+# anybody may ask for one.
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST \
+    "localhost:$PORT/reset/confirm" -H 'X-Forwarded-For: 198.51.100.8' \
+    -d "token=$TOKEN" --data-urlencode "password=a whole new password")"
+[ "$CODE" = "303" ] || fail "using the link: got $CODE, want 303"
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
+[ "$CODE" = "200" ] || fail "the reset did not sign the person in: got $CODE"
+
+# The point of resetting a password somebody else may know.
+CODE="$(curl -s -c "$JAR2" -b "$JAR2" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
+[ "$CODE" = "303" ] || fail "the session on the other machine survived the reset: got $CODE"
+
+# Single use, and Take spends the row in the transaction that reads it.
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST \
+    "localhost:$PORT/reset/confirm" -H 'X-Forwarded-For: 198.51.100.8' \
+    -d "token=$TOKEN" --data-urlencode "password=another new one")"
+[ "$CODE" = "422" ] || fail "the link worked a second time: got $CODE, want 422"
+
+step "smoke: asking for a reset says the same thing whoever asks"
+# Three requests the server knows three different things about, and one answer.
+# Anything that varied would make this form a way to ask which accounts exist.
+for NAME in Intruder "Nobody At All" Ada; do
+    curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}\n' -X POST "localhost:$PORT/reset" \
+        -H 'X-Forwarded-For: 198.51.100.9' --data-urlencode "name=$NAME"
+done > "$WORKDIR/reset-codes"
+sort -u "$WORKDIR/reset-codes" > "$WORKDIR/reset-codes-unique"
+[ "$(wc -l < "$WORKDIR/reset-codes-unique")" -eq 1 ] \
+    || fail "the answer changes with who is asking: $(tr '\n' ' ' < "$WORKDIR/reset-codes")"
+grep -q '^303$' "$WORKDIR/reset-codes-unique" || fail "asking for a link does not answer 303"
+
 step "smoke: cross-site POST rejected (CSRF)"
 CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/rooms" \
     -H 'Sec-Fetch-Site: cross-site' -d "name=Nope")"
@@ -545,9 +711,15 @@ SNAPSHOT="$(ls "$WORKDIR"/snapshot-*.db 2>/dev/null | head -1)"
 head -c 15 "$SNAPSHOT" | grep -q "SQLite format 3" || fail "the snapshot is not a SQLite database"
 
 step "smoke: state survives restart"
+# A fresh message rather than one from the top of this run: the room pages, so
+# an early message is behind a "Show older" control by now and its absence from
+# the first screen would say nothing about what survived.
+curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST "localhost:$PORT/rooms/general-chat/messages" \
+    --data-urlencode "body=written just before the restart"
 kill -TERM "$SERVER_PID" && wait "$SERVER_PID" 2>/dev/null || true
 CREDENTIALS_DIRECTORY="$WORKDIR/creds" \
     "$WORKDIR/server" -port "$PORT" -ops-port "$OPS_PORT" -database-url "$WORKDIR/app.db" \
+    -timezone Europe/Berlin \
     >>"$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -555,7 +727,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.3
 done
 # The session outlives the restart too: it lives in SQLite, not in memory.
-curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" | grep -q "hello from a form" \
+curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
+    | grep -q "written just before the restart" \
     || fail "the conversation was lost after the restart"
 
 step "smoke: graceful shutdown"

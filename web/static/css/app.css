@@ -405,9 +405,61 @@
      keeps them, so the stylesheet shows them. */
   .message-body { white-space: pre-wrap; }
 
+  /* The far end of the list from the poller: one control that loads the page
+     before this one. It is a list item, because it sits inside the list it
+     extends and anything else there would be invalid markup. */
+  .more {
+    text-align: center;
+    padding: var(--space-sm);
+
+    & a { color: var(--color-accent); }
+  }
+
+  .attachment {
+    margin: var(--space-sm) 0 0;
+    display: grid;
+    gap: var(--space-xs);
+    justify-items: start;
+
+    /* A picture is bounded by the message rather than by its own pixels: a
+       screenshot from a desktop is several times the width of a phone. */
+    & img {
+      max-inline-size: 100%;
+      block-size: auto;
+      border-radius: var(--radius);
+    }
+
+    & figcaption {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      color: var(--color-text-muted);
+      font-size: var(--step--1);
+    }
+  }
+
+  .attachment-remove {
+    padding: var(--space-xs);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--color-text-muted);
+    min-block-size: 2.75rem;
+    min-inline-size: 2.75rem;
+  }
+
   .say {
     display: grid;
     gap: var(--space-sm);
+
+    /* The file row is its own line so the label, the picker and any error keep
+       their reading order on a narrow screen. */
+    & .say-file {
+      display: grid;
+      gap: var(--space-xs);
+      font-size: var(--step--1);
+      color: var(--color-text-muted);
+    }
 
     & textarea {
       padding: var(--space-sm);

@@ -1,16 +1,21 @@
 package app
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 
@@ -30,13 +35,19 @@ var dummyHash = sync.OnceValue(func() string {
 
 type testApp struct {
 	*App
-	server   *httptest.Server
-	client   *http.Client
-	users    *fakeUsers
-	rooms    *fakeRooms
-	messages *fakeMessages
-	tokens   *fakeTokens
+	server      *httptest.Server
+	client      *http.Client
+	users       *fakeUsers
+	rooms       *fakeRooms
+	messages    *fakeMessages
+	attachments *fakeAttachments
+	resets      *fakeResets
+	tokens      *fakeTokens
 }
+
+// testZone is a zone that is not UTC and not the machine's, so a handler that
+// formatted a time without naming one would render the wrong string here.
+var testZone = time.FixedZone("TST", 5*60*60)
 
 // newTestApp wires the real app over the fakes and the real templates. Parsing
 // the templates from disk is deliberate: a broken template is a bug these tests
@@ -50,16 +61,21 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	// reads a room has to resolve its name.
 	users.byID[domain.AssistantID] = domain.User{ID: domain.AssistantID, Name: "Assistant"}
 
+	files := newFakeAttachments()
 	o := Options{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Users:       users,
 		Rooms:       newFakeRooms(),
-		Messages:    newFakeMessages(users),
+		Messages:    newFakeMessages(users, files),
+		Attachments: files,
+		Resets:      newFakeResets(),
 		Tokens:      newFakeTokens(users),
 		Sessions:    scs.New(), // the default in-memory store is right for a test
 		TemplatesFS: os.DirFS("../../web/templates"),
 		StaticFS:    os.DirFS("../../web/static"),
 		Version:     "test",
+		Location:    testZone,
+		BaseURL:     &url.URL{Scheme: "https", Host: "chat.example.com"},
 		DummyHash:   dummyHash(),
 		Assistant:   newFakeAssistant(),
 	}
@@ -90,10 +106,12 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 				return http.ErrUseLastResponse
 			},
 		},
-		users:    users,
-		rooms:    o.Rooms.(*fakeRooms),
-		messages: o.Messages.(*fakeMessages),
-		tokens:   o.Tokens.(*fakeTokens),
+		users:       users,
+		rooms:       o.Rooms.(*fakeRooms),
+		messages:    o.Messages.(*fakeMessages),
+		attachments: o.Attachments.(*fakeAttachments),
+		resets:      o.Resets.(*fakeResets),
+		tokens:      o.Tokens.(*fakeTokens),
 	}
 }
 
@@ -139,6 +157,64 @@ func (ta *testApp) do(t *testing.T, method, path string, form url.Values, header
 
 // htmx is the header set an htmx fragment request carries.
 func htmx() http.Header { return http.Header{"HX-Request": {"true"}} }
+
+// upload is one attached file as a browser would send it: the name it was
+// picked under, the type the browser claims, and the bytes. The three are
+// separate fields on purpose — the tests that matter set them to disagree.
+type upload struct {
+	name    string
+	claims  string
+	content []byte
+}
+
+// postMessage sends the message form as multipart, the way a browser does when
+// something is attached. file nil sends no file part at all.
+func (ta *testApp) postMessage(t *testing.T, path, body string, file *upload, headers http.Header) (*http.Response, string) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := w.WriteField("body", body); err != nil {
+		t.Fatalf("writing the body field: %v", err)
+	}
+	if file != nil {
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Disposition",
+			mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": file.name}))
+		h.Set("Content-Type", file.claims)
+		part, err := w.CreatePart(h)
+		if err != nil {
+			t.Fatalf("creating the file part: %v", err)
+		}
+		if _, err := part.Write(file.content); err != nil {
+			t.Fatalf("writing the file part: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing the multipart writer: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ta.server.URL+path, &buf)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	for name, values := range headers {
+		for _, v := range values {
+			req.Header.Add(name, v)
+		}
+	}
+	res, err := ta.client.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading the body of POST %s: %v", path, err)
+	}
+	return res, string(b)
+}
 
 // signUp registers somebody and leaves them signed in, so a test that is about
 // something else can start from there.

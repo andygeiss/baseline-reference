@@ -29,6 +29,8 @@ import (
 	"github.com/andygeiss/baseline-reference/v3/internal/app"
 	"github.com/andygeiss/baseline-reference/v3/internal/auth"
 	"github.com/andygeiss/baseline-reference/v3/internal/echo"
+	"github.com/andygeiss/baseline-reference/v3/internal/logmail"
+	"github.com/andygeiss/baseline-reference/v3/internal/smtpmail"
 	"github.com/andygeiss/baseline-reference/v3/internal/store"
 )
 
@@ -117,18 +119,32 @@ func run(cfg Config) error {
 	if cfg.Assistant == "anthropic" {
 		assistant = anthropic.New(cfg.AnthropicKey)
 	}
+	// The same shape for mail: the adapter that needs nothing is the default,
+	// so the whole password-reset flow can be walked with an empty environment.
+	// Constructing either one connects to nothing.
+	var mailer Mailer = logmail.New(logger)
+	if cfg.Mailer == "smtp" {
+		mailer = smtpmail.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPassword)
+	}
+
+	resets := store.NewResets(db)
+	outbox := store.NewOutbox(db)
 
 	a, err := app.New(app.Options{
 		Logger:      logger,
 		Users:       store.NewUsers(db),
 		Rooms:       store.NewRooms(db),
 		Messages:    store.NewMessages(db),
+		Attachments: store.NewAttachments(db),
+		Resets:      resets,
 		Tokens:      store.NewTokens(db),
 		Sessions:    sessions,
 		Assistant:   assistant,
 		TemplatesFS: templatesFS,
 		StaticFS:    staticFS,
 		Version:     ver,
+		Location:    cfg.Location,
+		BaseURL:     cfg.BaseURL,
 		DummyHash:   dummyHash,
 		InviteCode:  cfg.InviteCode,
 	})
@@ -164,6 +180,8 @@ func run(cfg Config) error {
 	g.Go(func() error { return serve(gctx, srv) })
 	g.Go(func() error { return serve(gctx, opsSrv) })
 	g.Go(func() error { return sweepSessions(gctx, logger, sessionStore) })
+	g.Go(func() error { return sweepResets(gctx, logger, resets) })
+	g.Go(func() error { return sendMail(gctx, logger, outbox, mailer) })
 	g.Go(func() error { return snapshot(gctx, logger, db, cfg.DBPath) })
 	g.Go(func() error { <-gctx.Done(); logger.Info("shutting down"); return nil })
 	logger.Info("started", "version", ver, "config", cfg)

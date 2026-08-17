@@ -7,10 +7,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	// tzdata puts the time zone database inside the binary. Without it
+	// time.LoadLocation reads /usr/share/zoneinfo, which a minimal container
+	// image does not have — so a zone name loads on the developer's machine and
+	// fails at boot on the server. About 450 KB, paid once
+	// (patterns/time-and-dates.md).
+	_ "time/tzdata"
 )
 
 // Config is every knob this binary has. After parseConfig returns, nothing
@@ -33,6 +43,26 @@ type Config struct {
 	// setting in two halves, so they are validated as a pair.
 	Assistant    string
 	AnthropicKey string
+
+	// BaseURL is where this app answers from. It is the only thing a link in an
+	// outgoing email is built from — never the request's Host header, which is
+	// whatever the client sent (patterns/go-email.md).
+	BaseURL *url.URL
+
+	// Location is the one zone every rendered time is shown in, with its
+	// abbreviation beside it. There is no per-reader zone: without JavaScript
+	// the server cannot read one from the browser, and guessing is worse than
+	// saying which zone the clock is (patterns/time-and-dates.md).
+	Location *time.Location
+
+	// Mailer picks which adapter sends: "log" needs nothing and is the default,
+	// "smtp" needs a relay. These are one setting in several halves, so they
+	// are validated together at the end.
+	Mailer       string
+	SMTPAddr     string
+	SMTPFrom     string
+	SMTPUser     string
+	SMTPPassword string
 }
 
 // errUsage means the message was already printed where the problem was found,
@@ -52,11 +82,17 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 	fs.StringVar(&c.DBPath, "database-url", cmp.Or(os.Getenv("DATABASE_URL"), "app.db"), "SQLite file path (env DATABASE_URL)")
 	level := fs.String("log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "debug|info|warn|error (env LOG_LEVEL)")
 	fs.StringVar(&c.Assistant, "assistant", cmp.Or(os.Getenv("ASSISTANT"), "echo"), "echo|anthropic — who answers a mention (env ASSISTANT)")
+	base := fs.String("base-url", os.Getenv("BASE_URL"), "public address, e.g. https://chat.example.com — emailed links are built from it (env BASE_URL, default http://<host>:<port>)")
+	zone := fs.String("timezone", cmp.Or(os.Getenv("TIMEZONE"), "UTC"), "IANA zone every time is shown in, e.g. Europe/Berlin (env TIMEZONE)")
+	fs.StringVar(&c.Mailer, "mailer", cmp.Or(os.Getenv("MAILER"), "log"), "log|smtp — how a password-reset link is delivered (env MAILER)")
+	fs.StringVar(&c.SMTPAddr, "smtp-addr", os.Getenv("SMTP_ADDR"), "relay host:port, required by -mailer=smtp (env SMTP_ADDR)")
+	fs.StringVar(&c.SMTPFrom, "smtp-from", os.Getenv("SMTP_FROM"), "address mail is sent from, required by -mailer=smtp (env SMTP_FROM)")
+	fs.StringVar(&c.SMTPUser, "smtp-user", os.Getenv("SMTP_USER"), "relay username; leave empty for a relay that wants none (env SMTP_USER)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage of server:\n")
 		fs.PrintDefaults()
 		fmt.Fprintf(stderr, "\nRead from the environment only:\n  ENV\n\tdev|prod, picks text vs JSON logs (default dev)\n")
-		fmt.Fprintf(stderr, "\nRead from $CREDENTIALS_DIRECTORY, one file per secret:\n  invite_code\n\tregistration is open when this file is absent\n  anthropic_key\n\trequired by -assistant=anthropic, unused otherwise\n")
+		fmt.Fprintf(stderr, "\nRead from $CREDENTIALS_DIRECTORY, one file per secret:\n  invite_code\n\tregistration is open when this file is absent\n  anthropic_key\n\trequired by -assistant=anthropic, unused otherwise\n  smtp_password\n\trequired when -smtp-user is set, unused otherwise\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -107,7 +143,87 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 	case c.Assistant != "anthropic" && c.AnthropicKey != "":
 		return Config{}, fmt.Errorf("assistant %q: an anthropic_key credential is present — set -assistant=anthropic to use it, or remove the file", c.Assistant)
 	}
+
+	// The zone is loaded here rather than where a page is rendered: a name
+	// nobody has heard of is a boot error naming the fix, not a nil location
+	// found three weeks later by the one reader who looked at a timestamp.
+	c.Location, err = time.LoadLocation(*zone)
+	if err != nil {
+		return Config{}, fmt.Errorf("timezone %q: want an IANA name like UTC or Europe/Berlin", *zone)
+	}
+
+	// The default is only right in development, where the address the browser
+	// uses and the address the app binds are the same. A deployment behind a
+	// proxy passes the real one, and nothing at request time can work it out.
+	c.BaseURL, err = parseBaseURL(cmp.Or(*base, "http://"+net.JoinHostPort(c.Host, c.Port)))
+	if err != nil {
+		return Config{}, err
+	}
+
+	smtpPassword, err := readCredential("smtp_password")
+	if err != nil {
+		return Config{}, err
+	}
+	c.SMTPPassword = smtpPassword
+	if err := c.checkMailer(); err != nil {
+		return Config{}, err
+	}
 	return c, nil
+}
+
+// parseBaseURL refuses anything a link cannot be built from.
+func parseBaseURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("base-url %q: %v", raw, err)
+	case u.Scheme != "http" && u.Scheme != "https":
+		return nil, fmt.Errorf("base-url %q: want an http:// or https:// address", raw)
+	case u.Host == "":
+		return nil, fmt.Errorf("base-url %q: no host — write it as https://chat.example.com", raw)
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/") // JoinPath would double the slash
+	return u, nil
+}
+
+// checkMailer is the pair check for how mail goes out. Every one of these is a
+// half-configured setting that starts fine and fails at the one moment somebody
+// needed it — the request for a reset link (patterns/go-config.md rule 7).
+func (c Config) checkMailer() error {
+	switch {
+	case c.Mailer != "log" && c.Mailer != "smtp":
+		return fmt.Errorf("mailer %q: want log or smtp", c.Mailer)
+
+	// logmail writes the whole message, reset link included, to the log. That
+	// is exactly what makes it useful in development and unacceptable anywhere
+	// the log is not the developer's own screen.
+	case c.Mailer == "log" && c.Env == "prod":
+		return errors.New(`mailer "log" writes reset links to the log, which is not safe with ENV=prod — set -mailer=smtp`)
+
+	case c.Mailer == "smtp" && c.SMTPAddr == "":
+		return errors.New(`mailer "smtp": no relay — set -smtp-addr=host:port, or run with -mailer=log`)
+	case c.Mailer == "smtp" && c.SMTPFrom == "":
+		return errors.New(`mailer "smtp": no sender — set -smtp-from=chat@example.com, or run with -mailer=log`)
+	case c.Mailer != "smtp" && (c.SMTPAddr != "" || c.SMTPFrom != "" || c.SMTPUser != ""):
+		return fmt.Errorf("mailer %q: SMTP settings are present — set -mailer=smtp to use them, or remove them", c.Mailer)
+
+	// A line break here would let the sender write extra headers into every
+	// message this app sends. The check belongs at boot, because this value
+	// reaches a header on a path with no request on it (patterns/go-email.md).
+	case strings.ContainsAny(c.SMTPFrom, "\r\n"):
+		return fmt.Errorf("smtp-from %q: no line breaks — that value goes into a mail header", c.SMTPFrom)
+
+	case c.SMTPUser != "" && c.SMTPPassword == "":
+		return errors.New(`smtp-user is set but no password — write it to $CREDENTIALS_DIRECTORY/smtp_password, or clear -smtp-user`)
+	case c.SMTPUser == "" && c.SMTPPassword != "":
+		return errors.New("an smtp_password credential is present but -smtp-user is not set — set it, or remove the file")
+	}
+	if c.Mailer == "smtp" {
+		if _, _, err := net.SplitHostPort(c.SMTPAddr); err != nil {
+			return fmt.Errorf("smtp-addr %q: want host:port, like mail.example.com:587", c.SMTPAddr)
+		}
+	}
+	return nil
 }
 
 // readCredential returns the credential file of that name, or "" when the
@@ -142,12 +258,28 @@ func readCredential(name string) (string, error) {
 // Whether registration is gated is worth a line in the boot log, so the fact is
 // logged without the code that enforces it.
 func (c Config) LogValue() slog.Value {
+	// Both of these are set by the time anything logs a parsed Config. They are
+	// still read through a nil check, because a LogValue that panics puts a
+	// stack trace where the boot line should be — slog catches it and prints
+	// that instead of the config.
+	baseURL, timezone := "", ""
+	if c.BaseURL != nil {
+		baseURL = c.BaseURL.String()
+	}
+	if c.Location != nil {
+		timezone = c.Location.String()
+	}
 	return slog.GroupValue(
 		slog.String("host", c.Host),
 		slog.String("port", c.Port),
 		slog.String("ops_port", c.OpsPort),
 		slog.String("database_url", c.DBPath),
 		slog.String("assistant", c.Assistant),
+		slog.String("base_url", baseURL),
+		slog.String("timezone", timezone),
+		slog.String("mailer", c.Mailer),
+		slog.String("smtp_addr", c.SMTPAddr),
+		slog.String("smtp_from", c.SMTPFrom),
 		slog.String("env", c.Env),
 		slog.String("log_level", c.LogLevel.String()),
 		slog.Bool("registration_gated", c.InviteCode != ""),

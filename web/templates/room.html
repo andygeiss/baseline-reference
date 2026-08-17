@@ -13,6 +13,7 @@
 {{define "chat"}}
 <div id="chat" class="chat">
   <ul id="messages" class="messages" role="list">
+    {{if .HasOlder}}{{template "more" .}}{{end}}
     {{range .Messages}}{{template "message" .}}{{end}}
     {{template "poller" .}}
   </ul>
@@ -21,13 +22,60 @@
 </div>
 {{end}}
 
+{{/* The control that walks backwards through the room, at the far end of the
+     list from the poller. It is an <a href> as well as an htmx trigger, so a
+     reader without htmx gets a whole page of the same slice — which is why the
+     cursor rides in the query string (patterns/htmx-lists.md).
+
+     hx-target is the enclosing <li>, so the answer — the next control, and the
+     older rows under it — lands exactly where this one sat. */}}
+{{define "more"}}
+<li class="more">
+  <a href="/rooms/{{.Room.Slug}}/older?before={{.Older}}"
+     hx-get="/rooms/{{.Room.Slug}}/older?before={{.Older}}"
+     hx-target="closest li"
+     hx-swap="outerHTML">Show older messages</a>
+</li>
+{{end}}
+
+{{/* No .Format anywhere: the handler already turned the moment into strings, in
+     the one zone this app renders (patterns/time-and-dates.md). The visible
+     text is relative because this page refreshes itself; datetime and title
+     carry the exact moment either way. */}}
 {{define "message"}}
+{{$m := .}}
 <li class="message">
   <p class="message-meta">
     <strong>{{.Author}}</strong>
-    <small>{{.CreatedAt.Format "15:04"}}</small>
+    <time datetime="{{.Stamp.ISO}}" title="{{.Stamp.Absolute}}">{{.Stamp.Relative}}</time>
   </p>
-  <p class="message-body">{{.Body}}</p>
+  {{with .Body}}<p class="message-body">{{.}}</p>{{end}}
+  {{with .Attachment}}
+    <figure class="attachment">
+      {{if .Inline}}
+        <a href="/rooms/{{$m.RoomSlug}}/files/{{.ID}}">
+          <img src="/rooms/{{$m.RoomSlug}}/files/{{.ID}}" alt="{{.Name}}" loading="lazy">
+        </a>
+      {{else}}
+        <a class="attachment-file" href="/rooms/{{$m.RoomSlug}}/files/{{.ID}}">{{.Name}}</a>
+      {{end}}
+      <figcaption>
+        <span>{{.Name}}</span>
+        {{/* Hiding this button is not the protection. The route names the actor
+             and the delete carries it as a predicate in its own SQL; this only
+             keeps a button that would answer "already gone" off the page. */}}
+        {{if $m.Mine}}
+          <form method="post" action="/rooms/{{$m.RoomSlug}}/files/{{.ID}}/delete"
+                hx-confirm="Remove this file? The message stays.">
+            <button type="submit" class="attachment-remove">
+              <span class="icon icon-trash" aria-hidden="true"></span>
+              <span class="visually-hidden">Remove {{.Name}}</span>
+            </button>
+          </form>
+        {{end}}
+      </figcaption>
+    </figure>
+  {{end}}
 </li>
 {{end}}
 
@@ -36,6 +84,10 @@
      answer is the new rows followed by a new poller, and swapping this element
      for all of it lands the rows in order, at the end, with the next cursor
      already in place. No out-of-band swap, no second copy of the cursor.
+
+     Its cursor is "since"; the control above carries "before". Two cursors, two
+     names, walking opposite ways from opposite ends of one list — sharing a
+     name is how they start answering each other's questions.
 
      It is an <li> because a <div> between list items is not valid markup, and
      hidden because it is machinery rather than something to read. */}}
@@ -47,15 +99,31 @@
 {{end}}
 
 {{define "say"}}
+{{/* hx-encoding is what makes htmx send this as multipart; enctype is what a
+     plain browser reads. Both, because every feature here works with htmx
+     switched off. */}}
 <form class="say" method="post" action="/rooms/{{.Room.Slug}}/messages"
+      enctype="multipart/form-data"
       hx-post="/rooms/{{.Room.Slug}}/messages"
+      hx-encoding="multipart/form-data"
       hx-target="#chat" hx-swap="outerHTML transition:false"
       hx-indicator="#sending">
   <label class="visually-hidden" for="body">Your message</label>
-  <textarea id="body" name="body" rows="2" required
+  <textarea id="body" name="body" rows="2"
             maxlength="{{.MaxBodyLen}}" placeholder="Say something"
             {{with .Form.FieldErrors.body}}aria-invalid="true" aria-describedby="body-error"{{end}}>{{.Form.Body}}</textarea>
   {{with .Form.FieldErrors.body}}<p class="field-error" id="body-error">{{.}}</p>{{end}}
+
+  <div class="say-file">
+    <label for="file">Attach a file <small>(up to {{.MaxFileMB}} MB)</small></label>
+    {{/* accept is a hint to the file picker and nothing more. What this app
+         stores is decided by sniffing the bytes on the server. */}}
+    <input id="file" name="file" type="file"
+           accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain"
+           {{with .Form.FieldErrors.file}}aria-invalid="true" aria-describedby="file-error"{{end}}>
+    {{with .Form.FieldErrors.file}}<p class="field-error" id="file-error">{{.}}</p>{{end}}
+  </div>
+
   <button class="button-primary" type="submit">
     <span class="icon icon-send" aria-hidden="true"></span>Send
     <span id="sending" class="htmx-indicator visually-hidden">Sending…</span>
@@ -69,4 +137,12 @@
 {{define "poll-update"}}
 {{range .Messages}}{{template "message" .}}{{end}}
 {{template "poller" .}}
+{{end}}
+
+{{/* One press of "Show older": the next control, then the older rows under it.
+     That order is the list's order — this fragment replaces a control that sits
+     above the oldest message on the page. */}}
+{{define "older-update"}}
+{{if .HasOlder}}{{template "more" .}}{{end}}
+{{range .Messages}}{{template "message" .}}{{end}}
 {{end}}

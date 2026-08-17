@@ -64,3 +64,25 @@ type tokenForm struct {
 	Label string
 	Validator
 }
+
+// resetForm asks which account. The name, not the address: names are already
+// public on every message, so asking for one reveals nothing new — and asking
+// for an address would turn this form into a way to test whether an address is
+// registered here.
+type resetForm struct {
+	Name string
+	Validator
+}
+
+// resetConfirmForm carries the token through the re-render of a rejected
+// password, so a person who typed something too short does not have to go back
+// to the mail for the link.
+type resetConfirmForm struct {
+	Token string
+	Validator
+}
+
+type emailForm struct {
+	Email string
+	Validator
+}

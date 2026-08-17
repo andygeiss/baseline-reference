@@ -23,10 +23,12 @@ Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendore
 only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
 grid layout, oklch, media-query dark mode, motion-as-feedback with view-transition
 swaps, system font stack, mask icons, a fixed bottom bar, one `<dialog>`) · SQLite
-(`modernc.org/sqlite`, WAL, single-writer pool) · sessions (`alexedwards/scs/v2`
-over a hand-written two-pool store) · argon2id (`golang.org/x/crypto`) · per-IP
-rate limiting (`golang.org/x/time`) · installable (web app manifest + four icons,
-no service worker) · single static binaries with all assets embedded.
+(`modernc.org/sqlite`, WAL, single-writer pool, attachments as `BLOB`s) · sessions
+(`alexedwards/scs/v2` over a hand-written two-pool store) · argon2id
+(`golang.org/x/crypto`) · per-IP rate limiting (`golang.org/x/time`) · mail over
+stdlib `net/smtp`, or a log adapter that needs nothing · the time zone database
+embedded with `time/tzdata` · installable (web app manifest + four icons, no service
+worker) · single static binaries with all assets embedded.
 
 Every dependency is on the approved list in the baseline's `stack/go.md`, used the
 way that list prescribes, so none needs a justification here.
@@ -67,12 +69,25 @@ app needs no secret to start, so the file is optional here and gitignored; `make
 check` and `make test` ignore it on purpose, because a gate must not depend on one
 machine.
 
-Configuration: `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, and `LOG_LEVEL` are flags
-with env-var defaults (the flag wins); `ENV` is read from the environment only; the
-registration invite code is read from a file in `$CREDENTIALS_DIRECTORY`.
-`server -h` prints the whole contract, including the environment-only variables and
-the credential. The `Config` struct and its parser live in `cmd/server/config.go`,
+Attach a file to a message and it comes back through a handler, never a file server:
+the type is whatever the bytes turn out to be, and only the pictures this app renders
+are shown in the page — everything else downloads. Press **Show older** at the top of
+a long room to walk backwards through it.
+
+To try a password reset, put an address on the **You** page and ask for a link. With
+no relay configured the default mailer writes the whole message to the log, so the
+link is in `make run`'s output within five seconds. That adapter is refused when
+`ENV=prod`, because a log is not an inbox.
+
+Configuration: `HOST`, `PORT`, `OPS_PORT`, `DATABASE_URL`, `LOG_LEVEL`, `BASE_URL`,
+`TIMEZONE`, `MAILER`, and the three `SMTP_*` settings are flags with env-var defaults
+(the flag wins); `ENV` is read from the environment only; the registration invite code
+and the SMTP password are read from files in `$CREDENTIALS_DIRECTORY`. `server -h`
+prints the whole contract, including the environment-only variables and the
+credentials. The `Config` struct and its parser live in `cmd/server/config.go`,
 validated before anything binds a port or opens a file — `patterns/go-config.md`.
+`BASE_URL` is the one an emailed link is built from, and it is never taken from the
+request.
 
 ### Reaching it from a phone
 
@@ -127,6 +142,9 @@ missing predicate and a forgotten one look identical in a diff.
 | `users` | itself | `/profile` reads the signed-in user from the session. No route takes a user ID, so there is nothing to guess. |
 | `rooms` | **nobody — shared on purpose** | This is a group chat: every signed-in member sees every room and may post in any of them. `All` and `BySlug` take no actor because there is no owner to match, not because one was forgotten. |
 | `messages` | **nobody — shared on purpose** | A message belongs to its room, and rooms are shared. Messages are never edited or deleted, so the only write is an append that stamps its author from the credential rather than from the request. |
+| `attachments` | **shared to read, owned to delete** | Reading follows the message it hangs on, so `Open` takes no actor: everyone who can read the room can open the file. Deleting does not. `Delete` carries `uploader_id` in the `WHERE` clause and checks how many rows it hit, so somebody else's file answers exactly like one that was never there. `TestOnlyTheUploaderRemovesAFile` is that check. |
+| `resets` | whoever asked for it | Never listed and never rendered. The row is found by the SHA-256 of the token in the emailed link and spent in the transaction that reads it, so a link works once. |
+| `outbox` | **nobody — machinery** | One background sender drains it. No route reads it and no page renders it. |
 
 Adding membership would change the first column, not the shape: which rooms a user may see
 becomes a query with the actor in it, and `All` grows a parameter.
@@ -136,6 +154,29 @@ whose rows are positional literals, so a route that names no access class does n
 compile, and `guard` panics at boot on a class it does not know rather than falling back
 to public. `TestPrivateRoutesTurnAwayAnAnonymousRequest` walks that table instead of a
 hand-kept list of paths.
+
+## Decisions the baseline makes a project name
+
+Three patterns end by asking for an answer in the README rather than handing out a
+default. Here they are, in one place.
+
+- **Time zone: one for the whole app** (`patterns/time-and-dates.md`). No JavaScript
+  means no browser clock and no browser zone, so the server picks. Every moment is
+  rendered in the zone the deployment names — `-timezone`, `Europe/Berlin` in the
+  acceptance run — with its abbreviation beside it, and carries the exact UTC value in
+  `<time datetime>`. A per-reader setting would be one more column and one more page,
+  and a group chat with one clock does not need it. Nothing calls `Format` outside
+  `newStamp`, and no template is ever handed a `time.Time`.
+- **A send snaps the room back to the newest page** (`patterns/htmx-lists.md`).
+  Posting re-renders the whole chat region, so somebody who had pressed "Show older"
+  is at the bottom again afterwards. For a chat that is what pressing Send is expected
+  to do. A list people work through rather than talk in would append at the arrival
+  end instead and leave the loaded pages alone.
+- **Attachment bytes live in the database** (`patterns/go-file-uploads.md`). The
+  backup that already protects the messages protects their files, `VACUUM INTO` sees
+  everything, and a row and its file cannot disagree — which is why this app has no
+  orphan sweeper. The cost is the 2 MB cap: the right size for a screenshot or a log,
+  the wrong size for video.
 
 ## Baseline deviations
 
@@ -269,6 +310,21 @@ protocol working as intended. Kept as a record; none of them is a deviation anym
   `{"code":"[23]..","swap":true}` rule, by luck rather than by design. Narrowing that
   pattern to `2..` — which reads more precise — would leave a poll running forever
   with nothing in the console to say so.
+- **`ParseForm` silently empties a multipart body** → the upload pattern's rule 1.
+  On a multipart request it leaves `PostForm` non-nil and empty, so every
+  `PostFormValue` after it answers `""` — the field is on the wire and gone in Go,
+  with no error anywhere. `FormFile` is the same shape from the other side: on a plain
+  urlencoded post it answers `http.ErrNotMultipart`, which means "no file attached",
+  not "something went wrong". Both cost this repository a round of 500s.
+- **"Assert the upload is refused" was the wrong test** → the same sweep. An allowlist
+  with `text/plain` on it stores a lying SVG as text and hands it back as an
+  attachment, which is safe; an allowlist without it stores nothing. Both are correct
+  and only one is "refused", so the rule now asks what a file is never *served as*.
+- **A paged chat is allowed to snap back to the newest page on Send** → the same
+  sweep. The list pattern forbade the whole-region swap outright, which is right for a
+  list somebody works through and wrong for one they talk in — pressing Send in a chat
+  is expected to take you to the bottom. The rule now names the trade and asks for the
+  answer in the README.
 
 ## Beyond the baseline
 

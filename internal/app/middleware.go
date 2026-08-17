@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/andygeiss/baseline-reference/v3/internal/auth"
@@ -13,10 +14,45 @@ import (
 // middleware is the one canonical chain, outermost → innermost.
 func (a *App) middleware(mux http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
-	h := http.MaxBytesHandler(mux, 1<<20)
+	h := limitBody(mux)
 	h = a.sessions.LoadAndSave(h)
 	h = csrf.Handler(h)
 	return a.logRequests(a.recoverPanic(a.secureHeaders(h)))
+}
+
+// uploadLimit is what the one route that takes a file may send: the file itself,
+// plus a megabyte for the rest of the form around it.
+const uploadLimit = domain.MaxAttachmentBytes + 1<<20
+
+// limitBody caps request bodies at 1 MiB, and at uploadLimit for the route that
+// accepts an attachment.
+//
+// The choice is made here because it cannot be made anywhere else. An outer cap
+// cannot be raised further in: by the time a handler runs its body is already
+// wrapped in the smaller reader, and nothing downstream can unwrap it
+// (patterns/go-http-server.md rule 6, patterns/go-file-uploads.md).
+//
+// Matching on the path is what that costs. It is one route, and it fails the
+// safe way: a second upload route added without a line here meets the 1 MiB cap
+// and says so with a 413, rather than quietly accepting more than it should.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := int64(1 << 20)
+		if takesAFile(r) {
+			limit = uploadLimit
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// takesAFile reports whether this is POST /rooms/{slug}/messages, the page form
+// that carries an attachment. The JSON surface posts messages too, and it takes
+// no files — the /rooms/ prefix is what keeps /api/rooms/… out.
+func takesAFile(r *http.Request) bool {
+	return r.Method == http.MethodPost &&
+		strings.HasPrefix(r.URL.Path, "/rooms/") &&
+		strings.HasSuffix(r.URL.Path, "/messages")
 }
 
 // contextKey keeps this package's context keys from colliding with anybody
@@ -78,6 +114,14 @@ func (a *App) authenticate(r *http.Request) (domain.User, error) {
 	}
 	if err != nil {
 		return domain.User{}, err
+	}
+	// The session records what the password stamp was when it started. A reset
+	// moves that stamp, so every session opened before it stops here — which is
+	// the point of resetting a password somebody else may know. A machine token
+	// is a separate credential and is revoked separately, on the profile page.
+	if a.sessions.GetString(r.Context(), "pwAt") != user.PasswordChangedAt {
+		_ = a.sessions.Destroy(r.Context())
+		return domain.User{}, errNoCredential
 	}
 	return user, nil
 }
