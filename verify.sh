@@ -498,6 +498,29 @@ set -e
 [ "$CODE" = "1" ] || fail "a refused token exited $CODE, want 1"
 unset GOCHAT_ADDR GOCHAT_TOKEN_FILE
 
+step "smoke: another signed-in user cannot revoke your token"
+# patterns/go-authorization.md: the actor is in the WHERE clause, so guessing
+# somebody else's token id revokes nothing. Both halves are already tested in Go
+# — the store against real SQLite, the handler against the real routes over
+# fakes — and this is the one place they run together, through the real binary
+# against the real database.
+TOKEN_ID="$(curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" \
+    | sed -n 's|.*action="/profile/tokens/\([^/]*\)/delete".*|\1|p' | head -1)"
+[ -n "$TOKEN_ID" ] || fail "no token id on the profile page"
+JAR2="$WORKDIR/cookies-intruder"
+# Its own client IP: the auth limiter is per-IP, and this gate is about who owns
+# the row, not about how often anybody may ask.
+CODE="$(curl -s -c "$JAR2" -b "$JAR2" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/register" \
+    -H 'X-Forwarded-For: 198.51.100.7' -d "name=Intruder&password=correct-horse&invite=$INVITE")"
+[ "$CODE" = "303" ] || fail "the second user could not register: got $CODE, want 303"
+CODE="$(curl -s -c "$JAR2" -b "$JAR2" -o /dev/null -w '%{http_code}' \
+    -X POST "localhost:$PORT/profile/tokens/$TOKEN_ID/delete")"
+# The same answer an already-revoked token gets: somebody else's row and a row
+# that never existed are indistinguishable from outside.
+[ "$CODE" = "303" ] || fail "the intruder's revoke answered $CODE, want the ordinary 303"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SECRET" "localhost:$PORT/rooms")"
+[ "$CODE" = "200" ] || fail "the token answered $CODE after somebody else tried to revoke it — the WHERE clause has lost its user_id"
+
 step "smoke: revoking a token stops it"
 TOKEN_ID="$(curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" \
     | sed -n 's|.*action="/profile/tokens/\([^/]*\)/delete".*|\1|p' | head -1)"

@@ -116,6 +116,27 @@ checking only the status.
 It imports `internal/domain` and nothing else of ours, and verify.sh proves that
 with `go list -deps` — `patterns/go-ports-adapters.md`.
 
+## Who owns what
+
+`patterns/go-authorization.md` makes a project say which rows have an owner, because a
+missing predicate and a forgotten one look identical in a diff.
+
+| Table | Owner | What that means here |
+|---|---|---|
+| `tokens` | whoever created it | Every query names the actor. `ByUser` lists only theirs; `Delete` carries `user_id` in the `WHERE` clause and checks how many rows it hit, so guessing somebody else's token ID revokes nothing. `TestRevokingSomebodyElsesTokenDoesNothing` is that check. |
+| `users` | itself | `/profile` reads the signed-in user from the session. No route takes a user ID, so there is nothing to guess. |
+| `rooms` | **nobody — shared on purpose** | This is a group chat: every signed-in member sees every room and may post in any of them. `All` and `BySlug` take no actor because there is no owner to match, not because one was forgotten. |
+| `messages` | **nobody — shared on purpose** | A message belongs to its room, and rooms are shared. Messages are never edited or deleted, so the only write is an append that stamps its author from the credential rather than from the request. |
+
+Adding membership would change the first column, not the shape: which rooms a user may see
+becomes a query with the actor in it, and `All` grows a parameter.
+
+Route protection is not per-handler here either. `internal/app/routes.go` holds one table
+whose rows are positional literals, so a route that names no access class does not
+compile, and `guard` panics at boot on a class it does not know rather than falling back
+to public. `TestPrivateRoutesTurnAwayAnAnonymousRequest` walks that table instead of a
+hand-kept list of paths.
+
 ## Baseline deviations
 
 Recorded per the baseline's rules. Entries marked **waived** carry the six fields the

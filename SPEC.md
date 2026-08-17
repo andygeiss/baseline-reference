@@ -8,24 +8,39 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`8795f18`** — tag **v3.7.0**, which folded each project type's trigger router into its
-checklist. Routing and the definition of done are one file per project type now, one
-section per topic: the moment it fires, the document that rules it, and the boxes it is
-checked against. An ordinary change to a web application reads 6,980 tokens instead of
-8,091. The same release replaced code a competent Go engineer writes correctly from the
-rule sentence with its contract, and stopped defining tier 1 by which checklist section a
-box sits in — a wholly tier-1 section now says so in its heading.
+**`98885e9`** — tag **v3.8.0**, which added `patterns/go-authorization.md`: the tier-1
+rules for *may this actor touch this row*, which no document had. `go-auth-sessions.md`
+answered who is signed in; nothing said an owned-row query filters by the session's user,
+so a handler that rendered somebody else's row passed every box in every checklist. The
+release also taught the baseline's own `make structure` to check the two claims that
+repository makes about its shape, after both turned out to be wrong.
 
-**No rule this repository implements changed**, and that was checked rather than assumed.
-The release adds three `patterns/go-sqlite.md` boxes to the CLI checklist, wired up
-because the CLI router had pointed at that document since it existed and no box ever
-checked it. SQLite here lives only in `cmd/server` and `internal/store`, so the `gochat`
-client stores nothing between runs, the trigger never fires, and those three boxes are
-**unexercised** here rather than failing — the same status as the CLI token ceiling.
+**This repository already satisfied most of the new document, which is where it came
+from.** `Tokens.Delete` has taken the actor as a parameter and carried `user_id` in the
+`WHERE` clause since machine tokens existed, `ByUser` scopes the list, and
+`TestRevokingSomebodyElsesTokenDoesNothing` is the two-user test the pattern now requires
+of every project.
 
-Two documents this repository's notes cite moved their contents in v3.6.0: the timeout
-ladder is now in `patterns/go-http-client.md`, and the LLM prompt rules in
-`patterns/llm-prompting.md`. It already satisfies both.
+**Two rules did not survive contact, and this repository is why.** Both were fixed in the
+pinned commit before the tag:
+
+1. **The private-by-default rule mandated a mechanism.** It read "registered on a mux
+   mounted behind `requireLogin`", which fits one class of private route under one prefix
+   and nothing else. This app has three classes on paths that do not nest, and a prefix
+   mount loses the collection path outright: with only `/rooms/` registered, `GET /rooms`
+   becomes a 307 to `/rooms/`, which the inner mux — holding `GET /rooms` — then 404s. The
+   rule now states the invariant and gives both shapes.
+2. **"404 for somebody else's row" could not be met by a redirecting mutation.** Token
+   revocation answers its own 303 and "that token is already gone", which is the same
+   sentence whether the row belonged to somebody else or was revoked in another tab. The
+   rule is now that the two answers match; the status code follows the route.
+
+**What changed here:** `internal/app/routes.go` moved from wrapping each handler to one
+route table whose access class is a required positional field, `guard` panics at boot on a
+class it does not know, and `internal/app/routes_test.go` walks the table to prove every
+non-public route turns an anonymous request away. `README.md` gained *Who owns what*,
+which the new document requires: `tokens` and `users` have owners, `rooms` and `messages`
+are shared on purpose.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
