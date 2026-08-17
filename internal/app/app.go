@@ -66,6 +66,11 @@ type Options struct {
 	// InviteCode gates registration. Empty means anybody may register, which is
 	// how the app runs with no credential file — see cmd/server/config.go.
 	InviteCode string
+
+	// Assistant answers when somebody mentions it. Never nil: the degenerate
+	// mode in internal/echo is the default, so the whole loop runs with an
+	// empty environment — see cmd/server/config.go.
+	Assistant Assistant
 }
 
 type App struct {
@@ -75,6 +80,7 @@ type App struct {
 	messages   MessageStore
 	tokens     TokenStore
 	sessions   *scs.SessionManager
+	assistant  Assistant
 	templates  map[string]*template.Template
 	staticFS   fs.FS
 	dummyHash  string
@@ -97,6 +103,7 @@ func New(o Options) (*App, error) {
 		messages:   o.Messages,
 		tokens:     o.Tokens,
 		sessions:   o.Sessions,
+		assistant:  o.Assistant,
 		templates:  make(map[string]*template.Template),
 		staticFS:   o.StaticFS,
 		dummyHash:  o.DummyHash,

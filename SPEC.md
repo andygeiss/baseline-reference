@@ -8,9 +8,9 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`74e2c4c`** — tag **v3.4.0**, which added the project glossary, on top of
-v3.3.1's full-corpus re-review and v3.3.0's live updates, machine tokens, CLI
-secret rule, and the rule that a CLI checks its name against the PATH.
+**`0d4937c`** — tag **v3.5.0**, which added the LLM adapter pattern, the timeout
+ladder, and the rule for retiring a pattern, on top of v3.4.0's project glossary
+and v3.3.1's full-corpus re-review.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
@@ -66,6 +66,14 @@ the reasoning for why SSE is not in this baseline yet.
    both since the pattern shipped. A pattern the checklists never name is a
    pattern nothing enforces, which is why the todo app could carry the adapter
    half unexercised without anything flagging it.
+4. **The session sweeper never ran.** `time.NewTicker` does not fire at zero, so
+   a worker on a five-minute interval sweeps nothing in any process that
+   restarts more often than that — which is every process under development, and
+   every service that deploys more often than it cleans up. The loop looks alive,
+   `g.Wait()` holds it open, and the table it was meant to trim grows forever.
+   The run-once now lives inside `every`, where both workers get it, and
+   `patterns/go-http-server.md` gained the rule. *(Found in v3.5.0, by building
+   the assistant — nothing in a document review had reached it.)*
 
 **Two surfaces, and why.** The server renders HTML for browsers and JSON at
 `/api` for programs. These are separate surfaces, not two representations of
@@ -95,6 +103,10 @@ produce that JSON.
 > 6. A `gochat` command lists rooms, reads a room, and posts to it, using a token.
 >    It starts, does its job, and exits.
 > 7. The conversation survives a server restart.
+> 8. An assistant answers when a message mentions it, and stays out of the way
+>    otherwise. It runs with no API key and no model by default, so the whole
+>    loop can be exercised on an empty environment; a deployment that wants a
+>    real model selects it and supplies the credential as a file.
 
 ## Acceptance criteria
 
@@ -110,8 +122,9 @@ produce that JSON.
    both walk clean, with deviations waived in the README.
 3. The vendored htmx file matches the version pinned in the baseline's
    `VERSIONS.md` (verify.sh checks its SHA-256).
-4. `go list -deps ./internal/chatapi` names `internal/domain` and nothing else of
-   ours — the adapter never learns about the application it serves.
+4. `go list -deps` on each adapter — `./internal/chatapi` and
+   `./internal/anthropic` — names `internal/domain` and nothing else of ours: an
+   adapter never learns about the application it serves.
 
 ## Reproduction protocol
 

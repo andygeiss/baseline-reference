@@ -15,6 +15,7 @@ import (
 	"github.com/alexedwards/scs/v2"
 
 	"github.com/andygeiss/baseline-reference/v3/internal/auth"
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
 // dummyHash is built once for the whole package. Each one costs a real
@@ -44,17 +45,23 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	t.Helper()
 
 	users := newFakeUsers()
+	// Migration 0002 seeds this row in production, so the fake starts with it
+	// too: the assistant posts as a user like anybody else, and the join that
+	// reads a room has to resolve its name.
+	users.byID[domain.AssistantID] = domain.User{ID: domain.AssistantID, Name: "Assistant"}
+
 	o := Options{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Users:       users,
 		Rooms:       newFakeRooms(),
-		Messages:    newFakeMessages(),
+		Messages:    newFakeMessages(users),
 		Tokens:      newFakeTokens(users),
 		Sessions:    scs.New(), // the default in-memory store is right for a test
 		TemplatesFS: os.DirFS("../../web/templates"),
 		StaticFS:    os.DirFS("../../web/static"),
 		Version:     "test",
 		DummyHash:   dummyHash(),
+		Assistant:   newFakeAssistant(),
 	}
 	for _, option := range options {
 		option(&o)

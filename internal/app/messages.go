@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
@@ -100,10 +102,18 @@ func (a *App) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, err)
 		return
 	}
+	// Required: without this the message is lost, so nothing below it runs.
 	if err := a.messages.Add(r.Context(), msg); err != nil {
 		a.serverError(w, r, err)
 		return
 	}
+
+	// Enhancement, and it runs only once the message is safe: the worst case is
+	// a message that posts without an answer, which is a room carrying on
+	// rather than a person losing what they typed. Ordered the other way, a
+	// model outage would take the chat down with it
+	// (patterns/go-errors-logging.md).
+	a.assistantReply(r, room, msg)
 
 	if !isHTMX(r) {
 		// The anchor sits under the last message, so the browser lands on it.
@@ -113,6 +123,69 @@ func (a *App) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.renderChat(w, r, http.StatusOK, room, messageForm{})
+}
+
+const (
+	// assistantBudget bounds one whole reply: read the room, ask the model,
+	// store the answer. It sits below the server's WriteTimeout, so a wedged
+	// model ends the assistant's work rather than the reader's connection, and
+	// at or below every outbound client timeout, so the budget is what gives up
+	// (patterns/go-http-server.md, the timeout ladder).
+	assistantBudget = 10 * time.Second
+
+	// assistantContext is how much of the room the model is given. Enough to
+	// follow the thread, bounded so a long-running room does not grow the bill
+	// without limit.
+	assistantContext = 20
+)
+
+// assistantReply answers a mention, or gives up quietly.
+//
+// Every failure here logs at Warn and returns: this step improves the result
+// and cannot replace it, so the caller has already stored what the person
+// typed. Warn rather than Error is the level's definition — degraded but
+// self-healing — and keeping Error for the required steps is what stops the
+// level meaning nothing.
+//
+// And if it never succeeds? The message is stored and can be answered by
+// mentioning the assistant again. An enhancement whose failure lost something
+// permanently would have been a required step wearing the wrong label.
+func (a *App) assistantReply(r *http.Request, room domain.Room, msg *domain.Message) {
+	if a.assistant == nil || !domain.MentionsAssistant(msg.Body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), assistantBudget)
+	defer cancel()
+
+	history, err := a.messages.Recent(ctx, room.ID, assistantContext)
+	if err != nil {
+		a.logger.Warn("assistant: reading the room", "room", room.Slug, "err", err)
+		return
+	}
+
+	said, err := a.assistant.Reply(ctx, history)
+	switch {
+	case err == nil:
+	case errors.Is(err, domain.ErrRefused):
+		// A refusal is an answer, not a fault: the room hears something instead
+		// of watching a mention vanish.
+		said = "I can't help with that one."
+	default:
+		a.logger.Warn("assistant: no reply", "room", room.Slug, "err", err)
+		return
+	}
+
+	reply, err := domain.NewMessage(room.ID, domain.AssistantID, said)
+	if err != nil {
+		a.logger.Warn("assistant: unusable reply", "room", room.Slug, "err", err)
+		return
+	}
+	// WithoutCancel because the answer is already paid for: losing it to a
+	// budget that expired between the reply arriving and this write would waste
+	// the call and leave the mention unanswered anyway.
+	if err := a.messages.Add(context.WithoutCancel(ctx), reply); err != nil {
+		a.logger.Warn("assistant: storing the reply", "room", room.Slug, "err", err)
+	}
 }
 
 // renderChat answers with the whole chat region: the messages, the poller

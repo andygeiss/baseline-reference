@@ -139,6 +139,27 @@ is.
   no root `font-size`, no size tokens, and a `rem` term in every `clamp()`, which
   verify.sh gates. No web font: the system stack is the pattern's default answer,
   not a waiver.
+- **The assistant calls the API directly, with no SDK** (`patterns/go-llm-adapter.md`
+  rule 20) — a conformance note, recorded because that rule asks for it either way.
+  A reply to a conversation is one endpoint and a handful of fields, which is the
+  document's own stdlib case: it adds no dependency, `stack/go.md` has no Anthropic
+  SDK on its approved list, and the wire-contract test in `internal/anthropic` is
+  what keeps it honest. The choice departs from the `claude-api` skill's own default
+  of reaching for the SDK, which is the half being recorded here. Streaming, a
+  tool-use loop, or structured outputs would flip it — and would need the SDK
+  justified in this README instead.
+- **The assistant replies inside the request** — a conformance note.
+  `handleMessagePost` persists the message (required), then asks the model
+  (enhancement) before answering, so a mention costs the sender the model's latency.
+  A production chat would answer first and let the existing poll deliver the reply.
+  Synchronous is what makes the ordering in `patterns/go-errors-logging.md` visible
+  in one function and gives the timeout ladder something real to bound: a 10s handler
+  budget, a 15s client timeout, a 30s `WriteTimeout`.
+- **`internal/echo` is a product mode, not a test double**
+  (`patterns/go-llm-adapter.md` rule 14) — a conformance note. It is the default,
+  which is what lets this app start with an empty environment and still exercise the
+  whole loop. It lives in `internal/` and config selects it; the fake that tests the
+  handlers is a separate thing in `internal/app/fakes_test.go`.
 - **The library project type is unexercised** (`project-types/library.md`,
   `patterns/go-library.md`, `checklists/library.md`) — and for the reason that
   document itself gives. Libraries are *extracted when a second project needs the

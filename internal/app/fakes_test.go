@@ -111,12 +111,27 @@ func (f *fakeRooms) BySlug(_ context.Context, slug string) (domain.Room, error) 
 }
 
 type fakeMessages struct {
-	mu   sync.Mutex
-	seq  int64
-	msgs []domain.Message
+	mu    sync.Mutex
+	seq   int64
+	msgs  []domain.Message
+	users *fakeUsers // the store joins the author's name on read; so does this
 }
 
-func newFakeMessages() *fakeMessages { return &fakeMessages{} }
+func newFakeMessages(users *fakeUsers) *fakeMessages {
+	return &fakeMessages{users: users}
+}
+
+// withAuthors fills in the display names the real store gets from its JOIN. A
+// fake that skipped this would let a handler attribute every message to nobody
+// and still pass.
+func (f *fakeMessages) withAuthors(msgs []domain.Message) []domain.Message {
+	for i, m := range msgs {
+		if u, err := f.users.ByID(context.Background(), m.AuthorID); err == nil {
+			msgs[i].Author = u.Name
+		}
+	}
+	return msgs
+}
 
 func (f *fakeMessages) Add(_ context.Context, m *domain.Message) error {
 	f.mu.Lock()
@@ -140,7 +155,7 @@ func (f *fakeMessages) Since(_ context.Context, roomID string, since int64) ([]d
 			break
 		}
 	}
-	return out, nil
+	return f.withAuthors(out), nil
 }
 
 func (f *fakeMessages) Recent(_ context.Context, roomID string, limit int) ([]domain.Message, error) {
@@ -155,7 +170,7 @@ func (f *fakeMessages) Recent(_ context.Context, roomID string, limit int) ([]do
 	if len(out) > limit {
 		out = out[len(out)-limit:]
 	}
-	return out, nil
+	return f.withAuthors(out), nil
 }
 
 type fakeTokens struct {
@@ -213,4 +228,28 @@ func (f *fakeTokens) Delete(_ context.Context, userID, id string) error {
 		}
 	}
 	return domain.ErrNotFound
+}
+
+// fakeAssistant answers from a script. Like the other fakes it keeps state
+// rather than counting calls: a test sets what the model says, or which error
+// it returns, and then asserts on what the room ends up holding.
+type fakeAssistant struct {
+	mu   sync.Mutex
+	said string
+	err  error
+}
+
+func newFakeAssistant() *fakeAssistant { return &fakeAssistant{said: "Sure — here you go."} }
+
+// answer sets what the next Reply returns.
+func (f *fakeAssistant) answer(said string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.said, f.err = said, err
+}
+
+func (f *fakeAssistant) Reply(_ context.Context, _ []domain.Message) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.said, f.err
 }

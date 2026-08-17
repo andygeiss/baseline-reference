@@ -27,6 +27,12 @@ type Config struct {
 	// and never as a flag or an environment variable, and LogValue below leaves
 	// it out. Empty means the deployment passed none and anybody may register.
 	InviteCode string
+
+	// Assistant picks which adapter answers a mention: "echo" needs nothing and
+	// is the default, "anthropic" needs a key. The two settings below are one
+	// setting in two halves, so they are validated as a pair.
+	Assistant    string
+	AnthropicKey string
 }
 
 // errUsage means the message was already printed where the problem was found,
@@ -45,11 +51,12 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 	fs.StringVar(&c.OpsPort, "ops-port", cmp.Or(os.Getenv("OPS_PORT"), "6060"), "ops listen port, localhost only (env OPS_PORT)")
 	fs.StringVar(&c.DBPath, "database-url", cmp.Or(os.Getenv("DATABASE_URL"), "app.db"), "SQLite file path (env DATABASE_URL)")
 	level := fs.String("log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "debug|info|warn|error (env LOG_LEVEL)")
+	fs.StringVar(&c.Assistant, "assistant", cmp.Or(os.Getenv("ASSISTANT"), "echo"), "echo|anthropic — who answers a mention (env ASSISTANT)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage of server:\n")
 		fs.PrintDefaults()
 		fmt.Fprintf(stderr, "\nRead from the environment only:\n  ENV\n\tdev|prod, picks text vs JSON logs (default dev)\n")
-		fmt.Fprintf(stderr, "\nRead from $CREDENTIALS_DIRECTORY, one file per secret:\n  invite_code\n\tregistration is open when this file is absent\n")
+		fmt.Fprintf(stderr, "\nRead from $CREDENTIALS_DIRECTORY, one file per secret:\n  invite_code\n\tregistration is open when this file is absent\n  anthropic_key\n\trequired by -assistant=anthropic, unused otherwise\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -77,6 +84,29 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 		return Config{}, err
 	}
 	c.InviteCode = inviteCode
+
+	if c.Assistant != "echo" && c.Assistant != "anthropic" {
+		return Config{}, fmt.Errorf("assistant %q: want echo or anthropic", c.Assistant)
+	}
+	anthropicKey, err := readCredential("anthropic_key")
+	if err != nil {
+		return Config{}, err
+	}
+	c.AnthropicKey = anthropicKey
+
+	// The checks above see one field at a time and cannot see a pair. These two
+	// are really one setting — which adapter, and the key it needs — so they
+	// get their own check, and it says which half is missing and what to do
+	// about it (patterns/go-config.md rule 7).
+	//
+	// Without it the half-configured pair starts fine and fails on the first
+	// mention, which is the worst place to find out.
+	switch {
+	case c.Assistant == "anthropic" && c.AnthropicKey == "":
+		return Config{}, errors.New(`assistant "anthropic": no key — write it to $CREDENTIALS_DIRECTORY/anthropic_key, or run with -assistant=echo`)
+	case c.Assistant != "anthropic" && c.AnthropicKey != "":
+		return Config{}, fmt.Errorf("assistant %q: an anthropic_key credential is present — set -assistant=anthropic to use it, or remove the file", c.Assistant)
+	}
 	return c, nil
 }
 
@@ -105,9 +135,9 @@ func readCredential(name string) (string, error) {
 }
 
 // LogValue is what slog logs for a Config: everything except the secrets.
-// InviteCode is missing from this list on purpose, and adding a second secret
-// to the struct does not add it here either. An allowlist is what makes that
-// true — a blocklist forgets the field somebody adds next year.
+// InviteCode and AnthropicKey are missing from this list on purpose, and adding
+// a third secret to the struct does not add it here either. An allowlist is
+// what makes that true — a blocklist forgets the field somebody adds next year.
 //
 // Whether registration is gated is worth a line in the boot log, so the fact is
 // logged without the code that enforces it.
@@ -117,6 +147,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("port", c.Port),
 		slog.String("ops_port", c.OpsPort),
 		slog.String("database_url", c.DBPath),
+		slog.String("assistant", c.Assistant),
 		slog.String("env", c.Env),
 		slog.String("log_level", c.LogLevel.String()),
 		slog.Bool("registration_gated", c.InviteCode != ""),

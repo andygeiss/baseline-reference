@@ -97,6 +97,22 @@ DEPS="$(go list -deps ./internal/chatapi | grep baseline-reference | grep -v 'in
 [ "$DEPS" = "github.com/andygeiss/baseline-reference/v3/internal/domain" ] \
     || fail "internal/chatapi depends on more than the domain: $DEPS"
 
+step "the model adapter depends on the domain and nothing else of ours"
+# patterns/go-llm-adapter.md: internal/anthropic is the only package that knows
+# Anthropic's API. If it ever imports internal/app, the port has been inverted
+# and the vendor's shape has reached the application.
+DEPS="$(go list -deps ./internal/anthropic | grep baseline-reference | grep -v 'internal/anthropic$' || true)"
+[ "$DEPS" = "github.com/andygeiss/baseline-reference/v3/internal/domain" ] \
+    || fail "internal/anthropic depends on more than the domain: $DEPS"
+
+step "the prompt lives in the domain, not in an adapter"
+# One prompt, shared. An adapter carrying its own copy is two products that
+# answer differently depending on a flag nobody connects to the symptom.
+grep -q "SystemPrompt" internal/domain/assistant.go || fail "the system prompt is not in the domain"
+for ADAPTER in internal/anthropic/anthropic.go internal/echo/echo.go; do
+    grep -q "You are a participant" "$ADAPTER" && fail "$ADAPTER carries its own copy of the prompt"
+done
+
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/gochat" ./cmd/gochat
@@ -123,6 +139,34 @@ set -e
 grep -q "ENV" "$WORKDIR/help.txt" || fail "-h does not name ENV"
 grep -q "CREDENTIALS_DIRECTORY" "$WORKDIR/help.txt" || fail "-h does not name the credentials directory"
 grep -q "invite_code" "$WORKDIR/help.txt" || fail "-h does not name the invite_code credential"
+
+step "config: two settings that are one setting are checked as a pair"
+# go-config.md rule 7: -assistant=anthropic and its credential are one setting
+# in two halves. Rule 2 checks one field at a time and cannot see a pair, so
+# half-configured the app would start fine and fail on the first mention —
+# the worst place to find out.
+set +e
+"$WORKDIR/server" -assistant anthropic -database-url "$WORKDIR/never2.db" >"$WORKDIR/pair.log" 2>&1
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "assistant without a key: exit $CODE, want 2"
+# STYLE.md: name the fix, not just the fault — both ways out are in the line.
+grep -q "anthropic_key" "$WORKDIR/pair.log" || fail "the error does not name the file to write"
+grep -q "assistant=echo" "$WORKDIR/pair.log" || fail "the error does not name the other way out"
+[ ! -e "$WORKDIR/never2.db" ] || fail "database created despite a half-configured pair"
+
+# The other half of the pair: a key with no adapter to use it. Its own
+# directory — the boot below needs a credentials directory holding the invite
+# code and nothing else, and this rule is strict on purpose.
+mkdir -p "$WORKDIR/creds-pair"
+printf 'sk-test\n' > "$WORKDIR/creds-pair/anthropic_key"
+set +e
+CREDENTIALS_DIRECTORY="$WORKDIR/creds-pair" "$WORKDIR/server" -assistant echo \
+    -database-url "$WORKDIR/never3.db" >"$WORKDIR/pair2.log" 2>&1
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "a key with -assistant=echo: exit $CODE, want 2"
+grep -q "assistant=anthropic" "$WORKDIR/pair2.log" || fail "the error does not name the fix"
 
 step "smoke: test ports are free"
 # Without this, a leftover server from an earlier run answers every gate below
@@ -333,6 +377,26 @@ curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST "localhost:$PORT/rooms/general-
 curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/escaped.html" "localhost:$PORT/rooms/general-chat"
 grep -q '<script>alert' "$WORKDIR/escaped.html" && fail "a message reached the page as live markup"
 grep -q '&lt;script&gt;' "$WORKDIR/escaped.html" || fail "the message was not escaped into text"
+
+step "smoke: the assistant answers a mention, and stays out of the way otherwise"
+# The whole loop with no key and no model: -assistant=echo is the default, so
+# an empty environment exercises mention -> port -> adapter -> storage -> the
+# page (patterns/go-llm-adapter.md rule 14).
+curl -fsS -c "$JAR" -b "$JAR" -o /dev/null -X POST \
+    "localhost:$PORT/rooms/general-chat/messages" -d "body=quiet+line+nobody+asked+about"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/quiet.html" "localhost:$PORT/rooms/general-chat"
+grep -q "echo:" "$WORKDIR/quiet.html" && fail "the assistant answered a message that did not mention it"
+
+curl -fsS -c "$JAR" -b "$JAR" -o /dev/null -X POST \
+    "localhost:$PORT/rooms/general-chat/messages" -d "body=%40assistant+are+you+there%3F"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/mention.html" "localhost:$PORT/rooms/general-chat"
+grep -q "echo:" "$WORKDIR/mention.html" || fail "the assistant did not answer a mention"
+# It posts as a user like anybody else, so the join that reads a room resolves
+# its name — migration 0002 seeds that row.
+grep -q "Assistant" "$WORKDIR/mention.html" || fail "the reply is not attributed to the assistant"
+# The required step stands on its own: the person's message is in the room
+# whatever the model did.
+grep -q "are you there" "$WORKDIR/mention.html" || fail "the mention itself is missing from the room"
 
 step "smoke: a machine token signs a program in"
 curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST "localhost:$PORT/profile/tokens" -d "label=verify.sh"

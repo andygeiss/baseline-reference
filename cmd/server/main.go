@@ -15,6 +15,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,8 +25,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	reference "github.com/andygeiss/baseline-reference/v3"
+	"github.com/andygeiss/baseline-reference/v3/internal/anthropic"
 	"github.com/andygeiss/baseline-reference/v3/internal/app"
 	"github.com/andygeiss/baseline-reference/v3/internal/auth"
+	"github.com/andygeiss/baseline-reference/v3/internal/echo"
 	"github.com/andygeiss/baseline-reference/v3/internal/store"
 )
 
@@ -104,6 +109,15 @@ func run(cfg Config) error {
 		return fmt.Errorf("building the dummy password hash: %w", err)
 	}
 
+	// The only place that names both sides. Constructing an adapter sends
+	// nothing: boot validates what is local — flags, files, this database — and
+	// stops there, so a model being down is a broken mention rather than a
+	// process that will not start (patterns/go-http-client.md).
+	var assistant app.Assistant = echo.New()
+	if cfg.Assistant == "anthropic" {
+		assistant = anthropic.New(cfg.AnthropicKey)
+	}
+
 	a, err := app.New(app.Options{
 		Logger:      logger,
 		Users:       store.NewUsers(db),
@@ -111,6 +125,7 @@ func run(cfg Config) error {
 		Messages:    store.NewMessages(db),
 		Tokens:      store.NewTokens(db),
 		Sessions:    sessions,
+		Assistant:   assistant,
 		TemplatesFS: templatesFS,
 		StaticFS:    staticFS,
 		Version:     ver,
@@ -160,7 +175,11 @@ func run(cfg Config) error {
 // because the store's Find refuses to return it.
 func sweepSessions(ctx context.Context, logger *slog.Logger, sessions *store.Sessions) error {
 	return every(ctx, 5*time.Minute, func() {
-		if err := sessions.DeleteExpired(ctx); err != nil {
+		switch err := sessions.DeleteExpired(ctx); {
+		case errors.Is(err, context.Canceled):
+			// Shutting down mid-sweep is not a fault. Logging it as one puts an
+			// ERROR line in every orderly stop that lands on this.
+		case err != nil:
 			logger.Error("sweeping sessions", "err", err)
 		}
 	})
@@ -189,18 +208,27 @@ func snapshot(ctx context.Context, logger *slog.Logger, db *store.DB, dbPath str
 		// running it on the single write connection would starve writes for its
 		// whole duration.
 		if _, err := db.Read.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
-			logger.Error("writing snapshot", "path", dst, "err", err)
+			if !errors.Is(err, context.Canceled) { // shutdown mid-snapshot is not a fault
+				logger.Error("writing snapshot", "path", dst, "err", err)
+			}
 			return
 		}
 		logger.Info("snapshot written", "path", dst)
 	}
-	write() // at boot, so a fresh deployment is never a day away from its first copy
+	// every runs write at boot, so a fresh deployment is never a day away from
+	// its first copy.
 	return every(ctx, 24*time.Hour, write)
 }
 
-// every runs do on a ticker until ctx is canceled — an owned lifecycle, so the
-// goroutine stops when the process does.
+// every runs do now, then on a ticker until ctx is canceled — an owned
+// lifecycle, so the goroutine stops when the process does.
+//
+// The call before the loop is the load-bearing part: time.NewTicker does not
+// fire at zero, so a process restarted more often than d would otherwise never
+// run do at all (patterns/go-http-server.md). That is every binary under
+// development, and every service that deploys more often than it cleans up.
 func every(ctx context.Context, d time.Duration, do func()) error {
+	do()
 	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	for {
@@ -228,17 +256,52 @@ func serve(ctx context.Context, srv *http.Server) error {
 	}
 }
 
-// version returns the build version the toolchain embedded — the tag when HEAD
-// sits on one, a pseudo-version otherwise, "+dirty" when the tree was modified.
-// One string for three jobs: the boot log line, the /healthz field, and the
-// static-asset cache-buster (operations/web-application.md).
-func version() string {
+// version names this build for three jobs at once: the boot log line, the
+// /healthz field, and the cache-buster on every immutable static asset. That
+// last job sets the rule — two builds with different assets MUST NOT share a
+// string — so this is the three-case reader from patterns/go-performance.md,
+// not the shorter one cmd/gochat uses for -version. `unknown` would be a
+// correct answer there and a stale stylesheet here.
+var version = sync.OnceValue(func() string {
 	info, ok := debug.ReadBuildInfo() // nil outside module mode — reading it would panic at boot
 	if !ok {
-		return "unknown"
+		return bootID()
 	}
-	if v := info.Main.Version; v != "" && v != "(devel)" {
-		return v // go install @version, or VCS-derived since Go 1.24
+	return resolveVersion(info)
+})
+
+// resolveVersion picks the name for a build. It takes the build info rather
+// than reading it, because the three cases it decides between cannot all be
+// produced by the toolchain running the test.
+func resolveVersion(info *debug.BuildInfo) string {
+	// A real released version: go install of a tagged module. A tag built from
+	// an edited tree is not one — "v0.3.0+dirty" is the same string after every
+	// further edit, the exact thing this function exists to avoid — so it falls
+	// through to the boot-by-boot name below.
+	if v := info.Main.Version; v != "" && v != "(devel)" && !strings.HasSuffix(v, "+dirty") {
+		return v
 	}
-	return "unknown" // "(devel)" means no VCS metadata — vcs.* is absent too
+
+	var revision string
+	var edited bool
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			edited = s.Value == "true"
+		}
+	}
+	// A clean checkout names its assets by the commit they came from, so two
+	// deployments of the same commit do not make anyone download them twice.
+	if revision != "" && !edited {
+		return revision[:min(len(revision), 12)]
+	}
+	return bootID()
+}
+
+// bootID names one run of an edited tree, which is the finest grain there is:
+// the toolchain cannot tell two edits apart, but it can tell two starts apart.
+func bootID() string {
+	return strconv.FormatInt(time.Now().UnixMilli(), 36)
 }

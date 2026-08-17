@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
 
 var secretPattern = regexp.MustCompile(`gochat_[A-Za-z0-9_-]+`)
@@ -147,12 +149,16 @@ func TestRevokingSomebodyElsesTokenDoesNothing(t *testing.T) {
 }
 
 // onlyUserID returns the ID of the single registered user, for tests that need
-// to reach past the HTTP surface.
+// to reach past the HTTP surface. The assistant is seeded rather than
+// registered and owns no tokens, so it is not a candidate.
 func (ta *testApp) onlyUserID(t *testing.T) string {
 	t.Helper()
 	ta.users.mu.Lock()
 	defer ta.users.mu.Unlock()
 	for id := range ta.users.byID {
+		if id == domain.AssistantID {
+			continue
+		}
 		return id
 	}
 	t.Fatal("no user is registered")
