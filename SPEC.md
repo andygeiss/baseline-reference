@@ -8,44 +8,61 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`5538323`** — tag **v3.8.0**, which added `patterns/go-authorization.md`: the tier-1
-rules for *may this actor touch this row*, which no document had. `go-auth-sessions.md`
-answered who is signed in; nothing said an owned-row query filters by the session's user,
-so a handler that rendered somebody else's row passed every box in every checklist. The
-release also taught the baseline's own `make structure` to check the two claims the
-baseline makes about its own shape, after both turned out to be wrong.
+**`12dc414`** — tag **v3.9.0**, which added four documents for four questions the corpus
+could not answer: `patterns/go-file-uploads.md` (tier 1), `patterns/go-email.md`,
+`patterns/htmx-lists.md`, and `patterns/time-and-dates.md`. This repository is what they
+were tested against, and it is why three of them changed before the tag.
 
-**This repository already satisfied most of the new document, which is where it came
-from.** `Tokens.Delete` has taken the actor as a parameter and carried `user_id` in the
-`WHERE` clause since machine tokens existed, `ByUser` scopes the list, and
-`TestRevokingSomebodyElsesTokenDoesNothing` is the two-user test the pattern now requires
-of every project.
+**Nothing here satisfied any of them, which is the difference from the last release.**
+v3.8.0's document arrived and found this repository already conforming. These four
+arrived and found four features missing, so the features were built:
 
-**Two rules did not survive contact, and this repository is why.** Both were fixed in the
-pinned commit before the tag:
+- **Attachments** — one file per message, stored as a `BLOB` under a generated id and the
+  type its bytes are sniffed as. Served by a handler that resolves the room first, never
+  by a file server; anything the app does not render inline goes back as an attachment.
+  Only the uploader may remove one, and `TestOnlyTheUploaderRemovesAFile` is the two-user
+  test.
+- **Password reset** — an optional address on the profile page, a one-hour single-use link
+  whose SHA-256 is all that is stored, and an outbox written in the same transaction as
+  the link and drained by a ticker. The link comes from `BASE_URL` and never from the
+  request. `internal/logmail` is the adapter that needs nothing, so the whole flow runs
+  with an empty environment; `internal/smtpmail` is the real one.
+- **Paging** — "Show older" walks backwards by keyset on `seq`. Its cursor is `before` and
+  the poller's is `since`, at opposite ends of one list, and `verify.sh` fails if they
+  ever share a name.
+- **Times** — nothing formats a time outside `newStamp`, no template is handed a
+  `time.Time`, and the acceptance run boots with `-timezone Europe/Berlin`, so a missing
+  `time/tzdata` import fails the gauntlet rather than a container.
 
-1. **The private-by-default rule mandated a mechanism.** It read "registered on a mux
-   mounted behind `requireLogin`", which fits one class of private route under one prefix
-   and nothing else. This app has three classes on paths that do not nest, and a prefix
-   mount loses the collection path outright: with only `/rooms/` registered, `GET /rooms`
-   becomes a redirect to `/rooms/` (307 on Go 1.26), which the inner mux — holding
-   `GET /rooms` — then 404s. The rule now states the invariant and gives both shapes.
-2. **"404 for somebody else's row" could not be met by a redirecting mutation.** Token
-   revocation answers its own 303 and "that token is already gone", which is the same
-   sentence whether the row belonged to somebody else or was revoked in another tab. The
-   rule is now that the two answers match; the status code follows the route.
+**Three rules did not survive contact, and this repository is why.** All three were fixed
+in the pinned commit before the tag:
 
-**What changed here:** `internal/app/routes.go` moved from wrapping each handler to one
-route table whose access class is a required positional field, `guard` panics at boot on a
-class it does not know, and `internal/app/routes_test.go` walks the table to prove every
-non-public route turns an anonymous request away. `README.md` gained *Who owns what*,
-which the new document requires: `tokens` and `users` have owners, `rooms` and `messages`
-are shared on purpose.
+1. **`ParseForm` silently empties a multipart body.** It leaves `PostForm` non-nil and
+   empty, so every `PostFormValue` after it answers `""` with no error anywhere, and
+   `FormFile` answers `http.ErrNotMultipart` on a plain post — which means "nothing
+   attached", not "something broke". Both cost this repository a round of 500s. Now rule 1
+   of `patterns/go-file-uploads.md`.
+2. **"Assert the upload is refused" was the wrong test.** An allowlist carrying
+   `text/plain` stores a lying SVG as text and hands it back as an attachment, which is
+   safe; an allowlist without it stores nothing. Both are correct and only one is
+   "refused". The rule now asks what the file is never *served as*.
+3. **"A paged list gives up the whole-region swap on send" was too strong.** A chat
+   snapping to the newest message when you press Send is what people expect, not lost
+   work. The rule now names the trade and asks a project to write down which side it took
+   — which this one does, under *Decisions the baseline makes a project name*.
+
+**What changed here:** three new packages (`internal/logmail`, `internal/smtpmail`, and
+the attachment, outbox and reset stores), one migration, two new pages, and eight new
+`verify.sh` gates. `README.md` gained *Decisions the baseline makes a project name* —
+the zone answer, what a send does to loaded pages, and where attachment bytes live — and
+*Who owns what* grew three rows, including the one this release made interesting:
+attachments are shared to read and owned to delete.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
-identical, so a change to either is a change to both. `Caddyfile.lan` is the second
-such file: it is character-identical to the snippet in `patterns/local-https.md`.
+identical, so a change to either is a change to both — the attachment, outbox and
+reset-link entries landed in both. `Caddyfile.lan` is the second such file: it is
+character-identical to the snippet in `patterns/local-https.md`.
 
 **This repository opts into local HTTPS**, because it is installable and a browser
 only offers install over HTTPS — so install is the one feature here a phone cannot
