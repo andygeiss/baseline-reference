@@ -6,3 +6,11 @@
 *.db
 *.db-wal
 *.db-shm
+
+# The local-HTTPS authority stays on the machine that made it
+# (patterns/local-https.md rule 4). verify.sh proves none ever landed in history;
+# these keep it that way.
+*.crt
+*.key
+*.pem
+*.p12

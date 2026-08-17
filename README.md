@@ -42,6 +42,7 @@ make run                       # http://localhost:8080, ops on localhost:6060
 make test                      # inner loop: race + shuffle, as CI runs it
 make check                     # default target: every CI gate, gate-for-gate
 make build                     # both binaries into bin/
+make lan                       # https://<your-mac>.local:8443 for a phone (see below)
 ./verify.sh                    # full acceptance gauntlet
 ```
 
@@ -73,6 +74,34 @@ registration invite code is read from a file in `$CREDENTIALS_DIRECTORY`.
 the credential. The `Config` struct and its parser live in `cmd/server/config.go`,
 validated before anything binds a port or opens a file — `patterns/go-config.md`.
 
+### Reaching it from a phone
+
+**This project opts into local HTTPS** (`patterns/local-https.md`). It is installable,
+and a browser only offers install over HTTPS. Install is therefore the one feature
+here that a phone cannot try over a plain LAN address, however correct the manifest
+is — and it is the only secure-context feature this app has.
+
+```sh
+make run    # the app, on 127.0.0.1:8080
+make lan    # in a second shell: Caddy on https://<your-mac>.local:8443
+```
+
+Caddy is a system binary rather than a `go run` tool, so install it first
+(`brew install caddy`) — `make lan` is the one target here that needs something the
+Go toolchain does not bring. The operations repository pins the version; this
+repository deliberately does not pin a second one.
+
+Then trust Caddy's root on the device — the three iOS steps, including the
+**Certificate Trust Settings** toggle people miss, are in the pattern. `sudo caddy
+trust` does the same for this machine's own browser.
+
+The binary is untouched by any of it: it speaks plain HTTP on loopback, and Caddy in
+front terminates TLS — the same shape as production, on a different machine.
+`Caddyfile.lan` is a separate artefact from the deployment Caddyfile, which this
+repository does not have at all (see the *Never deployed* waiver below): a `.local`
+name, a local authority, and a loopback upstream. Nothing here reaches a server, and
+the root certificate it generates is never committed.
+
 ## Two surfaces, on purpose
 
 The pages answer in HTML because a browser renders HTML. `/api` answers in JSON
@@ -100,11 +129,14 @@ is.
   service. The binary holds up its end of that contract — the env vars, `127.0.0.1`
   by default, `/healthz` with the version, graceful shutdown, secrets from
   `$CREDENTIALS_DIRECTORY` — and `verify.sh` gates every one of them. The
-  deployment's end is absent on purpose: no image, no compose file, no Caddy, no
-  `GOMEMLIMIT`, and no previous version to roll back to. Those belong to the
-  operations repository,
+  deployment's end is absent on purpose: no image, no compose file, no deployment
+  Caddyfile, no `GOMEMLIMIT`, and no previous version to roll back to. Those belong
+  to the operations repository,
   [baseline-ops](https://github.com/andygeiss/baseline-ops), which builds its own
-  template against a checkout of this repo.
+  template against a checkout of this repo. The root `Caddyfile.lan` is not a
+  counter-example and does not narrow this waiver: it is the local-HTTPS artefact
+  from `patterns/local-https.md`, it runs on a developer's machine, and rule 3 of
+  that pattern forbids it reaching a server at all.
 - **Never released** (`operations/cli-release.md`, and the CLI checklist's Ship
   section) — waived 2026-08-15 by Andy. There is no `release.yml` and no
   cross-compiled artifact. This repository's tags mirror the baseline version it was

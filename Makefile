@@ -5,7 +5,7 @@
 # the build target takes them both (stack/makefile.md rule 5).
 MAIN = ./cmd/server
 
-.PHONY: check test run fmt build clean
+.PHONY: check test run fmt build clean lan
 
 # Default. Every gate CI runs, identically and in the same order
 # (operations/ci.md). Green here means green CI — run before every push.
@@ -30,6 +30,13 @@ run:
 
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
+
+# Reaches this app from a phone over HTTPS, which install needs
+# (patterns/local-https.md). A real recurring command, so rule 3 allows it.
+# Runs beside `make run`, in a second shell — Caddy answers 502 until the app
+# is up. scutil is macOS; on Linux the same name comes from Avahi.
+lan:
+	LAN_HOST="$$(scutil --get LocalHostName).local" caddy run --config Caddyfile.lan
 
 # Release-shaped local binaries in bin/ (go build creates the directory).
 build:

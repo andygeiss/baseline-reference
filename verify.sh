@@ -113,6 +113,51 @@ for ADAPTER in internal/anthropic/anthropic.go internal/echo/echo.go; do
     grep -q "You are a participant" "$ADAPTER" && fail "$ADAPTER carries its own copy of the prompt"
 done
 
+step "local HTTPS: the binary never serves TLS"
+# patterns/local-https.md rule 1. The tempting fix for "install needs HTTPS" is a
+# -tls-cert flag. It splits the server into two shapes, and the one nobody deploys
+# is the one that gets tested. Caddy in front is the answer here and in production.
+# Serving TLS is what is banned, not using it: an outbound client that pins its own
+# roots is fine, so this looks for the serving calls rather than for crypto/tls.
+BAD="$(grep -rln 'ListenAndServeTLS\|ServeTLS\|tls-cert\|tls-key' --include='*.go' . || true)"
+[ -z "$BAD" ] || fail "the binary serves TLS: $BAD"
+
+step "local HTTPS: Caddyfile.lan is the local artefact, not the deployment one"
+# patterns/local-https.md rule 2. An edited copy of the deployment Caddyfile drifts
+# from a template nothing rebuilds it from. Three markers make this the local file:
+# its own authority, no :80 redirect listener, and a loopback upstream.
+[ -f Caddyfile.lan ] || fail "Caddyfile.lan is missing, but the README opts this project in"
+grep -q 'tls internal' Caddyfile.lan || fail "Caddyfile.lan does not use the local authority (tls internal)"
+grep -q 'auto_https disable_redirects' Caddyfile.lan || fail "Caddyfile.lan would bind :80 to redirect to a port it does not serve"
+grep -q 'reverse_proxy 127.0.0.1:8080' Caddyfile.lan || fail "Caddyfile.lan does not proxy to the app on loopback"
+
+step "local HTTPS: nothing that ships reads Caddyfile.lan"
+# patterns/local-https.md rule 3. A deployment that needs this file is a deployment
+# doing something wrong, and an embedded copy would ship a developer's hostname.
+BAD="$(grep -rln 'Caddyfile.lan' --include='*.go' . || true)"
+[ -z "$BAD" ] || fail "Go code names Caddyfile.lan: $BAD"
+
+step "local HTTPS: no certificate or key was ever committed"
+# patterns/local-https.md rule 4. The authority stays on the machine that made it.
+# A committed root key mints certificates every trusting device accepts.
+BAD="$(git log --all --pretty=format: --name-only | sort -u | grep -E '\.(crt|key|pem|p12)$' || true)"
+[ -z "$BAD" ] || fail "a certificate or key is in this repository's history: $BAD"
+
+step "local HTTPS: the README says the project opts in"
+# patterns/local-https.md rule 5. The feature is invisible until someone follows
+# the steps, so the opt-in is written next to how to run the app.
+grep -q 'opts into local HTTPS' README.md || fail "the README does not record the opt-in"
+
+step "local HTTPS: the Caddyfile is valid"
+# Read by Caddy rather than by eye. Caddy is a system binary, not a `go run` tool,
+# so it is absent on plenty of machines that still need a green run — skipped there,
+# and the five gates above still hold.
+if command -v caddy >/dev/null 2>&1; then
+    caddy validate --config Caddyfile.lan >/dev/null 2>&1 || fail "caddy validate rejects Caddyfile.lan"
+else
+    echo "   caddy is not installed here — the config is validated where it is"
+fi
+
 step "static build (CGO_ENABLED=0, trimpath)"
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/server" ./cmd/server
 CGO_ENABLED=0 go build -trimpath -o "$WORKDIR/gochat" ./cmd/gochat

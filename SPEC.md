@@ -8,13 +8,20 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`0d4937c`** — tag **v3.5.0**, which added the LLM adapter pattern, the timeout
-ladder, and the rule for retiring a pattern, on top of v3.4.0's project glossary
-and v3.3.1's full-corpus re-review.
+**`72a311f`** — tag **v3.5.1**, which wired `patterns/local-https.md` into the
+trigger table and the web checklist after v3.5.0 had shipped it unreachable, on top
+of v3.5.0's LLM adapter pattern, timeout ladder, and rule for retiring a pattern.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
-identical, so a change to either is a change to both.
+identical, so a change to either is a change to both. `Caddyfile.lan` is the second
+such file: it is character-identical to the snippet in `patterns/local-https.md`.
+
+**This repository opts into local HTTPS**, because it is installable and a browser
+only offers install over HTTPS — so install is the one feature here a phone cannot
+try over a plain LAN address. Six `verify.sh` gates cover five of the six boxes the
+web checklist added, and the sixth (the authority never leaving this machine) is
+enforced by the one that proves no certificate ever entered the history.
 
 The app under test is **Go Chat**: a mobile-first chat application with a
 command-line client. v3.2.0 swapped it in for the todo app, which had swapped in
