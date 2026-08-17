@@ -8,12 +8,12 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`98885e9`** — tag **v3.8.0**, which added `patterns/go-authorization.md`: the tier-1
+**`5538323`** — tag **v3.8.0**, which added `patterns/go-authorization.md`: the tier-1
 rules for *may this actor touch this row*, which no document had. `go-auth-sessions.md`
 answered who is signed in; nothing said an owned-row query filters by the session's user,
 so a handler that rendered somebody else's row passed every box in every checklist. The
-release also taught the baseline's own `make structure` to check the two claims that
-repository makes about its shape, after both turned out to be wrong.
+release also taught the baseline's own `make structure` to check the two claims the
+baseline makes about its own shape, after both turned out to be wrong.
 
 **This repository already satisfied most of the new document, which is where it came
 from.** `Tokens.Delete` has taken the actor as a parameter and carried `user_id` in the
@@ -28,8 +28,8 @@ pinned commit before the tag:
    mounted behind `requireLogin`", which fits one class of private route under one prefix
    and nothing else. This app has three classes on paths that do not nest, and a prefix
    mount loses the collection path outright: with only `/rooms/` registered, `GET /rooms`
-   becomes a 307 to `/rooms/`, which the inner mux — holding `GET /rooms` — then 404s. The
-   rule now states the invariant and gives both shapes.
+   becomes a redirect to `/rooms/` (307 on Go 1.26), which the inner mux — holding
+   `GET /rooms` — then 404s. The rule now states the invariant and gives both shapes.
 2. **"404 for somebody else's row" could not be met by a redirecting mutation.** Token
    revocation answers its own 303 and "that token is already gone", which is the same
    sentence whether the row belonged to somebody else or was revoked in another tab. The
