@@ -8,9 +8,13 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`72a311f`** — tag **v3.5.1**, which wired `patterns/local-https.md` into the
-trigger table and the web checklist after v3.5.0 had shipped it unreachable, on top
-of v3.5.0's LLM adapter pattern, timeout ladder, and rule for retiring a pattern.
+**`b8d6b1d`** — tag **v3.6.0**, which cut what the corpus costs an agent to read (the
+web application's required reading fell 29,855 → 18,252 tokens, no rule removed) and
+redefined tier 1 by what a rule protects rather than by which checklist section it sits
+in. **No rule this repository implements changed**, so no code here changed with it. Two
+documents this repository's own notes cite moved their contents: the timeout ladder is
+now in `patterns/go-http-client.md`, and the LLM prompt rules in
+`patterns/go-llm-adapter.md`. It already satisfies both.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
