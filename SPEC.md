@@ -8,55 +8,57 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`12dc414`** — tag **v3.9.0**, which added four documents for four questions the corpus
-could not answer: `patterns/go-file-uploads.md` (tier 1), `patterns/go-email.md`,
-`patterns/htmx-lists.md`, and `patterns/time-and-dates.md`. This repository is what they
-were tested against, and it is why three of them changed before the tag.
+**`c1ca89f`** — tag **v3.10.0**, which added one document for the question every other
+document in the corpus dodged: `patterns/go-data-deletion.md` (tier 1). Everything else
+there rules data arriving. This one rules data leaving.
 
-**Nothing here satisfied any of them, which is the difference from the last release.**
-v3.8.0's document arrived and found this repository already conforming. These four
-arrived and found four features missing, so the features were built:
+**This repository could not delete a person at all**, which is how the gap was found and
+what this release closes:
 
-- **Attachments** — one file per message, stored as a `BLOB` under a generated id and the
-  type its bytes are sniffed as. Served by a handler that resolves the room first, never
-  by a file server; anything the app does not render inline goes back as an attachment.
-  Only the uploader may remove one, and `TestOnlyTheUploaderRemovesAFile` is the two-user
-  test.
-- **Password reset** — an optional address on the profile page, a one-hour single-use link
-  whose SHA-256 is all that is stored, and an outbox written in the same transaction as
-  the link and drained by a ticker. The link comes from `BASE_URL` and never from the
-  request. `internal/logmail` is the adapter that needs nothing, so the whole flow runs
-  with an empty environment; `internal/smtpmail` is the real one.
-- **Paging** — "Show older" walks backwards by keyset on `seq`. Its cursor is `before` and
-  the poller's is `since`, at opposite ends of one list, and `verify.sh` fails if they
-  ever share a name.
-- **Times** — nothing formats a time outside `newStamp`, no template is handed a
-  `time.Time`, and the acceptance run boots with `-timezone Europe/Berlin`, so a missing
-  `time/tzdata` import fails the gauntlet rather than a container.
+- **Deleting your account** — `/account/delete` is a page, not a dialog. It asks for the
+  account name retyped and the password, and the server checks both: `hx-confirm` is what
+  the token revoke uses, and it is drawn by htmx, so it is nothing at all with htmx
+  switched off. The delete itself is one `DELETE FROM users WHERE id = ?`, and every table
+  that names a user says in the schema what happens to its rows.
+- **The outbox learned who it belongs to** — it holds an address, which is somebody's data
+  sitting outside `users`, and nothing pointed back at the account. It now carries a
+  nullable `user_id` with `ON DELETE CASCADE`.
+- **Every child of `users` is indexed** — deleting a parent runs
+  `SELECT rowid FROM <child> WHERE <child key> = ?` once per child table, and four of the
+  five had no index for it.
+- **The sweep that reads the schema** — `TestDeletingAUserLeavesNoRowBehind` walks
+  `sqlite_master` at runtime rather than a list of table names, because the defect it hunts
+  is a table added next year with a `user_id` column and no `REFERENCES` clause.
 
-**Three rules did not survive contact, and this repository is why.** All three were fixed
-in the pinned commit before the tag:
+**One rule was already met, and three did not survive contact.**
 
-1. **`ParseForm` silently empties a multipart body.** It leaves `PostForm` non-nil and
-   empty, so every `PostFormValue` after it answers `""` with no error anywhere, and
-   `FormFile` answers `http.ErrNotMultipart` on a plain post — which means "nothing
-   attached", not "something broke". Both cost this repository a round of 500s. Now rule 1
-   of `patterns/go-file-uploads.md`.
-2. **"Assert the upload is refused" was the wrong test.** An allowlist carrying
-   `text/plain` stores a lying SVG as text and hands it back as an attachment, which is
-   safe; an allowlist without it stores nothing. Both are correct and only one is
-   "refused". The rule now asks what the file is never *served as*.
-3. **"A paged list gives up the whole-region swap on send" was too strong.** A chat
-   snapping to the newest message when you press Send is what people expect, not lost
-   work. The rule now names the trade and asks a project to write down which side it took
-   — which this one does, under *Decisions the baseline makes a project name*.
+`authenticate` already resolved a session to a user row and destroyed the session when the
+row was gone — the tier-1 rule that closes the hole no cascade reaches. The document
+asserted it; this repository had been doing it since sessions existed.
 
-**What changed here:** three new packages (`internal/logmail`, `internal/smtpmail`, and
-the attachment, outbox and reset stores), one migration, two new pages, and eight new
-`verify.sh` gates. `README.md` gained *Decisions the baseline makes a project name* —
-the zone answer, what a send does to loaded pages, and where attachment bytes live — and
-*Who owns what* grew three rows, including the one this release made interesting:
-attachments are shared to read and owned to delete.
+1. **The all-tables sweep does not find what it looks like it finds.** It matches rows that
+   name the person by id, so the outbox — an address and, at that moment, no `user_id` —
+   stayed green while the address stayed on disk. Proved by removing the column and
+   watching the sweep pass. The rule now says the sweep finds references, not copies, and
+   asks for a by-value assertion beside it; `TestDeletingAUserLeavesNoRowBehind` has both.
+2. **The schema is only the delete if the first migration got it right.** SQLite cannot
+   alter a constraint, so changing an `ON DELETE` action is create-copy-drop-rename — and
+   `DROP TABLE` with foreign keys on runs an implicit `DELETE FROM` that fires foreign key
+   actions, so dropping a parent to rebuild it takes its children with it. Turning foreign
+   keys off around the rebuild is closed to a migration inside one transaction, where the
+   pragma is a no-op. That is why `messages` keeps **erase** here rather than moving to
+   **anonymize**: the answer is cheap before the table ships and expensive afterwards, and
+   the document now says so.
+3. **An anti-pattern was too wide.** "A confirmation that is a JavaScript dialog" would
+   have banned the `hx-confirm` on the token revoke, which is an htmx attribute rather than
+   hand-written JavaScript and is fine for an action you can redo. The rule now names what
+   actually matters: an irreversible action asks for something the *server* can check.
+
+**What changed here:** one migration, one package-level file (`internal/app/account.go`),
+one template, one store method, two routes, four handler tests, the schema sweep, and three
+new `verify.sh` gates. `README.md` gained *What a delete means, table by table* under *Who
+owns what* — the rule the document asks every project to answer in writing, including the
+two answers this app does not use.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character

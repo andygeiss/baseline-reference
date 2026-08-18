@@ -2,8 +2,10 @@ package store_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -541,4 +543,143 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	second.Close()
+}
+
+// TestDeletingAUserLeavesNoRowBehind is the test patterns/go-data-deletion.md
+// asks every project for, and the reason it reads the schema at runtime is that
+// the defect it hunts does not exist yet: a table added next year with a
+// user_id column and no REFERENCES clause. The delete would still succeed, the
+// rows would still be there, and a test naming today's tables would still be
+// green. This one fails the day that table is created with a row in it.
+func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	ada := addUser(t, db, "Ada")
+	bob := addUser(t, db, "Bob")
+	general := addRoom(t, db, "General")
+
+	// One row for Ada in every table that can hold one. A test that deletes an
+	// account with nothing attached proves that empty tables are empty.
+	messages := store.NewMessages(db)
+	m := &domain.Message{RoomID: general.ID, AuthorID: ada.ID, Body: "here"}
+	m.Attachment = &domain.Attachment{
+		ID: "ada-file", UploaderID: ada.ID, Name: "ada.png", Kind: "image/png", Size: 4,
+	}
+	if err := messages.Add(t.Context(), m, []byte("\x89PNG")); err != nil {
+		t.Fatalf("adding a message with a file: %v", err)
+	}
+	if err := store.NewTokens(db).Add(t.Context(), &domain.Token{
+		ID: "ada-token", UserID: ada.ID, Hash: "token-hash", Label: "laptop",
+	}); err != nil {
+		t.Fatalf("adding a token: %v", err)
+	}
+	if err := store.NewResets(db).Add(t.Context(),
+		&domain.Reset{Hash: "ada-reset", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(time.Hour)},
+		domain.Mail{To: "ada@example.com", Subject: "Reset", Text: "https://example.com/reset?t=x"},
+	); err != nil {
+		t.Fatalf("adding a reset: %v", err)
+	}
+
+	// Bob gets one of everything too, so the sweep below proves the cascade is
+	// aimed rather than indiscriminate.
+	bobMsg := &domain.Message{RoomID: general.ID, AuthorID: bob.ID, Body: "still here"}
+	if err := messages.Add(t.Context(), bobMsg, nil); err != nil {
+		t.Fatalf("adding bob's message: %v", err)
+	}
+
+	if err := store.NewUsers(db).Delete(t.Context(), ada.ID); err != nil {
+		t.Fatalf("deleting Ada: %v", err)
+	}
+
+	for _, table := range tableNames(t, db) {
+		for _, col := range textColumns(t, db, table) {
+			var n int
+			// Identifiers cannot be bound. These come from sqlite_master, never
+			// from anything a request touched.
+			q := fmt.Sprintf(`SELECT count(*) FROM %q WHERE %q = ?`, table, col)
+			if err := db.Read.QueryRow(q, ada.ID).Scan(&n); err != nil {
+				t.Fatalf("counting %s.%s: %v", table, col, err)
+			}
+			if n != 0 {
+				t.Errorf("%s.%s still holds the deleted user in %d row(s)", table, col, n)
+			}
+		}
+	}
+
+	// The sweep above finds rows that name Ada by id. It cannot find a row that
+	// holds her data under another name, and the outbox is exactly that: it
+	// stores an address, and an address is not an id. Removing the user_id this
+	// release added leaves the sweep green and the address on disk — so the
+	// column a delete follows needs an assertion of its own.
+	var queued int
+	if err := db.Read.QueryRow(
+		`SELECT count(*) FROM outbox WHERE recipient = ?`, "ada@example.com").Scan(&queued); err != nil {
+		t.Fatalf("counting queued mail: %v", err)
+	}
+	if queued != 0 {
+		t.Errorf("%d queued message(s) still address the deleted account", queued)
+	}
+
+	// The one place neither check can look: a session names its user inside an
+	// opaque payload, not in a column. What ends those is authenticate
+	// resolving the credential to a row — TestDeletingAnAccountSignsTheBrowserOut.
+	var left int
+	if err := db.Read.QueryRow(`SELECT count(*) FROM messages WHERE author_id = ?`, bob.ID).
+		Scan(&left); err != nil {
+		t.Fatalf("counting bob's messages: %v", err)
+	}
+	if left != 1 {
+		t.Errorf("bob has %d messages left, want the 1 he wrote", left)
+	}
+}
+
+// tableNames lists every table the app owns, read from the schema so a table
+// added later is covered without anybody remembering to add it here.
+func tableNames(t *testing.T, db *store.DB) []string {
+	t.Helper()
+	rows, err := db.Read.Query(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		t.Fatalf("listing tables: %v", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scanning a table name: %v", err)
+		}
+		names = append(names, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading table names: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("no tables: the sweep below would pass without looking at anything")
+	}
+	return names
+}
+
+// textColumns lists a table's TEXT columns, which is where a user id can be.
+func textColumns(t *testing.T, db *store.DB, table string) []string {
+	t.Helper()
+	rows, err := db.Read.Query(fmt.Sprintf(`SELECT name, type FROM pragma_table_info(%q)`, table))
+	if err != nil {
+		t.Fatalf("reading the columns of %s: %v", table, err)
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var name, kind string
+		if err := rows.Scan(&name, &kind); err != nil {
+			t.Fatalf("scanning a column of %s: %v", table, err)
+		}
+		if strings.EqualFold(kind, "TEXT") {
+			cols = append(cols, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the columns of %s: %v", table, err)
+	}
+	return cols
 }

@@ -64,6 +64,16 @@ func (f *fakeUsers) ByID(_ context.Context, id string) (domain.User, error) {
 	return domain.User{}, domain.ErrNotFound
 }
 
+func (f *fakeUsers) Delete(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.byID[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(f.byID, id)
+	return nil
+}
+
 func (f *fakeUsers) UpdatePasswordHash(_ context.Context, id, hash string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

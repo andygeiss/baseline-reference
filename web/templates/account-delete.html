@@ -1,0 +1,27 @@
+{{define "title"}}Delete your account{{end}}
+
+{{define "main"}}
+<h1>Delete your account</h1>
+
+<p>This erases the account <strong>{{.User.Name}}</strong>, every message you
+  have posted, every file you have attached, and every token you have made.
+  There is no undo.</p>
+
+<form class="card-form" method="post" action="/account/delete">
+  {{with .Form.FormError}}<p class="field-error">{{.}}</p>{{end}}
+
+  <label for="name">Type your account name to confirm</label>
+  <input id="name" name="name" required autocomplete="off" placeholder="{{.User.Name}}"
+         {{with .Form.FieldErrors.name}}aria-invalid="true" aria-describedby="name-error"{{end}}>
+  {{with .Form.FieldErrors.name}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
+
+  <label for="password">Your password</label>
+  <input id="password" name="password" type="password" required autocomplete="current-password"
+         {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="password-error"{{end}}>
+  {{with .Form.FieldErrors.password}}<p class="field-error" id="password-error">{{.}}</p>{{end}}
+
+  <button class="button-danger" type="submit">Delete my account for good</button>
+</form>
+
+<p><a href="/profile">Never mind, take me back</a></p>
+{{end}}

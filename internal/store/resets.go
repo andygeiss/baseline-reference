@@ -42,9 +42,13 @@ func (s *Resets) Add(ctx context.Context, res *domain.Reset, mail domain.Mail) e
 		res.Hash, res.UserID, res.ExpiresAt.UTC().Format(time.RFC3339), now()); err != nil {
 		return fmt.Errorf("inserting a reset for user %s: %w", res.UserID, err)
 	}
+	// user_id is what makes this row reachable by a delete. Without it the
+	// address in recipient outlives the account it belongs to
+	// (patterns/go-data-deletion.md).
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO outbox (id, recipient, subject, body, created_at) VALUES (?, ?, ?, ?, ?)`,
-		rand.Text(), mail.To, mail.Subject, mail.Text, now()); err != nil {
+		`INSERT INTO outbox (id, user_id, recipient, subject, body, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		rand.Text(), res.UserID, mail.To, mail.Subject, mail.Text, now()); err != nil {
 		return fmt.Errorf("queueing the reset mail for user %s: %w", res.UserID, err)
 	}
 	if err := tx.Commit(); err != nil {

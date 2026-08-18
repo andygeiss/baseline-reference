@@ -31,6 +31,7 @@ type (
 		// session records so older ones stop working.
 		SetPassword(ctx context.Context, id, hash string) (string, error)
 		SetEmail(ctx context.Context, id, email string) error
+		Delete(ctx context.Context, id string) error
 	}
 
 	RoomStore interface {

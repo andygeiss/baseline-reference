@@ -113,6 +113,48 @@ for ADAPTER in internal/anthropic/anthropic.go internal/echo/echo.go; do
     grep -q "You are a participant" "$ADAPTER" && fail "$ADAPTER carries its own copy of the prompt"
 done
 
+step "every column naming a user says what happens when that user goes"
+# patterns/go-data-deletion.md rule 2. A user column with no REFERENCES clause
+# cascades from nothing: the delete succeeds, the rows stay, and every test is
+# still green. The defect is an absence, so this gate looks for the absence
+# rather than for a symptom.
+MISSING="$(grep -hE '^[[:space:]]*(user_id|author_id|uploader_id)[[:space:]]+TEXT|ADD COLUMN[[:space:]]+(user_id|author_id|uploader_id)[[:space:]]+TEXT' \
+    internal/store/migrations/*.sql | grep -v 'ON DELETE' || true)"
+[ -z "$MISSING" ] || fail "a column names a user and says nothing about their deletion:$MISSING"
+
+step "every child of users is indexed"
+# Deleting a parent runs SELECT rowid FROM <child> WHERE <child key> = ? once
+# per child table. Without an index that is a linear scan, once per table.
+#
+# Table and column together, not the column name alone: two tables share the
+# name user_id, and indexing one of them would otherwise answer for both.
+for PAIR in $(awk '
+    /^CREATE TABLE/ { t = $3; sub(/\(.*/, "", t) }
+    /^ALTER TABLE/  { t = $3 }
+    /(user_id|author_id|uploader_id)[ \t]+TEXT/ {
+        for (i = 1; i <= NF; i++)
+            if ($i ~ /^(user_id|author_id|uploader_id)$/) print t "." $i
+    }
+' internal/store/migrations/*.sql | sort -u); do
+    TBL="${PAIR%.*}"
+    COL="${PAIR#*.}"
+    grep -qE "CREATE (UNIQUE )?INDEX[[:space:]]+[a-z_]+[[:space:]]+ON[[:space:]]+$TBL[[:space:]]*\\($COL\\)" \
+        internal/store/migrations/*.sql \
+        || fail "$TBL.$COL is a child of users with no index: every account deletion scans $TBL"
+done
+
+step "the account delete is confirmed by the server, not by a dialog"
+# patterns/go-data-deletion.md: hx-confirm is what the token revoke uses, and it
+# is drawn by htmx -- so it is nothing at all with htmx switched off, and the
+# server cannot check it. An irreversible action asks for something the server
+# verifies: here the name retyped, and the password.
+grep -q 'hx-confirm' web/templates/account-delete.html \
+    && fail "the delete page leans on hx-confirm, which the server cannot check"
+grep -q 'name="password"' web/templates/account-delete.html \
+    || fail "the delete page does not ask for the password"
+grep -q 'name="name"' web/templates/account-delete.html \
+    || fail "the delete page does not ask for the account name to be retyped"
+
 step "local HTTPS: the binary never serves TLS"
 # patterns/local-https.md rule 1. The tempting fix for "install needs HTTPS" is a
 # -tls-cert flag. It splits the server into two shapes, and the one nobody deploys
@@ -694,6 +736,37 @@ sort -u "$WORKDIR/reset-codes" > "$WORKDIR/reset-codes-unique"
 [ "$(wc -l < "$WORKDIR/reset-codes-unique")" -eq 1 ] \
     || fail "the answer changes with who is asking: $(tr '\n' ' ' < "$WORKDIR/reset-codes")"
 grep -q '^303$' "$WORKDIR/reset-codes-unique" || fail "asking for a link does not answer 303"
+
+step "smoke: deleting an account takes the person with it"
+# patterns/go-data-deletion.md, end to end through the real binary against the
+# real database. The Intruder is the account this run is finished with.
+#
+# Neither half of the confirmation is enough on its own.
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
+    -d "name=Intruder" --data-urlencode "password=not the password")"
+[ "$CODE" = "422" ] || fail "deleting with the wrong password answered $CODE, want 422"
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
+    -d "name=Somebody Else" --data-urlencode "password=a whole new password")"
+[ "$CODE" = "422" ] || fail "deleting with the wrong name answered $CODE, want 422"
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
+[ "$CODE" = "200" ] || fail "two refused deletes signed the person out: got $CODE"
+
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
+    -d "name=Intruder" --data-urlencode "password=a whole new password")"
+[ "$CODE" = "303" ] || fail "deleting the account answered $CODE, want 303"
+
+# No cascade reaches a session row: it is keyed by token and its payload is
+# opaque to SQL. What ends this one is authenticate resolving the credential to
+# a row that is not there any more.
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
+[ "$CODE" = "303" ] || fail "the deleted account's cookie still opens a page: got $CODE"
+
+# The name comes free, which is only true of a row that is gone rather than
+# hidden behind a flag.
+CODE="$(curl -s -c "$WORKDIR/cookies-again" -b "$WORKDIR/cookies-again" -o /dev/null -w '%{http_code}' \
+    -X POST "localhost:$PORT/register" -H 'X-Forwarded-For: 198.51.100.11' \
+    -d "name=Intruder&password=correct-horse&invite=$INVITE")"
+[ "$CODE" = "303" ] || fail "the name did not come free after the delete: got $CODE"
 
 step "smoke: cross-site POST rejected (CSRF)"
 CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/rooms" \

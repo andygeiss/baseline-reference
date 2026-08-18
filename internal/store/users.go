@@ -103,6 +103,31 @@ func (s *Users) SetEmail(ctx context.Context, id, email string) error {
 	return nil
 }
 
+// Delete erases an account and everything the schema hangs off it.
+//
+// One statement. Every table that names a user declares its own ON DELETE, so
+// the cascade is the schema keeping a promise rather than a list of deletes
+// here that the next table added would be missing from
+// (patterns/go-data-deletion.md).
+//
+// The id is the actor's own, out of the session: this app has no
+// administrator, so the only account anybody may delete is the one they are
+// signed in as, and there is no second predicate to forget.
+func (s *Users) Delete(ctx context.Context, id string) error {
+	res, err := s.db.Write.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting user %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("counting the deletion of user %s: %w", id, err)
+	}
+	if n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 // userColumns is the one shape every user read returns, so a column added to
 // the table is added in one place.
 const userColumns = `SELECT id, name, password_hash, email, password_changed_at FROM users`

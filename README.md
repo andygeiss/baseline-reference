@@ -141,10 +141,28 @@ missing predicate and a forgotten one look identical in a diff.
 | `tokens` | whoever created it | Every query names the actor. `ByUser` lists only theirs; `Delete` carries `user_id` in the `WHERE` clause and checks how many rows it hit, so guessing somebody else's token ID revokes nothing. `TestRevokingSomebodyElsesTokenDoesNothing` is that check. |
 | `users` | itself | `/profile` reads the signed-in user from the session. No route takes a user ID, so there is nothing to guess. |
 | `rooms` | **nobody — shared on purpose** | This is a group chat: every signed-in member sees every room and may post in any of them. `All` and `BySlug` take no actor because there is no owner to match, not because one was forgotten. |
-| `messages` | **nobody — shared on purpose** | A message belongs to its room, and rooms are shared. Messages are never edited or deleted, so the only write is an append that stamps its author from the credential rather than from the request. |
+| `messages` | **nobody — shared on purpose** | A message belongs to its room, and rooms are shared. Nobody edits a message and no route deletes one, so the only write from a request is an append that stamps its author from the credential rather than from the request. The one delete is the cascade when its author's account goes — see *What a delete means, table by table* below. |
 | `attachments` | **shared to read, owned to delete** | Reading follows the message it hangs on, so `Open` takes no actor: everyone who can read the room can open the file. Deleting does not. `Delete` carries `uploader_id` in the `WHERE` clause and checks how many rows it hit, so somebody else's file answers exactly like one that was never there. `TestOnlyTheUploaderRemovesAFile` is that check. |
 | `resets` | whoever asked for it | Never listed and never rendered. The row is found by the SHA-256 of the token in the emailed link and spent in the transaction that reads it, so a link works once. |
 | `outbox` | **nobody — machinery** | One background sender drains it. No route reads it and no page renders it. |
+
+### What a delete means, table by table
+
+`patterns/go-data-deletion.md` makes a project say this the same way and for the same
+reason: a missing cascade and a deliberate keep look identical in a schema. Deleting an
+account is one `DELETE FROM users WHERE id = ?`, and everything below happens because the
+schema says so, not because a handler remembered.
+
+| Table | Answer | Why |
+|---|---|---|
+| `messages`, `attachments` | **erase** | This chat says that leaving takes what you wrote with you. Anonymizing them — `ON DELETE SET NULL` and a "deleted user" byline — is the other defensible answer, and it is the one to pick if the conversation matters more than the exit. It is the branch this repository does not exercise. |
+| `tokens`, `resets` | **erase** | Credentials for an account that no longer exists. |
+| `outbox` | **erase** | The row holds an address. It is the only user data outside `users` that nothing pointed back at until this release, and `user_id` is what a delete now follows. |
+| `sessions` | **no answer available** | The row is keyed by token and its payload is opaque to SQL, so no foreign key can name the user in it. What signs a deleted account out is `authenticate` resolving the credential to a row — which this app already did, and which is now the rule. |
+| `rooms` | **kept** | Shared, and owned by nobody. A room outlives whoever made it. |
+
+Nothing here is *refuse*: this chat holds nothing a person may not walk away from. That
+answer is unexercised rather than waived.
 
 Adding membership would change the first column, not the shape: which rooms a user may see
 becomes a query with the actor in it, and `All` grows a parameter.

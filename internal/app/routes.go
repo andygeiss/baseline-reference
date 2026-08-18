@@ -73,6 +73,13 @@ func (a *App) routes() []route {
 		{"POST /profile/tokens", pageAuth, a.handleTokenCreate},
 		{"POST /profile/tokens/{id}/delete", pageAuth, a.handleTokenDelete},
 
+		// Deleting the account is two requests on purpose: the page asks for
+		// the name and the password, and the POST checks both. An hx-confirm
+		// would be a dialog htmx draws, and htmx is not what this may depend
+		// on (patterns/go-data-deletion.md).
+		{"GET /account/delete", pageAuth, a.handleAccountDeleteForm},
+		{"POST /account/delete", pageAuth, a.handleAccountDelete},
+
 		// The JSON surface, for programs. A separate surface rather than a
 		// second representation of the pages: a command-line client cannot
 		// render HTML, and an API has no forms, no redirects, and no flash
