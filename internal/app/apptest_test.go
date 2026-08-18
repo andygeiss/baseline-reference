@@ -78,6 +78,10 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 		BaseURL:     &url.URL{Scheme: "https", Host: "chat.example.com"},
 		DummyHash:   dummyHash(),
 		Assistant:   newFakeAssistant(),
+		// t.Context() is cancelled just before the cleanups below run, so a
+		// detached reply still in flight at the end of a test is cancelled the
+		// way a shutdown cancels one, and the Wait cleanup then joins it.
+		Stopping: t.Context(),
 	}
 	for _, option := range options {
 		option(&o)
@@ -87,6 +91,12 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	if err != nil {
 		t.Fatalf("building the app: %v", err)
 	}
+
+	// Registered before server.Close, so it runs after it: the listener stops,
+	// then the work it started is joined. Without this a detached reply could
+	// still be writing to a fake while the test binary tears the test down,
+	// which -race reports and a sleeping test hides.
+	t.Cleanup(a.Wait)
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {

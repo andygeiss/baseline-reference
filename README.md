@@ -260,13 +260,25 @@ is.
   of reaching for the SDK, which is the half being recorded here. Streaming, a
   tool-use loop, or structured outputs would flip it — and would need the SDK
   justified in this README instead.
-- **The assistant replies inside the request** — a conformance note.
-  `handleMessagePost` persists the message (required), then asks the model
-  (enhancement) before answering, so a mention costs the sender the model's latency.
-  A production chat would answer first and let the existing poll deliver the reply.
-  Synchronous is what makes the ordering in `patterns/go-errors-logging.md` visible
-  in one function and gives the timeout ladder something real to bound: a 10s handler
-  budget, a 15s client timeout, a 30s `WriteTimeout`.
+- **The assistant replies outside the request** (`patterns/go-background-work.md`,
+  *Work a request starts and does not wait for*) — a conformance note.
+  `handleMessagePost` persists the message (required), then *starts* the model call
+  (enhancement) and answers at once, so a mention costs the sender nothing. The reply
+  reaches the room on their next poll. The ordering `patterns/go-errors-logging.md`
+  asks for is still visible in one function; what moved is who waits.
+  `assistantBudget` has left the timeout ladder with it: there is no socket above
+  this work, so 10s is a backstop for a wedged model rather than a rung under
+  `WriteTimeout`, and shutdown is what ends a healthy reply early.
+  **Losing one costs nothing**, which is what makes an in-memory goroutine the right
+  shape here rather than a queue on disk: the mention can simply be made again.
+- **The detached reply's counter has no test that fails without it** — recorded
+  rather than quietly left. `TestAMentionDoesNotMakeTheSenderWait` proves the POST
+  does not wait, and `TestShutdownEndsAReplyInFlight` proves shutdown cancels a reply
+  in flight — deleting the `AfterFunc` turns the second one red after the full 10s
+  budget. Deleting `a.running.Add(1)` turns nothing red: an uncounted reply still
+  lands, every time, on a machine that is not loaded. Asserting that `App.Wait`
+  *blocks* needs either a clock or a deadlock, and both are worse than the gap, so
+  the absence is gated in `verify.sh` at the source instead.
 - **`internal/echo` is a product mode, not a test double**
   (`patterns/go-llm-adapter.md` rule 14) — a conformance note. It is the default,
   which is what lets this app start with an empty environment and still exercise the

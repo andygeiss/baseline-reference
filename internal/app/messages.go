@@ -187,11 +187,11 @@ func (a *App) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enhancement, and it runs only once the message is safe: the worst case is
-	// a message that posts without an answer, which is a room carrying on
-	// rather than a person losing what they typed. Ordered the other way, a
+	// Enhancement, and it is started only once the message is safe: the worst
+	// case is a message that posts without an answer, which is a room carrying
+	// on rather than a person losing what they typed. Ordered the other way, a
 	// model outage would take the chat down with it
-	// (patterns/go-errors-logging.md).
+	// (patterns/go-errors-logging.md). It does not block this response.
 	a.assistantReply(r, room, msg)
 
 	if !isHTMX(r) {
@@ -214,10 +214,10 @@ func refusedAttachment(err error) bool {
 
 const (
 	// assistantBudget bounds one whole reply: read the room, ask the model,
-	// store the answer. It sits below the server's WriteTimeout, so a wedged
-	// model ends the assistant's work rather than the reader's connection, and
-	// at or below every outbound client timeout, so the budget is what gives up
-	// (patterns/go-http-server.md, the timeout ladder).
+	// store the answer. The reply runs outside the request now, so there is no
+	// socket above it and this budget has left the timeout ladder — it stands
+	// alone as the backstop for a wedged model, and shutdown is what ends a
+	// healthy one early (patterns/go-background-work.md).
 	assistantBudget = 10 * time.Second
 
 	// assistantContext is how much of the room the model is given. Enough to
@@ -241,9 +241,28 @@ func (a *App) assistantReply(r *http.Request, room domain.Room, msg *domain.Mess
 	if a.assistant == nil || !domain.MentionsAssistant(msg.Body) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), assistantBudget)
-	defer cancel()
+	// The reply outlives the request that triggered it: the sender's POST
+	// answers as soon as their own message is stored, and the answer reaches
+	// the room on the next poll. WithoutCancel keeps the request's values and
+	// drops its cancellation, so somebody who closes the tab still gets an
+	// answer; AfterFunc puts the process back in charge of when this ends
+	// (patterns/go-background-work.md).
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), assistantBudget)
+	release := context.AfterFunc(a.stopping, cancel)
+	a.running.Add(1)
+	go func() {
+		defer a.running.Done()
+		defer release() // or the AfterFunc registration outlives the reply
+		defer cancel()
+		a.writeReply(ctx, room)
+	}()
+}
 
+// writeReply is the detached half: everything that used to happen inside the
+// request. It is nothing to lose if it is cut short — the mention can be made
+// again — which is what makes an in-memory goroutine the right shape for it
+// rather than a queue on disk (patterns/go-background-work.md).
+func (a *App) writeReply(ctx context.Context, room domain.Room) {
 	history, err := a.messages.Page(ctx, room.ID, 0, assistantContext)
 	if err != nil {
 		a.logger.Warn("assistant: reading the room", "room", room.Slug, "err", err)
@@ -269,7 +288,8 @@ func (a *App) assistantReply(r *http.Request, room domain.Room, msg *domain.Mess
 	}
 	// WithoutCancel because the answer is already paid for: losing it to a
 	// budget that expired between the reply arriving and this write would waste
-	// the call and leave the mention unanswered anyway.
+	// the call and leave the mention unanswered anyway. It cannot outlive the
+	// process either way — main's Wait is on this goroutine, not on ctx.
 	if err := a.messages.Add(context.WithoutCancel(ctx), reply, nil); err != nil {
 		a.logger.Warn("assistant: storing the reply", "room", room.Slug, "err", err)
 	}

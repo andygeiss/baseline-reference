@@ -8,57 +8,44 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`c1ca89f`** — tag **v3.10.0**, which added one document for the question every other
-document in the corpus dodged: `patterns/go-data-deletion.md` (tier 1). Everything else
-there rules data arriving. This one rules data leaving.
+**`b17c67a`**, whose two rule commits carry the shape this release implements: **work a
+request starts and does not wait for** (`patterns/go-background-work.md`). The corpus ruled
+work on a schedule and request-scoped work, and had nothing for the third shape — a request
+starts it, it outlives the request, and it dies with the process.
 
-**This repository could not delete a person at all**, which is how the gap was found and
-what this release closes:
+**The assistant used to answer inside the request**, and this repository recorded that as a
+conformance note saying a production chat would do it the other way. It now does:
 
-- **Deleting your account** — `/account/delete` is a page, not a dialog. It asks for the
-  account name retyped and the password, and the server checks both: `hx-confirm` is what
-  the token revoke uses, and it is drawn by htmx, so it is nothing at all with htmx
-  switched off. The delete itself is one `DELETE FROM users WHERE id = ?`, and every table
-  that names a user says in the schema what happens to its rows.
-- **The outbox learned who it belongs to** — it holds an address, which is somebody's data
-  sitting outside `users`, and nothing pointed back at the account. It now carries a
-  nullable `user_id` with `ON DELETE CASCADE`.
-- **Every child of `users` is indexed** — deleting a parent runs
-  `SELECT rowid FROM <child> WHERE <child key> = ?` once per child table, and four of the
-  five had no index for it.
-- **The sweep that reads the schema** — `TestDeletingAUserLeavesNoRowBehind` walks
-  `sqlite_master` at runtime rather than a list of table names, because the defect it hunts
-  is a table added next year with a `user_id` column and no `REFERENCES` clause.
+- **`handleMessagePost` starts the reply and answers at once.** The sender pays nothing for
+  the model, and the answer reaches the room on their next poll — the poller that was
+  already there.
+- **The reply keeps the request's values and drops its cancellation**
+  (`context.WithoutCancel`), so somebody who closes the tab still gets an answer.
+- **The process stays in charge of when it ends.** `context.AfterFunc(a.stopping, cancel)`
+  hangs the reply's cancel off the errgroup's context, and `App.Wait` joins the goroutine
+  after `g.Wait()` — `srv.Shutdown` does neither, because the goroutine is not an in-flight
+  request.
+- **`assistantBudget` has left the timeout ladder.** There is no socket above this work, so
+  10s is a backstop for a wedged model rather than a rung under `WriteTimeout`.
 
-**One rule was already met, and three did not survive contact.**
+**The rule that did not survive contact, and it was the fix rather than the rule.**
+Deleting `context.AfterFunc` turns `TestShutdownEndsAReplyInFlight` red — after ten
+seconds, which is the shutdown hang measured rather than argued. Deleting
+`a.running.Add(1)` turns **nothing** red: an uncounted reply still lands, every time, on a
+machine that is not loaded. Asserting that a wait *blocks* needs a clock or a deadlock, so
+the counter is gated at the source in `verify.sh` instead, and the gap is written down in
+`README.md` rather than papered over. **A rule can be right and still have no test that
+bites**, and finding that out is what running it is for.
 
-`authenticate` already resolved a session to a user row and destroyed the session when the
-row was gone — the tier-1 rule that closes the hole no cascade reaches. The document
-asserted it; this repository had been doing it since sessions existed.
+**One test outside the process had to change, and the reason is worth recording.** The
+`verify.sh` smoke test read the room straight after posting a mention, which was safe only
+while the reply was synchronous. `go test` can wait on `App.Wait`; a shell cannot, so that
+gate is now a bounded retry — bounded, so a reply that never comes fails it rather than
+hanging it. **Detaching work costs every out-of-process test its happens-before edge.**
 
-1. **The all-tables sweep does not find what it looks like it finds.** It matches rows that
-   name the person by id, so the outbox — an address and, at that moment, no `user_id` —
-   stayed green while the address stayed on disk. Proved by removing the column and
-   watching the sweep pass. The rule now says the sweep finds references, not copies, and
-   asks for a by-value assertion beside it; `TestDeletingAUserLeavesNoRowBehind` has both.
-2. **The schema is only the delete if the first migration got it right.** SQLite cannot
-   alter a constraint, so changing an `ON DELETE` action is create-copy-drop-rename — and
-   `DROP TABLE` with foreign keys on runs an implicit `DELETE FROM` that fires foreign key
-   actions, so dropping a parent to rebuild it takes its children with it. Turning foreign
-   keys off around the rebuild is closed to a migration inside one transaction, where the
-   pragma is a no-op. That is why `messages` keeps **erase** here rather than moving to
-   **anonymize**: the answer is cheap before the table ships and expensive afterwards, and
-   the document now says so.
-3. **An anti-pattern was too wide.** "A confirmation that is a JavaScript dialog" would
-   have banned the `hx-confirm` on the token revoke, which is an htmx attribute rather than
-   hand-written JavaScript and is fine for an action you can redo. The rule now names what
-   actually matters: an irreversible action asks for something the *server* can check.
-
-**What changed here:** one migration, one package-level file (`internal/app/account.go`),
-one template, one store method, two routes, four handler tests, the schema sweep, and three
-new `verify.sh` gates. `README.md` gained *What a delete means, table by table* under *Who
-owns what* — the rule the document asks every project to answer in writing, including the
-two answers this app does not use.
+**What changed here:** two fields and one method on `App`, one function split in two in
+`internal/app/messages.go`, the errgroup moved above `app.New` in `cmd/server/main.go`, two
+handler tests, one source gate and two reworked smoke gates in `verify.sh`.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character

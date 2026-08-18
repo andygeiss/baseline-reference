@@ -155,6 +155,25 @@ grep -q 'name="password"' web/templates/account-delete.html \
 grep -q 'name="name"' web/templates/account-delete.html \
     || fail "the delete page does not ask for the account name to be retyped"
 
+step "work a request starts is counted, cancelled, and joined"
+# patterns/go-background-work.md. srv.Shutdown waits for in-flight requests, and
+# a goroutine a handler started is not one — so the process exits mid-reply and
+# logs nothing, because from the server's side the shutdown was clean.
+#
+# Three lines stop that, and a test cannot see two of them go missing: a reply
+# nothing counts still lands, every time, on an unloaded machine. The defect is
+# an absence, so this gate looks for the absence.
+grep -q 'context.WithoutCancel(r.Context())' internal/app/messages.go \
+    || fail "the detached reply takes the request's cancellation with it"
+grep -q 'context.AfterFunc(a.stopping, cancel)' internal/app/messages.go \
+    || fail "nothing cancels the detached reply at shutdown, so the wait runs the whole budget"
+grep -q 'a.running.Add(1)' internal/app/messages.go \
+    || fail "nothing counts the detached reply, so App.Wait joins nothing"
+# Order, not only presence: waiting before the cancel holds the process for the
+# whole budget instead of joining work that is already stopping.
+awk '/err = g\.Wait\(\)/ { seen = 1 } /a\.Wait\(\)/ && seen { found = 1 } END { exit !found }' \
+    cmd/server/main.go || fail "main does not wait for detached work after g.Wait()"
+
 step "local HTTPS: the binary never serves TLS"
 # patterns/local-https.md rule 1. The tempting fix for "install needs HTTPS" is a
 # -tls-cert flag. It splits the server into two shapes, and the one nobody deploys
@@ -578,13 +597,29 @@ step "smoke: the assistant answers a mention, and stays out of the way otherwise
 # page (patterns/go-llm-adapter.md rule 14).
 curl -fsS -c "$JAR" -b "$JAR" -o /dev/null -X POST \
     "localhost:$PORT/rooms/general-chat/messages" -d "body=quiet+line+nobody+asked+about"
+# Half a second before reading, because proving a negative against detached work
+# means giving it a chance to be wrong. The mention below is the positive
+# control: if the reply path were broken outright, that gate fails instead.
+sleep 0.5
 curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/quiet.html" "localhost:$PORT/rooms/general-chat"
 grep -q "echo:" "$WORKDIR/quiet.html" && fail "the assistant answered a message that did not mention it"
 
 curl -fsS -c "$JAR" -b "$JAR" -o /dev/null -X POST \
     "localhost:$PORT/rooms/general-chat/messages" -d "body=%40assistant+are+you+there%3F"
-curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/mention.html" "localhost:$PORT/rooms/general-chat"
-grep -q "echo:" "$WORKDIR/mention.html" || fail "the assistant did not answer a mention"
+# The POST no longer waits for the model, so the room is read again until the
+# answer arrives — which is what a reader's poll does for them.
+#
+# A retry loop rather than a wait on the app's counter, and that is the price of
+# testing from outside the process: `go test` gets App.Wait, a shell gets a
+# bounded retry. Bounded, so a reply that never comes fails this gate rather
+# than hanging it (patterns/go-background-work.md).
+TRIES=0
+until grep -q "echo:" "$WORKDIR/mention.html" 2>/dev/null; do
+    TRIES=$((TRIES + 1))
+    [ "$TRIES" -lt 100 ] || fail "the assistant did not answer a mention within 10s"
+    sleep 0.1
+    curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/mention.html" "localhost:$PORT/rooms/general-chat"
+done
 # It posts as a user like anybody else, so the join that reads a room resolves
 # its name — migration 0002 seeds that row.
 grep -q "Assistant" "$WORKDIR/mention.html" || fail "the reply is not attributed to the assistant"

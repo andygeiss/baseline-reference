@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -112,6 +113,13 @@ type Options struct {
 	// mode in internal/echo is the default, so the whole loop runs with an
 	// empty environment — see cmd/server/config.go.
 	Assistant Assistant
+
+	// Stopping is done when the process is going down, and it is what ends the
+	// work a request starts and does not wait for. It is the errgroup's
+	// context, not the signal context: errgroup cancels it as Wait returns,
+	// whichever goroutine ended the process, so nothing is left running with
+	// no way to be told to stop (patterns/go-background-work.md).
+	Stopping context.Context
 }
 
 type App struct {
@@ -131,7 +139,18 @@ type App struct {
 	dummyHash   string
 	inviteCode  string
 	limiter     *limiter
+
+	// stopping ends detached work; running counts it so Wait can block on it.
+	stopping context.Context
+	running  sync.WaitGroup
 }
+
+// Wait blocks until every reply this app detached has been written or given up.
+//
+// main calls it after g.Wait(), because srv.Shutdown does not: those goroutines
+// are not in-flight requests, so from the server's side the shutdown is already
+// clean while the work is still going (patterns/go-background-work.md).
+func (a *App) Wait() { a.running.Wait() }
 
 // New parses the page templates once, failing the boot on any error. Version is
 // the asset cache-buster: it reaches the pages as a template function, so no
@@ -146,6 +165,9 @@ func New(o Options) (*App, error) {
 	}
 	if o.BaseURL == nil {
 		return nil, fmt.Errorf("no base URL: an emailed link is built from it, never from the request")
+	}
+	if o.Stopping == nil {
+		return nil, fmt.Errorf("no stopping context: detached work would have nothing to end it")
 	}
 	a := &App{
 		logger:      o.Logger,
@@ -164,6 +186,7 @@ func New(o Options) (*App, error) {
 		dummyHash:   o.DummyHash,
 		inviteCode:  o.InviteCode,
 		limiter:     newLimiter(),
+		stopping:    o.Stopping,
 	}
 	funcs := template.FuncMap{
 		"version": func() string { return o.Version },

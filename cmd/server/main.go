@@ -130,6 +130,12 @@ func run(cfg Config) error {
 	resets := store.NewResets(db)
 	outbox := store.NewOutbox(db)
 
+	// Built before the app because the app holds gctx: it is what ends the work
+	// a request starts and does not wait for. errgroup cancels it as Wait
+	// returns, whichever goroutine below ended the process, so that work is
+	// always already stopping by the time this function waits for it.
+	g, gctx := errgroup.WithContext(ctx)
+
 	a, err := app.New(app.Options{
 		Logger:      logger,
 		Users:       store.NewUsers(db),
@@ -147,6 +153,7 @@ func run(cfg Config) error {
 		BaseURL:     cfg.BaseURL,
 		DummyHash:   dummyHash,
 		InviteCode:  cfg.InviteCode,
+		Stopping:    gctx,
 	})
 	if err != nil {
 		return fmt.Errorf("building app: %w", err)
@@ -176,7 +183,6 @@ func run(cfg Config) error {
 
 	// Both listeners run under the signal context via errgroup — every goroutine
 	// has an owned lifecycle; a failing listener shuts the other down gracefully.
-	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return serve(gctx, srv) })
 	g.Go(func() error { return serve(gctx, opsSrv) })
 	g.Go(func() error { return sweepSessions(gctx, logger, sessionStore) })
@@ -185,7 +191,15 @@ func run(cfg Config) error {
 	g.Go(func() error { return snapshot(gctx, logger, db, cfg.DBPath) })
 	g.Go(func() error { <-gctx.Done(); logger.Info("shutting down"); return nil })
 	logger.Info("started", "version", ver, "config", cfg)
-	return g.Wait()
+
+	err = g.Wait() // the listeners are down, and gctx with them
+	// Now the work they started. srv.Shutdown does not wait for it — those
+	// goroutines are not in-flight requests — so without this line the process
+	// exits mid-reply and nothing logs a fault. gctx is already cancelled here,
+	// so a wedged reply is cancelled rather than waited out
+	// (patterns/go-background-work.md).
+	a.Wait()
+	return err // the deferred db.Close() runs after this line, not before
 }
 
 // sweepSessions deletes expired session rows every few minutes. This only
