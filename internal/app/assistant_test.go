@@ -5,9 +5,11 @@ import (
 	"errors"
 	"html"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/andygeiss/baseline-reference/v3/internal/domain"
 )
@@ -116,6 +118,70 @@ func TestShutdownEndsAReplyInFlight(t *testing.T) {
 	if strings.Contains(body, "Sure — 42.") {
 		t.Errorf("a reply cut short by shutdown was stored anyway:\n%s", body)
 	}
+}
+
+// TestWaitJoinsAReplyInFlight is the half of the shape no ordinary test can
+// see: an uncounted goroutine still finishes first on an idle machine, so
+// deleting a.running.Add(1) leaves every other test in this package green.
+//
+// synctest is what makes it observable. Inside a bubble, synctest.Wait returns
+// only once every other goroutine is durably blocked — so if App.Wait had
+// returned, done would be closed by then, and a plain select with a default
+// says so. No clock, and no deadlock (patterns/go-testing.md, Concurrency).
+//
+// Two things stay outside the bubble, and both for the same reason — a bubble
+// only finishes when every goroutine inside it has exited or is durably
+// blocked. The harness's listener would sit blocked on a socket, which never
+// counts as durably blocked; scs's in-memory store starts a cleanup ticker that
+// never exits at all. The assistant is built inside, because its channels have
+// to be the bubble's.
+//
+// Stopping is context.Background rather than t.Context for the same reason from
+// the other side: a context whose Done channel is first touched inside a bubble
+// belongs to that bubble, and cancelling it afterwards is a fatal cross-bubble
+// close. Background never cancels, and this test is about the counter rather
+// than about shutdown — TestShutdownEndsAReplyInFlight covers that.
+func TestWaitJoinsAReplyInFlight(t *testing.T) {
+	o := newTestOptions(t, withStopping(context.Background()))
+
+	synctest.Test(t, func(t *testing.T) {
+		bot := newBlockingAssistant()
+		o.Assistant = bot
+		a, err := New(o)
+		if err != nil {
+			t.Fatalf("building the app: %v", err)
+		}
+		room := domain.Room{ID: "r1", Slug: "general-chat", Name: "General Chat"}
+		msg, err := domain.NewMessage(room.ID, "u1", "@assistant what is the answer?", nil)
+		if err != nil {
+			t.Fatalf("building the message: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/rooms/general-chat/messages", nil)
+		a.assistantReply(req, room, msg)
+		<-bot.entered // the reply is inside the model and cannot leave yet
+
+		done := make(chan struct{})
+		go func() { a.Wait(); close(done) }()
+
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("Wait returned while the reply was still in flight — nothing counts it")
+		default:
+		}
+
+		close(bot.release)
+		<-done // and now it joins, which is the other half
+
+		msgs, err := o.Messages.(*fakeMessages).Since(t.Context(), room.ID, 0)
+		if err != nil {
+			t.Fatalf("reading the room: %v", err)
+		}
+		if len(msgs) != 1 || msgs[0].Body != "Sure — 42." {
+			t.Errorf("the joined reply is not in the room: %+v", msgs)
+		}
+	})
 }
 
 func TestAssistantAnswersAMention(t *testing.T) {

@@ -271,14 +271,18 @@ is.
   `WriteTimeout`, and shutdown is what ends a healthy reply early.
   **Losing one costs nothing**, which is what makes an in-memory goroutine the right
   shape here rather than a queue on disk: the mention can simply be made again.
-- **The detached reply's counter has no test that fails without it** — recorded
-  rather than quietly left. `TestAMentionDoesNotMakeTheSenderWait` proves the POST
-  does not wait, and `TestShutdownEndsAReplyInFlight` proves shutdown cancels a reply
-  in flight — deleting the `AfterFunc` turns the second one red after the full 10s
-  budget. Deleting `a.running.Add(1)` turns nothing red: an uncounted reply still
-  lands, every time, on a machine that is not loaded. Asserting that `App.Wait`
-  *blocks* needs either a clock or a deadlock, and both are worse than the gap, so
-  the absence is gated in `verify.sh` at the source instead.
+- **Three tests, and each one was proved to fail first.**
+  `TestAMentionDoesNotMakeTheSenderWait` proves the POST does not wait for the model.
+  `TestShutdownEndsAReplyInFlight` proves shutdown cancels a reply in flight —
+  deleting the `AfterFunc` turns it red after the full 10s budget, which is the
+  shutdown hang measured rather than argued. `TestWaitJoinsAReplyInFlight` proves the
+  counter, which no ordinary test can: an uncounted reply still lands, every time, on
+  a machine that is not loaded. It runs in a `testing/synctest` bubble, where
+  `synctest.Wait` returns only once every other goroutine is durably blocked, so a
+  `Wait` that returned early is visible to a `select` with a `default` — red in 0.04s
+  without `a.running.Add(1)`, with no clock and no deadlock. The listener and the scs
+  session store stay outside the bubble: one blocks on a socket, which never counts
+  as durably blocked, and the other holds a ticker that never exits.
 - **`internal/echo` is a product mode, not a test double**
   (`patterns/go-llm-adapter.md` rule 14) — a conformance note. It is the default,
   which is what lets this app start with an empty environment and still exercise the

@@ -55,6 +55,52 @@ var testZone = time.FixedZone("TST", 5*60*60)
 func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	t.Helper()
 
+	o := newTestOptions(t, options...)
+	a, err := New(o)
+	if err != nil {
+		t.Fatalf("building the app: %v", err)
+	}
+
+	// Registered before server.Close, so it runs after it: the listener stops,
+	// then the work it started is joined. Without this a detached reply could
+	// still be writing to a fake while the test binary tears the test down,
+	// which -race reports and a sleeping test hides.
+	t.Cleanup(a.Wait)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("building the cookie jar: %v", err)
+	}
+	server := httptest.NewServer(a.Routes())
+	t.Cleanup(server.Close)
+
+	return &testApp{
+		App:    a,
+		server: server,
+		client: &http.Client{
+			Jar: jar,
+			// Redirects are the thing under test in half of these cases, so
+			// they are returned rather than followed.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		users:       o.Users.(*fakeUsers),
+		rooms:       o.Rooms.(*fakeRooms),
+		messages:    o.Messages.(*fakeMessages),
+		attachments: o.Attachments.(*fakeAttachments),
+		resets:      o.Resets.(*fakeResets),
+		tokens:      o.Tokens.(*fakeTokens),
+	}
+}
+
+// newTestOptions is newTestApp without the listener, so a test that has to run
+// inside a testing/synctest bubble can build the app without putting a
+// goroutine blocked on a socket in there — network I/O never counts as durably
+// blocked, and one such goroutine stops synctest.Wait from ever returning.
+func newTestOptions(t *testing.T, options ...func(*Options)) Options {
+	t.Helper()
+
 	users := newFakeUsers()
 	// Migration 0002 seeds this row in production, so the fake starts with it
 	// too: the assistant posts as a user like anybody else, and the join that
@@ -86,43 +132,7 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	for _, option := range options {
 		option(&o)
 	}
-
-	a, err := New(o)
-	if err != nil {
-		t.Fatalf("building the app: %v", err)
-	}
-
-	// Registered before server.Close, so it runs after it: the listener stops,
-	// then the work it started is joined. Without this a detached reply could
-	// still be writing to a fake while the test binary tears the test down,
-	// which -race reports and a sleeping test hides.
-	t.Cleanup(a.Wait)
-
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("building the cookie jar: %v", err)
-	}
-	server := httptest.NewServer(a.Routes())
-	t.Cleanup(server.Close)
-
-	return &testApp{
-		App:    a,
-		server: server,
-		client: &http.Client{
-			Jar: jar,
-			// Redirects are the thing under test in half of these cases, so
-			// they are returned rather than followed.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
-		users:       users,
-		rooms:       o.Rooms.(*fakeRooms),
-		messages:    o.Messages.(*fakeMessages),
-		attachments: o.Attachments.(*fakeAttachments),
-		resets:      o.Resets.(*fakeResets),
-		tokens:      o.Tokens.(*fakeTokens),
-	}
+	return o
 }
 
 // withInviteCode gates registration on this app, the way a credential file does

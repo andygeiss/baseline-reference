@@ -8,7 +8,7 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`b17c67a`**, whose two rule commits carry the shape this release implements: **work a
+**`b94cbeb`**, whose rule commits carry the shape this release implements: **work a
 request starts and does not wait for** (`patterns/go-background-work.md`). The corpus ruled
 work on a schedule and request-scoped work, and had nothing for the third shape — a request
 starts it, it outlives the request, and it dies with the process.
@@ -28,14 +28,20 @@ conformance note saying a production chat would do it the other way. It now does
 - **`assistantBudget` has left the timeout ladder.** There is no socket above this work, so
   10s is a backstop for a wedged model rather than a rung under `WriteTimeout`.
 
-**The rule that did not survive contact, and it was the fix rather than the rule.**
-Deleting `context.AfterFunc` turns `TestShutdownEndsAReplyInFlight` red — after ten
-seconds, which is the shutdown hang measured rather than argued. Deleting
-`a.running.Add(1)` turns **nothing** red: an uncounted reply still lands, every time, on a
-machine that is not loaded. Asserting that a wait *blocks* needs a clock or a deadlock, so
-the counter is gated at the source in `verify.sh` instead, and the gap is written down in
-`README.md` rather than papered over. **A rule can be right and still have no test that
-bites**, and finding that out is what running it is for.
+**The rule that did not survive contact.** *Tests wait on the counter, never on the clock*
+was half an answer, and building it showed which half. Deleting `context.AfterFunc` turns
+`TestShutdownEndsAReplyInFlight` red after ten seconds — the shutdown hang measured rather
+than argued. Deleting `a.running.Add(1)` turned **nothing** red: an uncounted reply still
+lands, every time, on a machine that is not loaded.
+
+The first answer here was to give up and gate the counter at the source. The corpus had a
+better one already: `patterns/go-testing.md` mandates `testing/synctest` for goroutine
+coordination, and in a bubble `synctest.Wait` returns only once every other goroutine is
+durably blocked — so a `Wait` that returned early is visible to a `select` with a
+`default`. `TestWaitJoinsAReplyInFlight` is red in 0.04s without the counter, with no clock
+and no deadlock. **The rule now says so**, along with the two things that have to stay
+outside the bubble, both found by running it: the listener blocks on a socket, which never
+counts as durably blocked, and scs's session store holds a ticker that never exits.
 
 **One test outside the process had to change, and the reason is worth recording.** The
 `verify.sh` smoke test read the room straight after posting a mention, which was safe only
@@ -44,8 +50,9 @@ gate is now a bounded retry — bounded, so a reply that never comes fails it ra
 hanging it. **Detaching work costs every out-of-process test its happens-before edge.**
 
 **What changed here:** two fields and one method on `App`, one function split in two in
-`internal/app/messages.go`, the errgroup moved above `app.New` in `cmd/server/main.go`, two
-handler tests, one source gate and two reworked smoke gates in `verify.sh`.
+`internal/app/messages.go`, the errgroup moved above `app.New` in `cmd/server/main.go`,
+three handler tests, the test harness split so an app can be built without its listener,
+one source gate and two reworked smoke gates in `verify.sh`.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character

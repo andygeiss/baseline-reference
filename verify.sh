@@ -155,20 +155,15 @@ grep -q 'name="password"' web/templates/account-delete.html \
 grep -q 'name="name"' web/templates/account-delete.html \
     || fail "the delete page does not ask for the account name to be retyped"
 
-step "work a request starts is counted, cancelled, and joined"
+step "main waits for the work its handlers started"
 # patterns/go-background-work.md. srv.Shutdown waits for in-flight requests, and
 # a goroutine a handler started is not one — so the process exits mid-reply and
 # logs nothing, because from the server's side the shutdown was clean.
 #
-# Three lines stop that, and a test cannot see two of them go missing: a reply
-# nothing counts still lands, every time, on an unloaded machine. The defect is
-# an absence, so this gate looks for the absence.
-grep -q 'context.WithoutCancel(r.Context())' internal/app/messages.go \
-    || fail "the detached reply takes the request's cancellation with it"
-grep -q 'context.AfterFunc(a.stopping, cancel)' internal/app/messages.go \
-    || fail "nothing cancels the detached reply at shutdown, so the wait runs the whole budget"
-grep -q 'a.running.Add(1)' internal/app/messages.go \
-    || fail "nothing counts the detached reply, so App.Wait joins nothing"
+# The three handler-side lines each have a test that fails without them, in
+# internal/app/assistant_test.go. main does not: nothing here runs it, so the one
+# rule no test reaches is gated at the source.
+#
 # Order, not only presence: waiting before the cancel holds the process for the
 # whole budget instead of joining work that is already stopping.
 awk '/err = g\.Wait\(\)/ { seen = 1 } /a\.Wait\(\)/ && seen { found = 1 } END { exit !found }' \
