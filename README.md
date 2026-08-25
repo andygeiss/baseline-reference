@@ -205,29 +205,28 @@ and what contains it. The rest are conformance notes and unexercised patterns, l
 as such: a reader hunting for gaps counts every bullet here, so each one says which it
 is.
 
-- **Never deployed** (`operations/web-application.md`, and the web checklist's Ship
-  section) — waived 2026-08-13 by Andy. This repo is an acceptance test, not a
-  service. The binary holds up its end of that contract — the env vars, `127.0.0.1`
-  by default, `/healthz` with the version, graceful shutdown, secrets from
-  `$CREDENTIALS_DIRECTORY` — and `verify.sh` gates every one of them. The
-  deployment's end is absent on purpose: no image, no compose file, no deployment
-  Caddyfile, no `GOMEMLIMIT`, and no previous version to roll back to. Those belong
-  to the operations repository,
-  [baseline-ops](https://github.com/andygeiss/baseline-ops), which builds its own
-  template against a checkout of this repo. The root `Caddyfile.lan` is not a
-  counter-example and does not narrow this waiver: it is the local-HTTPS artefact
-  from `patterns/local-https.md`, it runs on a developer's machine, and rule 3 of
-  that pattern forbids it reaching a server at all.
+- **Never deployed** (`operations/web-application.md`, and the web checklist's
+  *Shipping it* section) — waived 2026-08-13 by Andy. This repo is an acceptance test,
+  not a service. The binary holds up its end of that contract — the env vars,
+  `127.0.0.1` by default, `/healthz` with the version, graceful shutdown, secrets from
+  `$CREDENTIALS_DIRECTORY` — and `verify.sh` gates every one of them. The deployment's
+  end is absent on purpose: no image, no compose file, no deployment Caddyfile, no
+  `GOMEMLIMIT`, and no previous version to roll back to. Those belong to the
+  operations repository, [baseline-ops](https://github.com/andygeiss/baseline-ops),
+  which builds its own template against a checkout of this repo. The root
+  `Caddyfile.lan` is not a counter-example and does not narrow this waiver: it is the
+  local-HTTPS artefact from `patterns/local-https.md`, it runs on a developer's
+  machine, and rule 3 of that pattern forbids it reaching a server at all.
 - **Semver says nothing about the tool** (`operations/cli-release.md`, and the CLI
-  checklist's Ship section) — waived 2026-08-15 by Andy, narrowed 2026-08-25. This
-  repository's tags mirror the baseline version it was built against, so a tag here
-  announces "baseline v4.0.0" rather than a change to `gochat`'s contract, and the
-  semver promise `cli-release.md` asks for would be hostage to a document release.
-  Contained by the channel working anyway: `go install …/cmd/gochat@<tag>` resolves,
-  version stamping is gated, and the stdout and `-json` shapes are treated as a
-  contract in the code and its tests. Until 2026-08-25 this entry also waived the
-  release workflow and its cross-compiled artifacts, and called them the acceptance
-  test's one coverage hole; the baseline dropped both, so the hole closed with them.
+  checklist's *Tagging and publishing a release* section) — waived 2026-08-15 by Andy,
+  narrowed 2026-08-25. This repository's tags mirror the baseline version it was built
+  against, so a tag here announces "baseline v4.0.0" rather than a change to
+  `gochat`'s contract, and the semver promise `cli-release.md` asks for would be
+  hostage to a document release. Contained by the channel working anyway: `go install
+  …/cmd/gochat@<tag>` resolves, `gochat version` prints the tag, and the stdout and
+  `-json` shapes are treated as a contract in the code and its tests. The tag check is
+  by hand at each tag; `TestRunVersion` in `cmd/gochat/run_test.go` only proves the
+  subcommand answers.
 - **`OPS_PORT` is a config var** (`patterns/go-http-server.md`, which pins the ops
   listener to `127.0.0.1:6060` — "fixed, not a flag") — waived 2026-08-10 by Andy.
   The port is configurable so `verify.sh` can boot test instances beside a running dev
@@ -252,7 +251,7 @@ is.
   verify.sh gates. No web font: the system stack is the pattern's default answer,
   not a waiver.
 - **The assistant calls the API directly, with no SDK** (`patterns/go-llm-adapter.md`
-  rule 20) — a conformance note, recorded because that rule asks for it either way.
+  rule 16) — a conformance note, recorded because that rule asks for it either way.
   A reply to a conversation is one endpoint and a handful of fields, which is the
   document's own stdlib case: it adds no dependency, `stack/go.md` has no Anthropic
   SDK on its approved list, and the wire-contract test in `internal/anthropic` is
@@ -284,7 +283,7 @@ is.
   session store stay outside the bubble: one blocks on a socket, which never counts
   as durably blocked, and the other holds a ticker that never exits.
 - **`internal/echo` is a product mode, not a test double**
-  (`patterns/go-llm-adapter.md` rule 14) — a conformance note. It is the default,
+  (`patterns/go-llm-adapter.md` rule 10) — a conformance note. It is the default,
   which is what lets this app start with an empty environment and still exercise the
   whole loop. It lives in `internal/` and config selects it; the fake that tests the
   handlers is a separate thing in `internal/app/fakes_test.go`.

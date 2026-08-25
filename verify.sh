@@ -1,7 +1,8 @@
 #!/bin/sh
 # Reproducible verification of the baseline reference implementation.
-# Runs every mechanical gate from the baseline's operations/ci.md, then boots the
-# real binary and smoke-tests the running application. Exits non-zero on any failure.
+# Runs every mechanical gate of the baseline's check recipe (stack/makefile.md,
+# explained in operations/ci.md), then boots the real binary and smoke-tests the
+# running application. Exits non-zero on any failure.
 #
 # Usage: ./verify.sh [project-dir]   (defaults to the directory of this script)
 set -eu
@@ -40,6 +41,23 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 step "go mod tidy -diff"
 go mod tidy -diff
+
+step "no CI workflow, no release workflow, no dependency bot"
+# operations/ci.md: the gates run from the Makefile on the developer's machine, and
+# nowhere else. A workflow here is a second gate list nobody keeps in sync.
+[ ! -e .github/workflows ] || fail ".github/workflows exists — the gates run from the Makefile; delete it"
+[ ! -e .github/dependabot.yml ] || fail ".github/dependabot.yml exists — dependencies move by hand; delete it"
+# stack/makefile.md rule 1: git archive honours export-ignore and the go command
+# does not, so make ci would test a tree go install never builds.
+! grep -qs 'export-ignore' .gitattributes || fail ".gitattributes marks something export-ignore — make ci would skip it; remove the attribute"
+
+step "Makefile: targets alphabetical, check the default"
+# stack/makefile.md rule 3: you find a target by its name, not its place, so the
+# Makefile names the default. Recipes are indented, so an unindented `name:` is a target.
+TARGETS="$(grep -E '^[A-Za-z][A-Za-z0-9_-]*:' Makefile | cut -d: -f1)"
+[ "$TARGETS" = "$(printf '%s\n' "$TARGETS" | LC_ALL=C sort)" ] \
+    || fail "Makefile targets are not alphabetical — reorder them: $(printf '%s' "$TARGETS" | tr '\n' ' ')"
+grep -q '^\.DEFAULT_GOAL = check$' Makefile || fail "Makefile does not name check as .DEFAULT_GOAL"
 
 step "tests (race, shuffled)"
 go test -race -shuffle=on ./...
@@ -589,7 +607,7 @@ grep -qE 'CES?T' "$WORKDIR/long.html" || fail "the rendered time does not name t
 step "smoke: the assistant answers a mention, and stays out of the way otherwise"
 # The whole loop with no key and no model: -assistant=echo is the default, so
 # an empty environment exercises mention -> port -> adapter -> storage -> the
-# page (patterns/go-llm-adapter.md rule 14).
+# page (patterns/go-llm-adapter.md rule 10).
 curl -fsS -c "$JAR" -b "$JAR" -o /dev/null -X POST \
     "localhost:$PORT/rooms/general-chat/messages" -d "body=quiet+line+nobody+asked+about"
 # Half a second before reading, because proving a negative against detached work

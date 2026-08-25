@@ -24,13 +24,13 @@ check:
 	go test -race -shuffle=on ./...
 	CGO_ENABLED=0 go build -trimpath ./...
 
-# The same gates against the commit, not the working tree: what a CI server
-# saw. A file never added, or a .env, cannot make it green. Run before every
-# push. go version first, because nothing else records which toolchain ran.
-# One shell line, so the trap removes the copy however check ends.
+# The same gates against the commit: a file never added, or a .env, cannot
+# make it green. Run before every push. go version runs first, inside the
+# copy, so the run records which toolchain ran. The archive goes through a
+# file so git's exit status stops the run; one shell line so the trap cleans
+# up however check ends.
 ci:
-	go version
-	d=$$(mktemp -d); trap 'rm -rf "$$d"' EXIT; git archive HEAD | tar -x -C "$$d" && $(MAKE) -C "$$d" check
+	t=$$(mktemp); d=$$(mktemp -d); trap 'rm -rf "$$t" "$$d"' EXIT; git archive -o "$$t" HEAD && tar -xf "$$t" -C "$$d" && go -C "$$d" version && $(MAKE) -C "$$d" check
 
 clean:
 	rm -rf bin/

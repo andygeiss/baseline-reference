@@ -7,7 +7,7 @@ working, production-grade application?*
 
 ## Baseline pin
 
-Built against baseline commit **`c3d2438`**, the v4.0.0 change: **there is no CI
+Built against baseline commit **`7703305`**, the v4.0.0 change: **there is no CI
 server.** The gates run from the Makefile — `make check` against the working tree,
 `make ci` against the commit — and a CLI's release is a tag, with `go install` as the
 one channel. No rule about the code moved.
@@ -22,11 +22,18 @@ true of it: the tags here are the baseline's numbers, so they say nothing about
 `gochat`'s contract. The release workflow and its artifacts, which that entry called the
 acceptance test's one coverage hole, no longer exist to be uncovered.
 
-**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 74 gates, exit 0 — the same
+**Two gates are new**, because the rules they hold up are: nothing under
+`.github/workflows/`, no `dependabot.yml`, no `export-ignore` in `.gitattributes`
+(`git archive` honours it and the go command does not, so `make ci` would test a tree
+`go install` never builds); and the Makefile's targets alphabetical with `check` named
+as `.DEFAULT_GOAL`. An absent file is the one thing a passing suite cannot notice on
+its own, so the first of the two is a gate rather than a habit.
+
+**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 76 gates, exit 0 — the same
 toolchain pin as v3.11.1, for the same reason: the machine's Go is 1.27.0 and the baseline
-adopts a major at its first patch. `make ci` ran green on this commit, which is the check
-a CI server used to make; its first line names the toolchain, which the runner used to
-record.
+adopts a major at its first patch. `make ci` ran green on this commit, and its `go version`
+line says which toolchain ran.
+
 ## The task (give this to the builder, human or AI, verbatim)
 
 > Build **Go Chat** — a mobile-first chat application with a command-line client —
@@ -55,13 +62,13 @@ record.
 
 ## Acceptance criteria
 
-1. `./verify.sh` exits 0 — it runs every mechanical gate from the baseline's
-   `operations/ci.md` **plus** a live smoke test of both running binaries
-   (health endpoint, CSP header, the invite-code gate and the secret staying out
-   of the logs, session cookie flags, token renewal on sign-in, rate limiting,
-   plain-form and htmx flows, the poll's 204 and 200 answers, escaping, the 422
-   validation answer, machine tokens end to end, CSRF rejection, the backup
-   snapshot, state across a restart, graceful shutdown, and the `gochat` client
+1. `./verify.sh` exits 0 — it runs every mechanical gate of the baseline's `check`
+   recipe (`stack/makefile.md`, explained in `operations/ci.md`) **plus** a live smoke
+   test of both running binaries (health endpoint, CSP header, the invite-code gate
+   and the secret staying out of the logs, session cookie flags, token renewal on
+   sign-in, rate limiting, plain-form and htmx flows, the poll's 204 and 200 answers,
+   escaping, the 422 validation answer, machine tokens end to end, CSRF rejection, the
+   backup snapshot, state across a restart, graceful shutdown, and the `gochat` client
    talking to all of it).
 2. The baseline's `checklists/web-application.md` and `checklists/cli-tool.md`
    both walk clean, with deviations waived in the README.
