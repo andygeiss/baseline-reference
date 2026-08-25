@@ -8,51 +8,32 @@ working, production-grade application?*
 ## Baseline pin
 
 Built against baseline commit
-**`b94cbeb`**, whose rule commits carry the shape this release implements: **work a
-request starts and does not wait for** (`patterns/go-background-work.md`). The corpus ruled
-work on a schedule and request-scoped work, and had nothing for the third shape — a request
-starts it, it outlives the request, and it dies with the process.
+**`b342f17`**, the v3.11.1 pin move: **Go 1.26.7**, with Go 1.27.0 held for its first
+patch. No rule changed, and no line of this repository changed with it — that is what the
+pin proves, and why it was worth a tag rather than a note.
 
-**The assistant used to answer inside the request**, and this repository recorded that as a
-conformance note saying a production chat would do it the other way. It now does:
+**Why nothing here had to move.** `go.mod` says `go 1.26` with no `toolchain` line, and
+`ci.yml` resolves the version from `go.mod`, so both build with the newest 1.26 patch the
+day it exists; the container template in `baseline-ops` that builds this binary is
+`FROM golang:1.26-alpine`, a minor tag that floats the same way. The patch itself restores
+unencrypted HTTP/2 after 1.26.6's `net/http` fix broke it (go.dev/issue/80876), and
+nothing here or in `baseline-ops` enables h2c, so the regression never reached Go Chat.
 
-- **`handleMessagePost` starts the reply and answers at once.** The sender pays nothing for
-  the model, and the answer reaches the room on their next poll — the poller that was
-  already there.
-- **The reply keeps the request's values and drops its cancellation**
-  (`context.WithoutCancel`), so somebody who closes the tab still gets an answer.
-- **The process stays in charge of when it ends.** `context.AfterFunc(a.stopping, cancel)`
-  hangs the reply's cancel off the errgroup's context, and `App.Wait` joins the goroutine
-  after `g.Wait()` — `srv.Shutdown` does neither, because the goroutine is not an in-flight
-  request.
-- **`assistantBudget` has left the timeout ladder.** There is no socket above this work, so
-  10s is a backstop for a wedged model rather than a rung under `WriteTimeout`.
+**What did have to move is the machine.** Homebrew's Go on the development Mac is 1.27.0,
+above the pinned line, so a bare `./verify.sh` builds Go Chat with a major the baseline
+has not adopted. This release's run was pinned with `GOTOOLCHAIN=go1.26.7`, and so should
+every local run until 1.27.1 lands and the baseline adopts it: 74 gates, exit 0, and
+`govulncheck` clean under the same toolchain — one informational advisory in a required
+module, `golang.org/x/crypto/openpgp`, never imported here and with no fixed version.
 
-**The rule that did not survive contact.** *Tests wait on the counter, never on the clock*
-was half an answer, and building it showed which half. Deleting `context.AfterFunc` turns
-`TestShutdownEndsAReplyInFlight` red after ten seconds — the shutdown hang measured rather
-than argued. Deleting `a.running.Add(1)` turned **nothing** red: an uncounted reply still
-lands, every time, on a machine that is not loaded.
+**What 1.27.1 will ask of this repository**, recorded so the adoption is a diff rather
+than a search: `httptest.NewTestServer` puts a server inside a `synctest` bubble, which is
+exactly the listener v3.11.0 had to keep outside one — `TestWaitJoinsAReplyInFlight` and
+the harness split it forced are the first things to revisit; `synctest.Sleep` folds
+`time.Sleep` and `Wait` wherever a test pairs them; and `go test` will run the
+`stdversion` vet check by default.
 
-The first answer here was to give up and gate the counter at the source. The corpus had a
-better one already: `patterns/go-testing.md` mandates `testing/synctest` for goroutine
-coordination, and in a bubble `synctest.Wait` returns only once every other goroutine is
-durably blocked — so a `Wait` that returned early is visible to a `select` with a
-`default`. `TestWaitJoinsAReplyInFlight` is red in 0.04s without the counter, with no clock
-and no deadlock. **The rule now says so**, along with the two things that have to stay
-outside the bubble, both found by running it: the listener blocks on a socket, which never
-counts as durably blocked, and scs's session store holds a ticker that never exits.
-
-**One test outside the process had to change, and the reason is worth recording.** The
-`verify.sh` smoke test read the room straight after posting a mention, which was safe only
-while the reply was synchronous. `go test` can wait on `App.Wait`; a shell cannot, so that
-gate is now a bounded retry — bounded, so a reply that never comes fails it rather than
-hanging it. **Detaching work costs every out-of-process test its happens-before edge.**
-
-**What changed here:** two fields and one method on `App`, one function split in two in
-`internal/app/messages.go`, the errgroup moved above `app.New` in `cmd/server/main.go`,
-three handler tests, the test harness split so an app can be built without its listener,
-one source gate and two reworked smoke gates in `verify.sh`.
+**What changed here:** this section, and nothing else.
 
 This repository's [GLOSSARY.md](GLOSSARY.md) is the file that baseline's
 `patterns/glossary.md` quotes as its worked example. The two are character
