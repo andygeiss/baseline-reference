@@ -94,7 +94,7 @@ step "the adapter depends on the domain and nothing else of ours"
 # the server speaks HTTP. If it ever imports internal/app, the dependency
 # direction has been inverted and the CLI drags the whole web application in.
 DEPS="$(go list -deps ./internal/chatapi | grep baseline-reference | grep -v 'internal/chatapi$' || true)"
-[ "$DEPS" = "github.com/andygeiss/baseline-reference/v3/internal/domain" ] \
+[ "$DEPS" = "github.com/andygeiss/baseline-reference/v4/internal/domain" ] \
     || fail "internal/chatapi depends on more than the domain: $DEPS"
 
 step "the model adapter depends on the domain and nothing else of ours"
@@ -102,7 +102,7 @@ step "the model adapter depends on the domain and nothing else of ours"
 # Anthropic's API. If it ever imports internal/app, the port has been inverted
 # and the vendor's shape has reached the application.
 DEPS="$(go list -deps ./internal/anthropic | grep baseline-reference | grep -v 'internal/anthropic$' || true)"
-[ "$DEPS" = "github.com/andygeiss/baseline-reference/v3/internal/domain" ] \
+[ "$DEPS" = "github.com/andygeiss/baseline-reference/v4/internal/domain" ] \
     || fail "internal/anthropic depends on more than the domain: $DEPS"
 
 step "the prompt lives in the domain, not in an adapter"

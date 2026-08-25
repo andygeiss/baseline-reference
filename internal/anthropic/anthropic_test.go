@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // serving points an adapter at a test server. No test in this package reaches

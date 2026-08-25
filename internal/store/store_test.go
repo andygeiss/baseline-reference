@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
-	"github.com/andygeiss/baseline-reference/v3/internal/store"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/store"
 )
 
 // newTestDB opens a real database in a temporary directory, with the production

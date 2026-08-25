@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/chatapi"
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/chatapi"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // errUsage means the message was already printed where the problem was found,

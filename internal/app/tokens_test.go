@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 var secretPattern = regexp.MustCompile(`gochat_[A-Za-z0-9_-]+`)

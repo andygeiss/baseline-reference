@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // seedUser puts somebody straight into the fake store. Registering over HTTP

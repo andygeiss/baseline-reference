@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
-	"github.com/andygeiss/baseline-reference/v3/internal/store"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/store"
 )
 
 // Mailer sends one message, or says why it could not.

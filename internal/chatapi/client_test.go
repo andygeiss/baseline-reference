@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/chatapi"
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/chatapi"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // serverSaying stands in for a Go Chat server, answering every request the same

@@ -10,7 +10,7 @@ programs; `gochat` is the program.
 
 - **[SPEC.md](SPEC.md)** — what this test is: the task, the pinned baseline commit,
   the acceptance criteria, and the protocol for reproducing the test from scratch.
-- **[verify.sh](verify.sh)** — the mechanical acceptance run: every CI gate from the
+- **[verify.sh](verify.sh)** — the mechanical acceptance run: every gate from the
   baseline plus a live smoke test of both built binaries. `./verify.sh` must exit 0.
 - **[DESIGN.md](DESIGN.md)** — the design system: theme values and component
   inventory, lockstep with `web/static/css/app.css`.
@@ -41,8 +41,9 @@ inherits from Feather under MIT.
 
 ```sh
 make run                       # http://localhost:8080, ops on localhost:6060
-make test                      # inner loop: race + shuffle, as CI runs it
-make check                     # default target: every CI gate, gate-for-gate
+make test                      # inner loop: race + shuffle, as check runs it
+make check                     # default target: every gate, against the working tree
+make ci                        # the same gates against the commit — before a push
 make build                     # both binaries into bin/
 make lan                       # https://<your-mac>.local:8443 for a phone (see below)
 ./verify.sh                    # full acceptance gauntlet
@@ -52,7 +53,7 @@ Open the app, make an account, make a room, say something. Then make a token on
 the **You** page and talk to the same rooms from a terminal:
 
 ```sh
-go install github.com/andygeiss/baseline-reference/v3/cmd/gochat@latest
+go install github.com/andygeiss/baseline-reference/v4/cmd/gochat@latest
 
 echo "$TOKEN" > ~/.config/gochat/token
 export GOCHAT_ADDR=http://localhost:8080 GOCHAT_TOKEN_FILE=~/.config/gochat/token
@@ -217,17 +218,16 @@ is.
   counter-example and does not narrow this waiver: it is the local-HTTPS artefact
   from `patterns/local-https.md`, it runs on a developer's machine, and rule 3 of
   that pattern forbids it reaching a server at all.
-- **Never released** (`operations/cli-release.md`, and the CLI checklist's Ship
-  section) — waived 2026-08-15 by Andy. There is no `release.yml` and no
-  cross-compiled artifact. This repository's tags mirror the baseline version it was
-  built against, so a release cut from one would announce "baseline v3.2.0" rather
-  than anything about the tool's own contract, and the semver promise
-  `cli-release.md` asks for would be hostage to a document release. Contained by
-  distribution channel 1 alone: `go install …/cmd/gochat@<tag>` works, version
-  stamping is gated, and the stdout and `-json` shapes are treated as a contract in
-  the code and its tests. **This is the acceptance test's one remaining coverage
-  hole**, and it is a real one — nothing here exercises the artifact workflow, the
-  checksums, or the six cross-compiled targets.
+- **Semver says nothing about the tool** (`operations/cli-release.md`, and the CLI
+  checklist's Ship section) — waived 2026-08-15 by Andy, narrowed 2026-08-25. This
+  repository's tags mirror the baseline version it was built against, so a tag here
+  announces "baseline v4.0.0" rather than a change to `gochat`'s contract, and the
+  semver promise `cli-release.md` asks for would be hostage to a document release.
+  Contained by the channel working anyway: `go install …/cmd/gochat@<tag>` resolves,
+  version stamping is gated, and the stdout and `-json` shapes are treated as a
+  contract in the code and its tests. Until 2026-08-25 this entry also waived the
+  release workflow and its cross-compiled artifacts, and called them the acceptance
+  test's one coverage hole; the baseline dropped both, so the hole closed with them.
 - **`OPS_PORT` is a config var** (`patterns/go-http-server.md`, which pins the ops
   listener to `127.0.0.1:6060` — "fixed, not a flag") — waived 2026-08-10 by Andy.
   The port is configurable so `verify.sh` can boot test instances beside a running dev

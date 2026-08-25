@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // firstPage is how many messages a room shows at once — the first paint, and

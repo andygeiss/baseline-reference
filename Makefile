@@ -5,10 +5,16 @@
 # the build target takes them both (stack/makefile.md rule 5).
 MAIN = ./cmd/server
 
-.PHONY: check test run fmt build clean lan
+# Targets are alphabetical, so the default is named rather than first.
+.DEFAULT_GOAL = check
+.PHONY: build check ci clean fmt lan run test
 
-# Default. Every gate CI runs, identically and in the same order
-# (operations/ci.md). Green here means green CI — run before every push.
+# Release-shaped local binaries in bin/ (go build creates the directory).
+build:
+	CGO_ENABLED=0 go build -trimpath -o bin/ ./cmd/...
+
+# Default. Every gate, in this order (operations/ci.md), against the working
+# tree. Run before every commit.
 check:
 	test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 	go vet ./...
@@ -18,15 +24,16 @@ check:
 	go test -race -shuffle=on ./...
 	CGO_ENABLED=0 go build -trimpath ./...
 
-# The inner loop.
-test:
-	go test -race -shuffle=on ./...
+# The same gates against the commit, not the working tree: what a CI server
+# saw. A file never added, or a .env, cannot make it green. Run before every
+# push. go version first, because nothing else records which toolchain ran.
+# One shell line, so the trap removes the copy however check ends.
+ci:
+	go version
+	d=$$(mktemp -d); trap 'rm -rf "$$d"' EXIT; git archive HEAD | tar -x -C "$$d" && $(MAKE) -C "$$d" check
 
-# Loads .env when it is there, so a local start is one command. Only run:
-# check and test MUST NOT depend on a developer's machine (rule 6). One shell
-# line, because each recipe line gets its own shell.
-run:
-	set -a; if [ -f .env ]; then . ./.env; fi; set +a; go run $(MAIN)
+clean:
+	rm -rf bin/
 
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
@@ -38,9 +45,12 @@ fmt:
 lan:
 	LAN_HOST="$$(scutil --get LocalHostName).local" caddy run --config Caddyfile.lan
 
-# Release-shaped local binaries in bin/ (go build creates the directory).
-build:
-	CGO_ENABLED=0 go build -trimpath -o bin/ ./cmd/...
+# Loads .env when it is there, so a local start is one command. Only run:
+# check and test MUST NOT depend on a developer's machine (rule 6). One shell
+# line, because each recipe line gets its own shell.
+run:
+	set -a; if [ -f .env ]; then . ./.env; fi; set +a; go run $(MAIN)
 
-clean:
-	rm -rf bin/
+# The inner loop.
+test:
+	go test -race -shuffle=on ./...

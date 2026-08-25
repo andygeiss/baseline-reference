@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/auth"
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/auth"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 type loginPage struct {

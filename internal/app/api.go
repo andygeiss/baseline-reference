@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // The JSON surface, for programs.

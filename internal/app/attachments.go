@@ -8,7 +8,7 @@ import (
 	"mime"
 	"net/http"
 
-	"github.com/andygeiss/baseline-reference/v3/internal/domain"
+	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
 // multipartMemory is how much of an upload net/http keeps in memory before it
