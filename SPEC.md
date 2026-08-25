@@ -7,32 +7,26 @@ working, production-grade application?*
 
 ## Baseline pin
 
-Built against baseline commit **`7703305`**, the v4.0.0 change: **there is no CI
-server.** The gates run from the Makefile — `make check` against the working tree,
-`make ci` against the commit — and a CLI's release is a tag, with `go install` as the
-one channel. No rule about the code moved.
+Built against baseline commit **`99a94e0`**, the self-improvement rule: **gaps found in
+a project flow back to the corpus.** `SKILL.md` *Handing the work back* takes a baseline
+gap as a next step — the checklist had no section and you settled it by inventing, or a
+rule names a dependency the standard library now covers — and forbids editing the
+baseline as a side effect of project work. `README.md` takes the other direction at every
+Go major: read the release notes for what moved into stdlib, and rewrite the pattern that
+prescribed the dependency rather than retiring it.
 
-**What moved here.** `.github/` is gone: the `ci.yml` workflow and the Dependabot
-config. The Makefile is the baseline's new canonical one — targets alphabetical,
-`.DEFAULT_GOAL = check`, the `ci` target, and `lan` in its alphabetical place. The
-module path moved from `/v3` to `/v4` in `go.mod` and every import, because this
-repository's tags mirror the baseline's and a v4 tag on a `/v3` module never stamps
-(`patterns/go-cli.md`). The README's "never released" waiver narrowed to what is still
-true of it: the tags here are the baseline's numbers, so they say nothing about
-`gochat`'s contract. The release workflow and its artifacts, which that entry called the
-acceptance test's one coverage hole, no longer exist to be uncovered.
-
-**Two gates are new**, because the rules they hold up are: nothing under
-`.github/workflows/`, no `dependabot.yml`, no `export-ignore` in `.gitattributes`
-(`git archive` honours it and the go command does not, so `make ci` would test a tree
-`go install` never builds); and the Makefile's targets alphabetical with `check` named
-as `.DEFAULT_GOAL`. An absent file is the one thing a passing suite cannot notice on
-its own, so the first of the two is a gate rather than a habit.
+**Nothing moved here, and that is the finding.** Both rules govern what an agent reports
+at the end of a task and what a maintainer does on the 90-day cycle. Neither is a
+property of a repository, so there is no gate to add and no line of code to change: this
+file's pin is the only edit. The run still has to happen. A rules commit this repository
+cannot gate is exactly the kind that gets tagged on a reading, and the gate that catches
+a rule contradicting another one is the running application, not the diff.
 
 **What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 76 gates, exit 0 — the same
-toolchain pin as v3.11.1, for the same reason: the machine's Go is 1.27.0 and the baseline
-adopts a major at its first patch. `make ci` ran green on this commit, and its `go version`
-line says which toolchain ran.
+count and the same toolchain pin as v4.0.0, since neither the gates nor the policy moved;
+Go 1.27.0 is on this machine and the baseline adopts a major at its first patch.
+`GOTOOLCHAIN=go1.26.7 make ci` is green on this commit, its first line
+`go version go1.26.7 darwin/arm64`.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
