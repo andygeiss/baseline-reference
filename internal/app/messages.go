@@ -249,13 +249,11 @@ func (a *App) assistantReply(r *http.Request, room domain.Room, msg *domain.Mess
 	// (patterns/go-background-work.md).
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), assistantBudget)
 	release := context.AfterFunc(a.stopping, cancel)
-	a.running.Add(1)
-	go func() {
-		defer a.running.Done()
+	a.running.Go(func() {
 		defer release() // or the AfterFunc registration outlives the reply
 		defer cancel()
 		a.writeReply(ctx, room)
-	}()
+	})
 }
 
 // writeReply is the detached half: everything that used to happen inside the

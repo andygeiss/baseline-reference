@@ -279,7 +279,7 @@ is.
   a machine that is not loaded. It runs in a `testing/synctest` bubble, where
   `synctest.Wait` returns only once every other goroutine is durably blocked, so a
   `Wait` that returned early is visible to a `select` with a `default` — red in 0.04s
-  without `a.running.Add(1)`, with no clock and no deadlock. The listener and the scs
+  with a bare `go` in place of `a.running.Go`, with no clock and no deadlock. The listener and the scs
   session store stay outside the bubble: one blocks on a socket, which never counts
   as durably blocked, and the other holds a ticker that never exits.
 - **`internal/echo` is a product mode, not a test double**

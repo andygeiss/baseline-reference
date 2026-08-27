@@ -98,7 +98,7 @@ func TestDrainOutboxGivesUpAfterEnoughFailures(t *testing.T) {
 
 	// A relay that has refused a message this many times will not take it on the
 	// next one, and a row that retries forever is a log line every tick.
-	for i := 0; i < store.MaxSendAttempts; i++ {
+	for range store.MaxSendAttempts {
 		drainOutbox(t.Context(), logger, outbox, mailer)
 	}
 	left, err := outbox.Unsent(t.Context(), 10)

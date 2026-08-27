@@ -7,26 +7,27 @@ working, production-grade application?*
 
 ## Baseline pin
 
-Built against baseline commit **`99a94e0`**, the self-improvement rule: **gaps found in
-a project flow back to the corpus.** `SKILL.md` *Handing the work back* takes a baseline
-gap as a next step — the checklist had no section and you settled it by inventing, or a
-rule names a dependency the standard library now covers — and forbids editing the
-baseline as a side effect of project work. `README.md` takes the other direction at every
-Go major: read the release notes for what moved into stdlib, and rewrite the pattern that
-prescribed the dependency rather than retiring it.
+Built against baseline commit **`6015026`**, `go fix` joining the gates: **a rewrite to
+current idiom that is still pending is a red gate.** `go fix -diff ./...` is the third
+line of `check` and `go fix ./...` the last of `fmt`, after `goimports`, because `go fix`
+type-checks and manages its own imports. The fixers ship with the toolchain, so the pin
+decides what the gate demands; a fix judged wrong is switched off by name, in the commit
+that says why.
 
-**Nothing moved here, and that is the finding.** Both rules govern what an agent reports
-at the end of a task and what a maintainer does on the 90-day cycle. Neither is a
-property of a repository, so there is no gate to add and no line of code to change: this
-file's pin is the only edit. The run still has to happen. A rules commit this repository
-cannot gate is exactly the kind that gets tagged on a reading, and the gate that catches
-a rule contradicting another one is the running application, not the diff.
+**What moved here.** The Makefile carries both lines and `verify.sh` the gate, as its
+third step. The gate was red on the tree it inherited: `internal/app/messages.go` counted
+the assistant's reply with `Add(1)`/`go`/`Done()`, which the pin rewrites to
+`a.running.Go`, and a test drained the outbox with a three-clause loop. Two more sites —
+`internal/app/attachments.go` and `auth.go` — tested for `*http.MaxBytesError` with
+`errors.As` and a variable read nowhere; the next major's `errorsastype` fixer will demand
+`errors.AsType`, a Go 1.26 API, so they use it now. Nothing here needed a fix switched
+off.
 
-**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 76 gates, exit 0 — the same
-count and the same toolchain pin as v4.0.0, since neither the gates nor the policy moved;
-Go 1.27.0 is on this machine and the baseline adopts a major at its first patch.
-`GOTOOLCHAIN=go1.26.7 make ci` is green on this commit, its first line
-`go version go1.26.7 darwin/arm64`.
+**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 77 gates, exit 0 — one more
+than v4.1.0, the `go fix -diff` step. `GOTOOLCHAIN=go1.26.7 make ci` is green on this
+commit, its first line `go version go1.26.7 darwin/arm64`. Go 1.27.0 is on this machine
+and the baseline adopts a major at its first patch; under it the gate is red on the two
+`errors.As` sites the pin passes, which is the mismatch the gate now makes visible.
 
 ## The task (give this to the builder, human or AI, verbatim)
 

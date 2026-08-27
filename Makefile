@@ -18,6 +18,7 @@ build:
 check:
 	test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 	go vet ./...
+	go fix -diff ./...
 	go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	go mod tidy -diff
@@ -35,8 +36,12 @@ ci:
 clean:
 	rm -rf bin/
 
+# goimports first: go fix type-checks, so a missing import would stop the
+# recipe before goimports could add it. go fix manages the imports its own
+# rewrites need.
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
+	go fix ./...
 
 # Reaches this app from a phone over HTTPS, which install needs
 # (patterns/local-https.md). A real recurring command, so rule 3 allows it.

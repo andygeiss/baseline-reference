@@ -33,6 +33,12 @@ step "gofmt"
 step "go vet"
 go vet ./...
 
+step "go fix -diff"
+# stack/go.md: a rewrite to current idiom that is still pending is a red gate;
+# make fmt applies it. The fixers are the pinned toolchain's, so this step is
+# the one that goes red first when the machine runs a Go the pin has not adopted.
+go fix -diff ./...
+
 step "staticcheck"
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 

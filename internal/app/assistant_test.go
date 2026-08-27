@@ -122,7 +122,7 @@ func TestShutdownEndsAReplyInFlight(t *testing.T) {
 
 // TestWaitJoinsAReplyInFlight is the half of the shape no ordinary test can
 // see: an uncounted goroutine still finishes first on an idle machine, so
-// deleting a.running.Add(1) leaves every other test in this package green.
+// a bare go in place of a.running.Go leaves every other test in this package green.
 //
 // synctest is what makes it observable. Inside a bubble, synctest.Wait returns
 // only once every other goroutine is durably blocked — so if App.Wait had

@@ -196,8 +196,7 @@ func (a *App) allow(w http.ResponseWriter, r *http.Request) bool {
 func (a *App) parseForm(w http.ResponseWriter, r *http.Request) bool {
 	if err := r.ParseForm(); err != nil {
 		status := http.StatusBadRequest // malformed body — not a validation failure
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			status = http.StatusRequestEntityTooLarge // the 1 MiB cap
 		}
 		a.clientError(w, r, status)
