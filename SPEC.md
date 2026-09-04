@@ -5,29 +5,41 @@ This repository is the **reproducible acceptance test** of the
 question: *does following the baseline, and nothing but the baseline, produce a
 working, production-grade application?*
 
+## The brief
+
+The baseline's `README.md` *The task brief* asks every project to keep these four fields
+at its root, job and why one line each; each bullet names its long form.
+
+- **Job** — a person chats from a phone and a program from a terminal, on one server
+  (*The task*, below).
+- **Why** — for whoever maintains the baseline: a rule that cannot be followed to a
+  working application is a rule with a gap, and this repository is where that shows
+  (the question this file opens with).
+- **Guardrails** — the README's *Baseline deviations* and *Decisions the baseline makes a
+  project name*.
+- **Done means** — `./verify.sh` exits 0, `make ci` is green, and both checklists walk
+  clean (*Acceptance criteria*, below).
+
 ## Baseline pin
 
-Built against baseline commit **`6015026`**, `go fix` joining the gates: **a rewrite to
-current idiom that is still pending is a red gate.** `go fix -diff ./...` is the third
-line of `check` and `go fix ./...` the last of `fmt`, after `goimports`, because `go fix`
-type-checks and manages its own imports. The fixers ship with the toolchain, so the pin
-decides what the gate demands; a fix judged wrong is switched off by name, in the commit
-that says why.
+Built against baseline commit **`7c5c2a4`**, no code before the brief: **every task
+carries four fields the user has seen before the first line of code — job, why,
+guardrails, done means — and every project keeps `SPEC.md` at its root as the
+project-level brief.** The agent drafts, asks only what it cannot infer, and re-reads the
+brief as the acceptance test before declaring done; a task brief is a delta against this
+file.
 
-**What moved here.** The Makefile carries both lines and `verify.sh` the gate, as its
-third step. The gate was red on the tree it inherited: `internal/app/messages.go` counted
-the assistant's reply with `Add(1)`/`go`/`Done()`, which the pin rewrites to
-`a.running.Go`, and a test drained the outbox with a three-clause loop. Two more sites —
-`internal/app/attachments.go` and `auth.go` — tested for `*http.MaxBytesError` with
-`errors.As` and a variable read nowhere; the next major's `errorsastype` fixer will demand
-`errors.AsType`, a Go 1.26 API, so they use it now. Nothing here needed a fix switched
-off.
+**What moved here.** *The brief* above: the four fields at project scale, each bullet
+naming its long form, and `make ci` joining *Acceptance criteria* because *Done means*
+names it. `verify.sh` gates the file and the four labels as its ninth step, accepting a
+bold name or a `Field:` line and rejecting a heading; it was run red on a missing file, a
+missing field, and a renamed one before it was trusted. The README's index line names the
+brief, and the reproduction protocol sends a builder to `SKILL.md`, the file the
+baseline's README tells agents to read.
 
-**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 77 gates, exit 0 — one more
-than v4.1.0, the `go fix -diff` step. `GOTOOLCHAIN=go1.26.7 make ci` is green on this
-commit, its first line `go version go1.26.7 darwin/arm64`. Go 1.27.0 is on this machine
-and the baseline adopts a major at its first patch; under it the gate is red on the two
-`errors.As` sites the pin passes, which is the mismatch the gate now makes visible.
+**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 78 gates, exit 0 — one more
+than v4.2.0, the brief step. `GOTOOLCHAIN=go1.26.7 make ci` is green on this commit, its
+first line `go version go1.26.7 darwin/arm64`. No code moved.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
@@ -72,12 +84,14 @@ and the baseline adopts a major at its first patch; under it the gate is red on 
 4. `go list -deps` on each adapter — `./internal/chatapi` and
    `./internal/anthropic` — names `internal/domain` and nothing else of ours: an
    adapter never learns about the application it serves.
+5. `make ci` is green: the same gates against `git archive HEAD`, so nothing missing
+   from `git add` can pass.
 
 ## Reproduction protocol
 
 1. Check out the baseline at the pinned commit (or the commit under test).
 2. Hand the task above plus the baseline to a fresh builder — for an AI agent, the
-   baseline's `README.md` navigation protocol is the only other instruction needed.
+   baseline's `SKILL.md` protocol is the only other instruction needed.
 3. Run `./verify.sh` from this repo against the rebuilt project (it takes the project
    directory as an optional first argument, defaulting to this repo).
 4. Compare the rebuild's deviations list against this repo's README. New deviations

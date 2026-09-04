@@ -65,6 +65,14 @@ TARGETS="$(grep -E '^[A-Za-z][A-Za-z0-9_-]*:' Makefile | cut -d: -f1)"
     || fail "Makefile targets are not alphabetical — reorder them: $(printf '%s' "$TARGETS" | tr '\n' ' ')"
 grep -q '^\.DEFAULT_GOAL = check$' Makefile || fail "Makefile does not name check as .DEFAULT_GOAL"
 
+step "the brief: SPEC.md carries job, why, guardrails, and done means"
+# The baseline's README.md *The task brief*: every project keeps its brief at the root,
+# and every task's brief is a delta against it.
+[ -f SPEC.md ] || fail "SPEC.md is missing — the project's brief lives at the repo root"
+for f in Job Why Guardrails 'Done means'; do
+    grep -Eq "\*\*$f:?\*\*|^ *[-*]? *$f:" SPEC.md || fail "SPEC.md has no **$f** or $f: line — spell the field one of those two ways"
+done
+
 step "tests (race, shuffled)"
 go test -race -shuffle=on ./...
 

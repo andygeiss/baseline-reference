@@ -8,8 +8,9 @@ baseline's `project-types/web-application.md` and `project-types/cli-tool.md`.
 Two binaries, one module. The server renders HTML for people and JSON for
 programs; `gochat` is the program.
 
-- **[SPEC.md](SPEC.md)** — what this test is: the task, the pinned baseline commit,
-  the acceptance criteria, and the protocol for reproducing the test from scratch.
+- **[SPEC.md](SPEC.md)** — what this test is: the brief (job, why, guardrails, done
+  means), the task, the pinned baseline commit, the acceptance criteria, and the protocol
+  for reproducing the test from scratch.
 - **[verify.sh](verify.sh)** — the mechanical acceptance run: every gate from the
   baseline plus a live smoke test of both built binaries. `./verify.sh` must exit 0.
 - **[DESIGN.md](DESIGN.md)** — the design system: theme values and component
