@@ -20,16 +20,16 @@ programs; `gochat` is the program.
 
 ## Stack
 
-Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
-only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
-grid layout, oklch, media-query dark mode, motion-as-feedback with view-transition
-swaps, system font stack, mask icons, a fixed bottom bar, one `<dialog>`) · SQLite
-(`modernc.org/sqlite`, WAL, single-writer pool, attachments as `BLOB`s) · sessions
-(`alexedwards/scs/v2` over a hand-written two-pool store) · argon2id
-(`golang.org/x/crypto`) · per-IP rate limiting (`golang.org/x/time`) · mail over
-stdlib `net/smtp`, or a log adapter that needs nothing · the time zone database
-embedded with `time/tzdata` · installable (web app manifest + four icons, no service
-worker) · single static binaries with all assets embedded.
+Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`, `encoding/json/v2`) · htmx
+2.0.10 (vendored, the only script — SHA-256 checked by verify.sh) · pure CSS (cascade
+layers, mobile-first grid layout, oklch, media-query dark mode, motion-as-feedback with
+view-transition swaps, system font stack, mask icons, a fixed bottom bar, one
+`<dialog>`) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool, attachments as
+`BLOB`s) · sessions (`alexedwards/scs/v2` over a hand-written two-pool store) · argon2id
+(`golang.org/x/crypto`) · per-IP rate limiting (`golang.org/x/time`) · mail over stdlib
+`net/smtp`, or a log adapter that needs nothing · the time zone database embedded with
+`time/tzdata` · installable (web app manifest + four icons, no service worker) · single
+static binaries with all assets embedded.
 
 Every dependency is on the approved list in the baseline's `stack/go.md`, used the
 way that list prescribes, so none needs a justification here.

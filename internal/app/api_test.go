@@ -1,7 +1,7 @@
 package app
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"strings"
 	"testing"
@@ -42,7 +42,7 @@ func (ta *testApp) apiCall(t *testing.T, method, path, token, body string) (*htt
 	defer res.Body.Close()
 
 	var out map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+	if err := json.UnmarshalRead(res.Body, &out); err != nil {
 		t.Fatalf("%s %s answered something that is not JSON: %v", method, path, err)
 	}
 	return res, out
@@ -230,6 +230,8 @@ func TestAPIRefusesABodyItDoesNotUnderstand(t *testing.T) {
 		// A field the server does not know is a typo or a version mismatch.
 		// Dropping it quietly would post a message the caller thinks it sent.
 		{"an unknown field", `{"bodyy":"hello"}`},
+		// json/v2 matches names exactly; v1 would have taken "Body" for "body".
+		{"a field in the wrong case", `{"Body":"hello"}`},
 		{"two objects", `{"body":"one"}{"body":"two"}`},
 	}
 
@@ -244,6 +246,19 @@ func TestAPIRefusesABodyItDoesNotUnderstand(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a body over the cap", func(t *testing.T) {
+		// The middleware's limit surfaces through UnmarshalRead as the
+		// MaxBytesError the decoder switches on, so this is 413, not 400.
+		res, body := ta.apiCall(t, http.MethodPost, "/api/rooms/general/messages", token,
+			`{"body":"`+strings.Repeat("x", 1<<20)+`"}`)
+		if res.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Errorf("status = %d, want 413", res.StatusCode)
+		}
+		if body["error"] == nil {
+			t.Errorf("a 413 with no error to read: %v", body)
+		}
+	})
 }
 
 // TestAPIMessagesAreNotEscaped is the seam between the two surfaces. The pages

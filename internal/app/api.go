@@ -2,10 +2,9 @@ package app
 
 import (
 	"crypto/rand"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -223,10 +222,12 @@ func (a *App) apiRoom(w http.ResponseWriter, r *http.Request) (domain.Room, bool
 // a field the server does not know is a typo or a version mismatch — and
 // silently dropping it would post a message the caller believes it sent.
 func (a *App) apiDecode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(r.Body) // the body is already capped at 1 MiB by the middleware
-	dec.DisallowUnknownFields()
-	switch err := dec.Decode(v); {
+	// The body is already capped at 1 MiB by the middleware. UnmarshalRead takes
+	// one value and refuses anything after it but whitespace, so "one object per
+	// request" needs no second read.
+	switch err := json.UnmarshalRead(r.Body, v, json.RejectUnknownMembers(true)); {
 	case err == nil:
+		return true
 	case errors.As(err, new(*http.MaxBytesError)):
 		a.apiError(w, r, http.StatusRequestEntityTooLarge, "That request body is too big.")
 		return false
@@ -234,13 +235,6 @@ func (a *App) apiDecode(w http.ResponseWriter, r *http.Request, v any) bool {
 		a.apiError(w, r, http.StatusBadRequest, "That is not a JSON object this endpoint takes.")
 		return false
 	}
-	// One object per request, so trailing content is a malformed call rather
-	// than something to ignore.
-	if err := dec.Decode(new(struct{})); !errors.Is(err, io.EOF) {
-		a.apiError(w, r, http.StatusBadRequest, "Send one JSON object and nothing after it.")
-		return false
-	}
-	return true
 }
 
 func (a *App) apiJSON(w http.ResponseWriter, r *http.Request, status int, v any) {

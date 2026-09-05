@@ -22,28 +22,24 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`ce86f13`**, the pin moves a major: **Go 1.27.1 is the
-toolchain and `go 1.27` the `go.mod` line; `Response.Body.Close` drains before it
-closes, so the hand-written drain helper is gone; a handler under test may run inside a
-`synctest` bubble on `httptest.NewTestServer`; header limits stay at their defaults; and
-`uuid` is a standard-library choice.**
+Built against baseline commit **`9035558`**, the two decisions v4.4.0 left open:
+**`encoding/json/v2` is the JSON package, and htmx 4.x waits for 4.0.1.**
 
-**What moved here.** `go.mod` says `go 1.27`, and `verify.sh` gates that line and the
-absence of a `toolchain` line as its seventh step, run red on both before it was
-trusted. `internal/anthropic` lost `drainAndClose` — `defer res.Body.Close()` is the
-whole rule now. The handler-test harness moved onto `httptest.NewTestServer`: its
-`Client()` carries the cookie jar and the redirect stop, the API tests' bare client
-shares its transport, and every handler test passed on the in-memory network at the
-first run. Four dependencies moved under the pin in their own `chore(deps)` commit:
-`golang.org/x/crypto` v0.56.0 and `modernc.org/sqlite` v1.58.0 with its `libc` and
-`memory`. `make fmt` under 1.27.1 rewrote nothing, so there is no rewrite commit: the 26
-fixers found the tree already at the idiom. The README's stack line says Go 1.27.
+**What moved here.** Every `encoding/json` import is `encoding/json/v2` — seven files
+across `internal/app`, `internal/chatapi`, `internal/anthropic`, and `cmd/gochat`. The
+`/api` decoder is one `json.UnmarshalRead` call with `json.RejectUnknownMembers(true)`:
+v2 refuses a second object after the first on its own, so the second `Decode` that
+checked for trailing content is gone, and the 413 for a body over the cap still comes
+out of the same `errors.As` on `*http.MaxBytesError`. The two adapters decode with
+`UnmarshalRead` over the same `io.LimitReader`. The refusal test gained two cases the
+move makes new: a field in the wrong case, which v1 would have taken, is now a 400; a
+body over the cap is a 413. `-json` output keeps its own trailing newline, which
+`MarshalWrite` does not write. htmx stays at 2.0.10; nothing in the layout changed.
 
-**What the run proved.** `GOTOOLCHAIN=go1.27.1 ./verify.sh`: 79 gates, exit 0 — one more
-than v4.3.0, the go-line step. `GOTOOLCHAIN=go1.27.1 make ci` is green on this commit,
-its first line `go version go1.27.1 darwin/arm64`. `govulncheck` reports no reachable
-vulnerability and one informational entry in a required module the code never calls
-(GO-2026-5932, `golang.org/x/crypto`).
+**What the run proved.** `GOTOOLCHAIN=go1.27.1 ./verify.sh`: 79 gates, exit 0, the same
+count as v4.4.0. `GOTOOLCHAIN=go1.27.1 make ci` is green on this commit. `go fix -diff`
+found nothing to rewrite: the one `omitempty` here sits on a map, which the `omitzero`
+fixer leaves alone.
 
 ## The task (give this to the builder, human or AI, verbatim)
 

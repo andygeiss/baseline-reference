@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -28,10 +28,10 @@ func fakeServer(t *testing.T) *httptest.Server {
 			var in struct {
 				Body string `json:"body"`
 			}
-			json.NewDecoder(r.Body).Decode(&in)
+			json.UnmarshalRead(r.Body, &in)
 			posted = append(posted, in.Body)
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]any{
+			json.MarshalWrite(w, map[string]any{
 				"message": map[string]any{
 					"seq": len(posted), "author": "Ada", "body": in.Body,
 					"created_at": "2026-08-15T10:00:00Z",

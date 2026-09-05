@@ -6,7 +6,7 @@ package anthropic
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -154,7 +154,7 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 	}
 
 	var out response
-	if err := json.NewDecoder(io.LimitReader(res.Body, maxBody)).Decode(&out); err != nil {
+	if err := json.UnmarshalRead(io.LimitReader(res.Body, maxBody), &out); err != nil {
 		return "", fmt.Errorf("decoding the reply: %w", err)
 	}
 

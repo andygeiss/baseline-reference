@@ -1,7 +1,7 @@
 package anthropic
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +43,7 @@ func TestRequestIsPinned(t *testing.T) {
 	)
 	a := serving(t, func(w http.ResponseWriter, r *http.Request) {
 		headers = r.Header.Clone()
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+		if err := json.UnmarshalRead(r.Body, &got); err != nil {
 			t.Errorf("decoding the request the adapter sent: %v", err)
 		}
 		writeText(w, "fine")
