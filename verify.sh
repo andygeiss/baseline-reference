@@ -48,6 +48,13 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 step "go mod tidy -diff"
 go mod tidy -diff
 
+step "go.mod: the go line is the pin's major, and no toolchain line"
+# VERSIONS.md pins Go 1.27.1 and says: set go 1.27 in go.mod, never a toolchain
+# line — that line would pick the Go for every machine on GOTOOLCHAIN=auto
+# (operations/ci.md). Pinned in the baseline's VERSIONS.md; update both together.
+grep -qx 'go 1.27' go.mod || fail "go.mod does not say 'go 1.27' — VERSIONS.md pins Go 1.27.1"
+! grep -q '^toolchain ' go.mod || fail "go.mod has a toolchain line — the pin is GOTOOLCHAIN's job, not go.mod's"
+
 step "no CI workflow, no release workflow, no dependency bot"
 # operations/ci.md: the gates run from the Makefile on the developer's machine, and
 # nowhere else. A workflow here is a second gate list nobody keeps in sync.

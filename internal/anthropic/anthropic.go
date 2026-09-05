@@ -147,7 +147,7 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 	if err != nil {
 		return "", fmt.Errorf("asking the model: %w", err)
 	}
-	defer drainAndClose(res)
+	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("asking the model: %s", res.Status)
@@ -172,11 +172,4 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 		}
 	}
 	return "", fmt.Errorf("the model answered with no text")
-}
-
-// drainAndClose reads the rest of a response before closing it, so the
-// connection goes back to the pool instead of being thrown away.
-func drainAndClose(res *http.Response) {
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxBody))
-	_ = res.Body.Close()
 }

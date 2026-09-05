@@ -34,7 +34,8 @@ func (ta *testApp) apiCall(t *testing.T, method, path, token, body string) (*htt
 	}
 
 	// A client of its own: no cookie jar, so the token is the only credential.
-	res, err := (&http.Client{}).Do(req)
+	// It shares the transport, which is the only way to the in-memory server.
+	res, err := (&http.Client{Transport: ta.server.Client().Transport}).Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}

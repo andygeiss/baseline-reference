@@ -71,20 +71,23 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	if err != nil {
 		t.Fatalf("building the cookie jar: %v", err)
 	}
-	server := httptest.NewServer(a.Routes())
-	t.Cleanup(server.Close)
+	// The in-memory server patterns/go-testing.md prescribes: no socket, and
+	// NewTestServer registers its own t.Cleanup — after a.Wait above, so the
+	// server stops before the work it started is joined.
+	server := httptest.NewTestServer(t, a.Routes())
+	// The one client that reaches the in-memory server.
+	client := server.Client()
+	client.Jar = jar
+	// Redirects are the thing under test in half of these cases, so they are
+	// returned rather than followed.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 
 	return &testApp{
-		App:    a,
-		server: server,
-		client: &http.Client{
-			Jar: jar,
-			// Redirects are the thing under test in half of these cases, so
-			// they are returned rather than followed.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		App:         a,
+		server:      server,
+		client:      client,
 		users:       o.Users.(*fakeUsers),
 		rooms:       o.Rooms.(*fakeRooms),
 		messages:    o.Messages.(*fakeMessages),
@@ -94,10 +97,9 @@ func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	}
 }
 
-// newTestOptions is newTestApp without the listener, so a test that has to run
-// inside a testing/synctest bubble can build the app without putting a
-// goroutine blocked on a socket in there — network I/O never counts as durably
-// blocked, and one such goroutine stops synctest.Wait from ever returning.
+// newTestOptions is newTestApp without the server, for a test that drives the
+// app directly — inside a testing/synctest bubble, say, where the fakes and
+// the counter are what is under test.
 func newTestOptions(t *testing.T, options ...func(*Options)) Options {
 	t.Helper()
 

@@ -20,7 +20,7 @@ programs; `gochat` is the program.
 
 ## Stack
 
-Go 1.26 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
+Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`) · htmx 2.0.10 (vendored, the
 only script — SHA-256 checked by verify.sh) · pure CSS (cascade layers, mobile-first
 grid layout, oklch, media-query dark mode, motion-as-feedback with view-transition
 swaps, system font stack, mask icons, a fixed bottom bar, one `<dialog>`) · SQLite

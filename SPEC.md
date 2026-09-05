@@ -22,24 +22,28 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`7c5c2a4`**, no code before the brief: **every task
-carries four fields the user has seen before the first line of code — job, why,
-guardrails, done means — and every project keeps `SPEC.md` at its root as the
-project-level brief.** The agent drafts, asks only what it cannot infer, and re-reads the
-brief as the acceptance test before declaring done; a task brief is a delta against this
-file.
+Built against baseline commit **`ce86f13`**, the pin moves a major: **Go 1.27.1 is the
+toolchain and `go 1.27` the `go.mod` line; `Response.Body.Close` drains before it
+closes, so the hand-written drain helper is gone; a handler under test may run inside a
+`synctest` bubble on `httptest.NewTestServer`; header limits stay at their defaults; and
+`uuid` is a standard-library choice.**
 
-**What moved here.** *The brief* above: the four fields at project scale, each bullet
-naming its long form, and `make ci` joining *Acceptance criteria* because *Done means*
-names it. `verify.sh` gates the file and the four labels as its ninth step, accepting a
-bold name or a `Field:` line and rejecting a heading; it was run red on a missing file, a
-missing field, and a renamed one before it was trusted. The README's index line names the
-brief, and the reproduction protocol sends a builder to `SKILL.md`, the file the
-baseline's README tells agents to read.
+**What moved here.** `go.mod` says `go 1.27`, and `verify.sh` gates that line and the
+absence of a `toolchain` line as its seventh step, run red on both before it was
+trusted. `internal/anthropic` lost `drainAndClose` — `defer res.Body.Close()` is the
+whole rule now. The handler-test harness moved onto `httptest.NewTestServer`: its
+`Client()` carries the cookie jar and the redirect stop, the API tests' bare client
+shares its transport, and every handler test passed on the in-memory network at the
+first run. Four dependencies moved under the pin in their own `chore(deps)` commit:
+`golang.org/x/crypto` v0.56.0 and `modernc.org/sqlite` v1.58.0 with its `libc` and
+`memory`. `make fmt` under 1.27.1 rewrote nothing, so there is no rewrite commit: the 26
+fixers found the tree already at the idiom. The README's stack line says Go 1.27.
 
-**What the run proved.** `GOTOOLCHAIN=go1.26.7 ./verify.sh`: 78 gates, exit 0 — one more
-than v4.2.0, the brief step. `GOTOOLCHAIN=go1.26.7 make ci` is green on this commit, its
-first line `go version go1.26.7 darwin/arm64`. No code moved.
+**What the run proved.** `GOTOOLCHAIN=go1.27.1 ./verify.sh`: 79 gates, exit 0 — one more
+than v4.3.0, the go-line step. `GOTOOLCHAIN=go1.27.1 make ci` is green on this commit,
+its first line `go version go1.27.1 darwin/arm64`. `govulncheck` reports no reachable
+vulnerability and one informational entry in a required module the code never calls
+(GO-2026-5932, `golang.org/x/crypto`).
 
 ## The task (give this to the builder, human or AI, verbatim)
 
