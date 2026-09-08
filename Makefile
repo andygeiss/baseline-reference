@@ -41,7 +41,8 @@ clean:
 # rewrites need.
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
-	go fix ./...
+	n=3; until go fix -diff ./... > /dev/null 2>&1 || [ $$n -eq 0 ]; do go fix ./... || exit 1; n=$$((n - 1)); done
+	go run golang.org/x/tools/cmd/goimports@latest -w .
 
 # Reaches this app from a phone over HTTPS, which install needs
 # (patterns/local-https.md). A real recurring command, so rule 3 allows it.

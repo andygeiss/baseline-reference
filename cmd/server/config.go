@@ -23,6 +23,17 @@ import (
 	_ "time/tzdata"
 )
 
+// Secret is a value that must never reach a log line. The three methods are the
+// three ways a value gets printed: slog, fmt, and anything writing text.
+// Config.LogValue leaves these fields out, but that only holds when the Config
+// *is* the value logged — nested, in a slice, in a map, or under any fmt verb,
+// the field's own type is what holds (patterns/go-config.md).
+type Secret string
+
+func (Secret) LogValue() slog.Value         { return slog.StringValue("REDACTED") }
+func (Secret) String() string               { return "REDACTED" }
+func (Secret) MarshalText() ([]byte, error) { return []byte("REDACTED"), nil }
+
 // Config is every knob this binary has. After parseConfig returns, nothing
 // else reads os.Getenv — the struct is the whole contract.
 type Config struct {
@@ -36,13 +47,13 @@ type Config struct {
 	// InviteCode gates registration. It is a secret, so it arrives as a file
 	// and never as a flag or an environment variable, and LogValue below leaves
 	// it out. Empty means the deployment passed none and anybody may register.
-	InviteCode string
+	InviteCode Secret
 
 	// Assistant picks which adapter answers a mention: "echo" needs nothing and
 	// is the default, "anthropic" needs a key. The two settings below are one
 	// setting in two halves, so they are validated as a pair.
 	Assistant    string
-	AnthropicKey string
+	AnthropicKey Secret
 
 	// BaseURL is where this app answers from. It is the only thing a link in an
 	// outgoing email is built from — never the request's Host header, which is
@@ -62,7 +73,7 @@ type Config struct {
 	SMTPAddr     string
 	SMTPFrom     string
 	SMTPUser     string
-	SMTPPassword string
+	SMTPPassword Secret
 }
 
 // errUsage means the message was already printed where the problem was found,
@@ -119,7 +130,7 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	c.InviteCode = inviteCode
+	c.InviteCode = Secret(inviteCode)
 
 	if c.Assistant != "echo" && c.Assistant != "anthropic" {
 		return Config{}, fmt.Errorf("assistant %q: want echo or anthropic", c.Assistant)
@@ -128,7 +139,7 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	c.AnthropicKey = anthropicKey
+	c.AnthropicKey = Secret(anthropicKey)
 
 	// The checks above see one field at a time and cannot see a pair. These two
 	// are really one setting — which adapter, and the key it needs — so they
@@ -164,7 +175,7 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	c.SMTPPassword = smtpPassword
+	c.SMTPPassword = Secret(smtpPassword)
 	if err := c.checkMailer(); err != nil {
 		return Config{}, err
 	}
@@ -182,7 +193,7 @@ func parseBaseURL(raw string) (*url.URL, error) {
 	case u.Host == "":
 		return nil, fmt.Errorf("base-url %q: no host — write it as https://chat.example.com", raw)
 	}
-	u.Path = strings.TrimSuffix(u.Path, "/") // JoinPath would double the slash
+	// No TrimSuffix on the path: JoinPath does not double a trailing slash.
 	return u, nil
 }
 

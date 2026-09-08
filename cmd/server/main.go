@@ -117,14 +117,14 @@ func run(cfg Config) error {
 	// process that will not start (patterns/go-http-client.md).
 	var assistant app.Assistant = echo.New()
 	if cfg.Assistant == "anthropic" {
-		assistant = anthropic.New(cfg.AnthropicKey)
+		assistant = anthropic.New(string(cfg.AnthropicKey)) // the conversion is the only way past Secret
 	}
 	// The same shape for mail: the adapter that needs nothing is the default,
 	// so the whole password-reset flow can be walked with an empty environment.
 	// Constructing either one connects to nothing.
 	var mailer Mailer = logmail.New(logger)
 	if cfg.Mailer == "smtp" {
-		mailer = smtpmail.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPassword)
+		mailer = smtpmail.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, string(cfg.SMTPPassword))
 	}
 
 	resets := store.NewResets(db)
@@ -152,7 +152,7 @@ func run(cfg Config) error {
 		Location:    cfg.Location,
 		BaseURL:     cfg.BaseURL,
 		DummyHash:   dummyHash,
-		InviteCode:  cfg.InviteCode,
+		InviteCode:  string(cfg.InviteCode),
 		Stopping:    gctx,
 	})
 	if err != nil {

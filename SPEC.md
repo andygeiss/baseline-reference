@@ -22,24 +22,28 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`9035558`**, the two decisions v4.4.0 left open:
-**`encoding/json/v2` is the JSON package, and htmx 4.x waits for 4.0.1.**
+Built against baseline commit **`b6a731e`**, the Go 1.27 defect backlog:
+**thirty-one corrections to rules the baseline already shipped, six of them tier 1.**
 
-**What moved here.** Every `encoding/json` import is `encoding/json/v2` — seven files
-across `internal/app`, `internal/chatapi`, `internal/anthropic`, and `cmd/gochat`. The
-`/api` decoder is one `json.UnmarshalRead` call with `json.RejectUnknownMembers(true)`:
-v2 refuses a second object after the first on its own, so the second `Decode` that
-checked for trailing content is gone, and the 413 for a body over the cap still comes
-out of the same `errors.As` on `*http.MaxBytesError`. The two adapters decode with
-`UnmarshalRead` over the same `io.LimitReader`. The refusal test gained two cases the
-move makes new: a field in the wrong case, which v1 would have taken, is now a 400; a
-body over the cap is a 413. `-json` output keeps its own trailing newline, which
-`MarshalWrite` does not write. htmx stays at 2.0.10; nothing in the layout changed.
+**What moved here.** The three secrets in `Config` — `InviteCode`, `AnthropicKey`,
+`SMTPPassword` — are a `Secret` type carrying `LogValue`, `String` and `MarshalText`, and
+the three call sites that hand one to an adapter now write the `string(...)` conversion
+that is the only way past it. `Config.LogValue` stays: it is the allowlist, and the type is
+what holds where `LogValue` does not fire. `newTestDB` asserts both pools are idle at the
+end, registered after the `Close` cleanup so LIFO runs it first — the store was already
+closing every `Rows`, `Stmt` and `Tx`, so this locks in a practice the baseline had never
+written down. `make fmt` loops `go fix` to a clean `-diff` and runs `goimports` again after
+it. `apiJSON`'s buffering comment now gives the v2 reason rather than the v1 one: `Marshal`
+returns the bytes it got through *and* an error. `parseBaseURL` lost the
+`strings.TrimSuffix` whose comment claimed `JoinPath` would double the slash — it does not.
 
-**What the run proved.** `GOTOOLCHAIN=go1.27.1 ./verify.sh`: 79 gates, exit 0, the same
-count as v4.4.0. `GOTOOLCHAIN=go1.27.1 make ci` is green on this commit. `go fix -diff`
-found nothing to rewrite: the one `omitempty` here sits on a map, which the `omitzero`
-fixer leaves alone.
+**What the run proved.** `TestConfig_SecretsNeverLogged` is seven cases, and six of them
+fail without the `Secret` type: logging a struct that *contains* the config, a slice of
+configs, a map of configs, `%+v` over the config, and the field on its own by either route
+all print `SUPER-SECRET-KEY` when the field is a plain `string`. That is the whole of the
+baseline's tier-1 claim, checked rather than argued. The new `newTestDB` assertion passes
+across the suite, so nothing here leaks a connection. `./verify.sh`: all gates, exit 0.
+`make fmt` converged in one run and added the `fmt` import the new test needed.
 
 ## The task (give this to the builder, human or AI, verbatim)
 

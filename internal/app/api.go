@@ -238,9 +238,11 @@ func (a *App) apiDecode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func (a *App) apiJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
+	// Buffer first. Under json/v2 Marshal returns the bytes it got through *and*
+	// a non-nil error, so writing straight at w would commit a 200 and half a
+	// body before this branch could run (stack/go.md).
 	body, err := json.Marshal(v)
 	if err != nil {
-		// Buffer first: a half-written body after WriteHeader cannot be undone.
 		a.logger.Error("encoding an API answer", "path", r.URL.Path, "err", err)
 		http.Error(w, `{"error":"Sorry, something went wrong."}`, http.StatusInternalServerError)
 		return

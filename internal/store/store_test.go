@@ -23,6 +23,17 @@ func newTestDB(t *testing.T) *store.DB {
 		t.Fatalf("opening the database: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// Registered after the Close cleanup, so LIFO runs this one first. A leaked
+	// Rows, Stmt or Tx wedges the one-connection write pool, and neither go vet
+	// nor staticcheck reports it (patterns/go-sqlite.md rule 8).
+	t.Cleanup(func() {
+		if n := db.Write.Stats().InUse; n != 0 {
+			t.Errorf("write pool: %d connection(s) still in use — a Rows, Stmt or Tx was not closed", n)
+		}
+		if n := db.Read.Stats().InUse; n != 0 {
+			t.Errorf("read pool: %d connection(s) still in use — a Rows, Stmt or Tx was not closed", n)
+		}
+	})
 	return db
 }
 

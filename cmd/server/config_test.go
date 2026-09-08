@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -110,5 +111,37 @@ func TestConfig_LogValue(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "config.host=127.0.0.1") {
 		t.Errorf("log = %q, want a config group", buf.String())
+	}
+}
+
+// TestConfig_SecretsNeverLogged is the half LogValue alone does not cover.
+// LogValue fires only when the Config *is* the value logged; nested in another
+// struct, or under any fmt verb, slog and fmt print the fields themselves, and
+// only the field's own type holds there (patterns/go-config.md).
+func TestConfig_SecretsNeverLogged(t *testing.T) {
+	t.Parallel()
+
+	const key = "SUPER-SECRET-KEY"
+	cfg := Config{Host: "127.0.0.1", Port: "8080", Env: "dev",
+		AnthropicKey: key, SMTPPassword: key, InviteCode: key}
+
+	cases := map[string]func(*slog.Logger){
+		"the config itself":      func(l *slog.Logger) { l.Info("started", "config", cfg) },
+		"nested in a struct":     func(l *slog.Logger) { l.Info("started", "boot", struct{ Cfg Config }{cfg}) },
+		"in a slice":             func(l *slog.Logger) { l.Info("started", "all", []Config{cfg}) },
+		"in a map":               func(l *slog.Logger) { l.Info("started", "all", map[string]Config{"a": cfg}) },
+		"through a fmt verb":     func(l *slog.Logger) { l.Info(fmt.Sprintf("started %+v", cfg)) },
+		"a field on its own":     func(l *slog.Logger) { l.Info("started", "key", cfg.AnthropicKey) },
+		"a field through a verb": func(l *slog.Logger) { l.Info(fmt.Sprintf("key %v", cfg.SMTPPassword)) },
+	}
+	for name, log := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			log(slog.New(slog.NewJSONHandler(&buf, nil)))
+			if strings.Contains(buf.String(), key) {
+				t.Errorf("the secret reached the log line: %s", buf.String())
+			}
+		})
 	}
 }
