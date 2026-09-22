@@ -3,14 +3,29 @@ package app
 import (
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
-var secretPattern = regexp.MustCompile(`gochat_[A-Za-z0-9_-]+`)
+// findSecret returns the first machine-token secret in body, or "".
+func findSecret(body string) string {
+	_, rest, ok := strings.Cut(body, "gochat_")
+	if !ok {
+		return ""
+	}
+	n := strings.IndexFunc(rest, func(r rune) bool {
+		return !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '_' || r == '-')
+	})
+	if n < 0 {
+		n = len(rest)
+	}
+	if n == 0 {
+		return ""
+	}
+	return "gochat_" + rest[:n]
+}
 
 // makeToken creates a machine token and returns the secret, which the profile
 // page shows exactly once.
@@ -21,7 +36,7 @@ func (ta *testApp) makeToken(t *testing.T, label string) string {
 		t.Fatalf("creating token %s: status %d, want 303", label, res.StatusCode)
 	}
 	_, body := ta.do(t, http.MethodGet, "/profile", nil, nil)
-	secret := secretPattern.FindString(body)
+	secret := findSecret(body)
 	if secret == "" {
 		t.Fatalf("the profile page showed no secret after creating a token:\n%s", body)
 	}

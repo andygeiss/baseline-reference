@@ -3,16 +3,25 @@ package app
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v4/internal/domain"
 )
 
-// olderLink finds the cursor on the "Show older" control, or reports that there
-// is no control on the page.
-var olderLink = regexp.MustCompile(`/older\?before=(\d+)`)
+// olderCursor finds the cursor on the "Show older" control, or reports that
+// there is no control on the page.
+func olderCursor(body string) (string, bool) {
+	_, rest, ok := strings.Cut(body, "/older?before=")
+	if !ok {
+		return "", false
+	}
+	n := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
+	if n < 0 {
+		n = len(rest)
+	}
+	return rest[:n], n > 0
+}
 
 // seedRoom signs Ada in, makes a room, and fills it with n numbered messages.
 // The messages go straight into the store: this is a test about reading a long
@@ -66,14 +75,14 @@ func TestRoomPagesBackwards(t *testing.T) {
 		t.Error("the oldest message is on the first page, so nothing was paged")
 	}
 
-	cursor := olderLink.FindStringSubmatch(first)
-	if cursor == nil {
+	cursor, ok := olderCursor(first)
+	if !ok {
 		t.Fatal("no Show older control on a room with more messages than one page")
 	}
 
 	// One press. The answer replaces the control, so it carries the rest of the
 	// room and no control of its own once there is nothing older.
-	_, older := ta.do(t, http.MethodGet, "/rooms/"+slug+"/older?before="+cursor[1], nil, htmx())
+	_, older := ta.do(t, http.MethodGet, "/rooms/"+slug+"/older?before="+cursor, nil, htmx())
 	for body := range says(older, total) {
 		if seen[body] {
 			t.Errorf("%s is on both pages — the cursor repeated a row", body)
@@ -84,7 +93,7 @@ func TestRoomPagesBackwards(t *testing.T) {
 		t.Errorf("after paging back, %d of %d messages have been seen — the cursor skipped some",
 			len(seen), total)
 	}
-	if olderLink.MatchString(older) {
+	if _, ok := olderCursor(older); ok {
 		t.Error("the control came back on the last page, with nothing older to ask for")
 	}
 }
@@ -95,7 +104,7 @@ func TestARoomThatFitsHasNoControl(t *testing.T) {
 	slug := seedRoom(t, ta, 3)
 
 	_, body := ta.do(t, http.MethodGet, "/rooms/"+slug, nil, nil)
-	if olderLink.MatchString(body) {
+	if _, ok := olderCursor(body); ok {
 		t.Error("a room of three messages offers to show older ones")
 	}
 	if len(says(body, 3)) != 3 {
@@ -112,13 +121,13 @@ func TestOlderWorksWithoutHTMX(t *testing.T) {
 	slug := seedRoom(t, ta, total)
 
 	_, first := ta.do(t, http.MethodGet, "/rooms/"+slug, nil, nil)
-	cursor := olderLink.FindStringSubmatch(first)
-	if cursor == nil {
+	cursor, ok := olderCursor(first)
+	if !ok {
 		t.Fatal("no Show older control to follow")
 	}
 
 	// No HX-Request header: a plain click, or somebody opening the link.
-	res, body := ta.do(t, http.MethodGet, "/rooms/"+slug+"/older?before="+cursor[1], nil, nil)
+	res, body := ta.do(t, http.MethodGet, "/rooms/"+slug+"/older?before="+cursor, nil, nil)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}

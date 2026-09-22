@@ -22,28 +22,12 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`b6a731e`**, the Go 1.27 defect backlog:
-**thirty-one corrections to rules the baseline already shipped, six of them tier 1.**
+Built against baseline commit **`d12a127`**: import a package for what it does, and the
+run log moved to release pages.
 
-**What moved here.** The three secrets in `Config` — `InviteCode`, `AnthropicKey`,
-`SMTPPassword` — are a `Secret` type carrying `LogValue`, `String` and `MarshalText`, and
-the three call sites that hand one to an adapter now write the `string(...)` conversion
-that is the only way past it. `Config.LogValue` stays: it is the allowlist, and the type is
-what holds where `LogValue` does not fire. `newTestDB` asserts both pools are idle at the
-end, registered after the `Close` cleanup so LIFO runs it first — the store was already
-closing every `Rows`, `Stmt` and `Tx`, so this locks in a practice the baseline had never
-written down. `make fmt` loops `go fix` to a clean `-diff` and runs `goimports` again after
-it. `apiJSON`'s buffering comment now gives the v2 reason rather than the v1 one: `Marshal`
-returns the bytes it got through *and* an error. `parseBaseURL` lost the
-`strings.TrimSuffix` whose comment claimed `JoinPath` would double the slash — it does not.
-
-**What the run proved.** `TestConfig_SecretsNeverLogged` is seven cases, and six of them
-fail without the `Secret` type: logging a struct that *contains* the config, a slice of
-configs, a map of configs, `%+v` over the config, and the field on its own by either route
-all print `SUPER-SECRET-KEY` when the field is a plain `string`. That is the whole of the
-baseline's tier-1 claim, checked rather than argued. The new `newTestDB` assertion passes
-across the suite, so nothing here leaks a connection. `./verify.sh`: all gates, exit 0.
-`make fmt` converged in one run and added the `fmt` import the new test needed.
+**What moved here.** The two test helpers that matched with `regexp` — the "Show older"
+cursor and the machine-token secret — now use `strings.Cut` and `strings.IndexFunc`. Production
+code imports neither `regexp` nor `reflect`. `./verify.sh`: all gates, exit 0.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
