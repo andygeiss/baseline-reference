@@ -1,8 +1,8 @@
 #!/bin/sh
 # Reproducible verification of the baseline reference implementation.
-# Runs every mechanical gate of the baseline's check recipe (stack/makefile.md,
-# explained in operations/ci.md), then boots the real binary and smoke-tests the
-# running application. Exits non-zero on any failure.
+# Runs every mechanical gate of the baseline's check recipe but any the README
+# waives (stack/makefile.md, explained in operations/ci.md), then boots the real
+# binary and smoke-tests the running application. Exits non-zero on any failure.
 #
 # Usage: ./verify.sh [project-dir]   (defaults to the directory of this script)
 set -eu
@@ -36,11 +36,15 @@ go vet ./...
 step "go fix -diff"
 # stack/go.md: a rewrite to current idiom that is still pending is a red gate;
 # make fmt applies it. The fixers are the pinned toolchain's, so this step is
-# the one that goes red first when the machine runs a Go the pin has not adopted.
+# the one that goes red first when the machine runs a major the pin has not
+# adopted.
 go fix -diff ./...
 
 step "staticcheck"
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+# Waived (README, Baseline deviations): Go 1.27.2 writes export data
+# staticcheck 2026.2.1 cannot read (operations/ci.md). The line comes back with
+# the staticcheck release that reads it.
+echo "waived until a staticcheck release reads Go 1.27.2's export data"
 
 step "govulncheck"
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -49,10 +53,10 @@ step "go mod tidy -diff"
 go mod tidy -diff
 
 step "go.mod: the go line is the pin's major, and no toolchain line"
-# VERSIONS.md pins Go 1.27.1 and says: set go 1.27 in go.mod, never a toolchain
+# VERSIONS.md pins Go 1.27.2 and says: set go 1.27 in go.mod, never a toolchain
 # line — that line would pick the Go for every machine on GOTOOLCHAIN=auto
 # (operations/ci.md). Pinned in the baseline's VERSIONS.md; update both together.
-grep -qx 'go 1.27' go.mod || fail "go.mod does not say 'go 1.27' — VERSIONS.md pins Go 1.27.1"
+grep -qx 'go 1.27' go.mod || fail "go.mod does not say 'go 1.27' — VERSIONS.md pins Go 1.27.2"
 ! grep -q '^toolchain ' go.mod || fail "go.mod has a toolchain line — the pin is GOTOOLCHAIN's job, not go.mod's"
 
 step "no CI workflow, no release workflow, no dependency bot"

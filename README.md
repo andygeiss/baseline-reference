@@ -12,7 +12,8 @@ programs; `gochat` is the program.
   means), the task, the pinned baseline commit, the acceptance criteria, and the protocol
   for reproducing the test from scratch.
 - **[verify.sh](verify.sh)** — the mechanical acceptance run: every gate from the
-  baseline plus a live smoke test of both built binaries. `./verify.sh` must exit 0.
+  baseline but any waived below, plus a live smoke test of both built binaries.
+  `./verify.sh` must exit 0.
 - **[DESIGN.md](DESIGN.md)** — the design system: theme values and component
   inventory, lockstep with `web/static/css/app.css`.
 - **[GLOSSARY.md](GLOSSARY.md)** — the words this project owns: one per concept,
@@ -295,6 +296,13 @@ is.
   `internal/` is exactly where the shared code belongs. Extracting it to earn a
   checkmark would be the ceremony that document warns about. The first genuine
   second consumer changes this.
+- **The staticcheck gate is out** (`operations/ci.md`, *A Go patch staticcheck cannot
+  read yet*; `stack/makefile.md` rule 5) — waived 2026-10-09 by Andy. Go 1.27.2 writes
+  export data staticcheck 2026.2.1, the newest release, cannot read
+  (dominikh/go-tools#1832), so it checks no package that imports the standard library.
+  `Makefile` and `verify.sh` leave it out; every other gate runs, and the pin stays at
+  1.27.2. It comes back with the staticcheck release that reads the new format, tried on
+  every dependency update.
 
 ## Fed back into the baseline
 

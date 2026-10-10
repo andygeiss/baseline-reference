@@ -19,7 +19,6 @@ check:
 	test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 	go vet ./...
 	go fix -diff ./...
-	go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 	go mod tidy -diff
 	go test -race -shuffle=on ./...
@@ -37,11 +36,14 @@ clean:
 	rm -rf bin/
 
 # goimports first: go fix type-checks, so a missing import would stop the
-# recipe before goimports could add it. go fix manages the imports its own
-# rewrites need.
+# recipe before goimports could add it. go fix applies each fixer once and one
+# rewrite exposes the next, so it repeats until its own diff is empty — bounded,
+# so a fixer that cannot converge fails the recipe instead of hanging it.
+# goimports again last: the import go fix adds to a single-import file is a
+# second declaration, which gofmt keeps and only goimports merges.
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
-	n=3; until go fix -diff ./... > /dev/null 2>&1 || [ $$n -eq 0 ]; do go fix ./... || exit 1; n=$$((n - 1)); done
+	n=3; until go fix -diff ./... > /dev/null 2>&1; do [ $$n -gt 0 ] || exit 1; go fix ./... || exit 1; n=$$((n - 1)); done
 	go run golang.org/x/tools/cmd/goimports@latest -w .
 
 # Reaches this app from a phone over HTTPS, which install needs
