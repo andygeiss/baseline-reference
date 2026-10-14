@@ -22,14 +22,13 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`e7e378c`**: Go 1.27.2 as the floor, and the rule for a
-Go patch that outruns staticcheck.
+Built against baseline commit **`aafa39f`**: a waived staticcheck line comes back once
+its export-data error is gone, judged by that error and not by the exit status.
 
-**What moved here.** The staticcheck line is out of `Makefile` and `verify.sh` under a
-dated waiver (README, *Baseline deviations*): staticcheck 2026.2.1 cannot read the
-export data Go 1.27.2 writes. `verify.sh` names the new pin. The `fmt` target takes the
-canonical loop, which now fails when `go fix` does not converge, and the comment that
-changed in v4.6.0. `./verify.sh` under Go 1.27.2: every gate but the waived one, exit 0.
+**What moved here.** The staticcheck line is back in `Makefile` and `verify.sh`, and the
+README's waiver is gone: staticcheck 2026.2.2 reads the export data Go 1.27.2 writes, so
+the error `operations/ci.md` names no longer comes out, and it reports nothing to fix.
+`./verify.sh` under Go 1.27.2: all gates, exit 0.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
@@ -60,8 +59,7 @@ changed in v4.6.0. `./verify.sh` under Go 1.27.2: every gate but the waived one,
 ## Acceptance criteria
 
 1. `./verify.sh` exits 0 — it runs every mechanical gate of the baseline's `check`
-   recipe but any the README waives (`stack/makefile.md`, explained in
-   `operations/ci.md`) **plus** a live smoke
+   recipe (`stack/makefile.md`, explained in `operations/ci.md`) **plus** a live smoke
    test of both running binaries (health endpoint, CSP header, the invite-code gate
    and the secret staying out of the logs, session cookie flags, token renewal on
    sign-in, rate limiting, plain-form and htmx flows, the poll's 204 and 200 answers,

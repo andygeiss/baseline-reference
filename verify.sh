@@ -1,8 +1,8 @@
 #!/bin/sh
 # Reproducible verification of the baseline reference implementation.
-# Runs every mechanical gate of the baseline's check recipe but any the README
-# waives (stack/makefile.md, explained in operations/ci.md), then boots the real
-# binary and smoke-tests the running application. Exits non-zero on any failure.
+# Runs every mechanical gate of the baseline's check recipe (stack/makefile.md,
+# explained in operations/ci.md), then boots the real binary and smoke-tests the
+# running application. Exits non-zero on any failure.
 #
 # Usage: ./verify.sh [project-dir]   (defaults to the directory of this script)
 set -eu
@@ -41,10 +41,7 @@ step "go fix -diff"
 go fix -diff ./...
 
 step "staticcheck"
-# Waived (README, Baseline deviations): Go 1.27.2 writes export data
-# staticcheck 2026.2.1 cannot read (operations/ci.md). The line comes back with
-# the staticcheck release that reads it.
-echo "waived until a staticcheck release reads Go 1.27.2's export data"
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
 step "govulncheck"
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
