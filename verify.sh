@@ -50,10 +50,10 @@ step "go mod tidy -diff"
 go mod tidy -diff
 
 step "go.mod: the go line is the pin's major, and no toolchain line"
-# VERSIONS.md pins Go 1.27.2 and says: set go 1.27 in go.mod, never a toolchain
+# VERSIONS.md pins Go 1.27.3 and says: set go 1.27 in go.mod, never a toolchain
 # line — that line would pick the Go for every machine on GOTOOLCHAIN=auto
 # (operations/ci.md). Pinned in the baseline's VERSIONS.md; update both together.
-grep -qx 'go 1.27' go.mod || fail "go.mod does not say 'go 1.27' — VERSIONS.md pins Go 1.27.2"
+grep -qx 'go 1.27' go.mod || fail "go.mod does not say 'go 1.27' — VERSIONS.md pins Go 1.27.3"
 ! grep -q '^toolchain ' go.mod || fail "go.mod has a toolchain line — the pin is GOTOOLCHAIN's job, not go.mod's"
 
 step "no CI workflow, no release workflow, no dependency bot"

@@ -22,13 +22,14 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`aafa39f`**: a waived staticcheck line comes back once
-its export-data error is gone, judged by that error and not by the exit status.
+Built against baseline commit **`c79c209`**: Go 1.27.3 as the floor, a security release.
 
-**What moved here.** The staticcheck line is back in `Makefile` and `verify.sh`, and the
-README's waiver is gone: staticcheck 2026.2.2 reads the export data Go 1.27.2 writes, so
-the error `operations/ci.md` names no longer comes out, and it reports nothing to fix.
-`./verify.sh` under Go 1.27.2: all gates, exit 0.
+**What moved here.** `verify.sh` names the new pin. The dependencies moved under it, as
+`operations/ci.md` asks when `VERSIONS.md` moves: `golang.org/x/crypto` v0.58.0, `x/sync`
+v0.24.0 and `x/time` v0.16.0. `modernc.org/sqlite` stays at the pinned v1.58.0, and
+`modernc.org/libc` goes back to v1.75.6, the exact version that driver's `go.mod` names.
+Under Go 1.27.2, `./verify.sh` stops at its fifth step, `govulncheck`: GO-2026-6809,
+called from `cmd/server`. `./verify.sh` under Go 1.27.3: all gates, exit 0.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
