@@ -11,7 +11,7 @@ import (
 	"net"
 	"net/smtp"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // Sender talks to one relay. Constructing it connects to nothing: boot

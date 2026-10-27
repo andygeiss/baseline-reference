@@ -3,13 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="htmx-config" content='{"includeIndicatorStyles":false,
-    "globalViewTransitions":true,
-    "historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[
-    {"code":"204","swap":false},
-    {"code":"[23]..","swap":true},
-    {"code":"422","swap":true},
-    {"code":"[45]..","swap":false,"error":true}]}'>
+  <meta name="htmx-config" content='{"includeIndicatorCSS":false,"history":"reload"}'>
   <title>{{template "title" .}} · Go Chat</title>
   <link rel="stylesheet" href="/static/css/app.css?v={{version}}">
   <link rel="icon" href="/static/favicon.svg?v={{version}}" type="image/svg+xml">
@@ -17,8 +11,12 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v={{version}}">
   <meta name="theme-color" content="#fbfcfd" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
+  <script src="/static/js/htmx.min.js?v={{version}}" defer></script>
 </head>
-<body hx-boost="true">
+<body hx-boost:inherited="transition:true"
+      hx-status:422:inherited="push:false"
+      hx-status:4xx:inherited="swap:'none transition:false ignoreTitle:true' push:false"
+      hx-status:5xx:inherited="swap:'none transition:false ignoreTitle:true' push:false">
   <header class="site-header">
     <a href="/rooms">Go Chat</a>
     {{with .User.Name}}<span class="site-who">{{.}}</span>{{end}}
@@ -43,6 +41,5 @@
       <p>Server-rendered with Go + htmx — no JavaScript written.</p>
     {{end}}
   </footer>
-  <script src="/static/js/htmx.min.js?v={{version}}"></script>
 </body>
 </html>

@@ -19,8 +19,8 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/auth"
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // dummyHash is built once for the whole package. Each one costs a real
@@ -177,8 +177,15 @@ func (ta *testApp) do(t *testing.T, method, path string, form url.Values, header
 	return res, string(b)
 }
 
-// htmx is the header set an htmx fragment request carries.
-func htmx() http.Header { return http.Header{"HX-Request": {"true"}} }
+// htmx is the header pair an htmx 4 fragment request carries.
+func htmx() http.Header {
+	return http.Header{"HX-Request": {"true"}, "HX-Request-Type": {"partial"}}
+}
+
+// boosted is what a boosted link or form sends: htmx, but a whole page wanted.
+func boosted() http.Header {
+	return http.Header{"HX-Request": {"true"}, "HX-Boosted": {"true"}, "HX-Request-Type": {"full"}}
+}
 
 // upload is one attached file as a browser would send it: the name it was
 // picked under, the type the browser claims, and the bytes. The three are
@@ -272,8 +279,9 @@ func emptyJar(t *testing.T) http.CookieJar {
 }
 
 // vary joins every Vary line on a response. Header.Get would return only the
-// first, and this app sends two: scs adds "Cookie", the render helper adds the
-// htmx pair. Repeated field lines mean the same thing as one comma-joined list.
+// first, and this app sends two: scs adds "Cookie", the render helper adds
+// "HX-Request-Type". Repeated field lines mean the same thing as one
+// comma-joined list.
 func vary(res *http.Response) string {
 	return strings.Join(res.Header.Values("Vary"), ", ")
 }

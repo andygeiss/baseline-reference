@@ -22,14 +22,15 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`c79c209`**: Go 1.27.3 as the floor, a security release.
+Built against baseline commit **`7bd81fa`**: htmx 4.0.0, the breaking change in baseline
+v5.0.0.
 
-**What moved here.** `verify.sh` names the new pin. The dependencies moved under it, as
-`operations/ci.md` asks when `VERSIONS.md` moves: `golang.org/x/crypto` v0.58.0, `x/sync`
-v0.24.0 and `x/time` v0.16.0. `modernc.org/sqlite` stays at the pinned v1.58.0, and
-`modernc.org/libc` goes back to v1.75.6, the exact version that driver's `go.mod` names.
-Under Go 1.27.2, `./verify.sh` stops at its fifth step, `govulncheck`: GO-2026-6809,
-called from `cmd/server`. `./verify.sh` under Go 1.27.3: all gates, exit 0.
+**What moved here.** The module path is `/v5`, and htmx 4.0.0 is vendored with its SHA-256
+in `verify.sh`. The layout loads htmx deferred from `<head>`, boosts through
+`hx-boost:inherited`, and carries the three `hx-status` lines, which `verify.sh` pins.
+Fragments are told apart by `HX-Request-Type: partial`, the poll ends when its answer
+carries no poller, and every file link carries `hx-boost="false"`. `./verify.sh` under
+Go 1.27.3: all 82 gates, exit 0.
 
 ## The task (give this to the builder, human or AI, verbatim)
 

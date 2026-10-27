@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/auth"
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 type loginPage struct {
@@ -215,12 +215,9 @@ func (a *App) renderInvalidRegister(w http.ResponseWriter, r *http.Request, form
 
 // renderInvalid re-renders a whole page at 422 with the submitted values and
 // the errors. These pages have no fragment worth swapping on their own, so the
-// answer is the page either way.
+// answer is the page either way. It sets no HX-Push-Url: the layout's
+// hx-status:422 line already stops a boosted swap from pushing the POST URL,
+// which a refresh would then GET from a route that only answers POST.
 func (a *App) renderInvalid(w http.ResponseWriter, r *http.Request, page string, data any) {
-	if r.Header.Get("HX-Boosted") == "true" {
-		// A boosted swap otherwise pushes the POST URL into history, and a
-		// refresh then GETs a route that only answers POST.
-		w.Header().Set("HX-Push-Url", "false")
-	}
 	a.render(w, r, http.StatusUnprocessableEntity, page, "", data)
 }

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
-	"github.com/andygeiss/baseline-reference/v4/internal/store"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/store"
 )
 
 // fakeMailer is the hand-written fake for the Mailer port, beside the code that

@@ -10,7 +10,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 type Sender struct {

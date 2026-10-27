@@ -16,7 +16,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // The ports: what this app needs from persistence, in its own words. Each one
@@ -247,7 +247,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, page, b
 		return
 	}
 	name := "layout.html" // full page: the layout shell that invokes the page's "main"
-	if block != "" && isHTMX(r) {
+	if block != "" && isFragment(r) {
 		name = block
 	}
 	var buf bytes.Buffer
@@ -255,23 +255,24 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, page, b
 		a.serverError(w, r, err)
 		return
 	}
-	w.Header().Add("Vary", "HX-Request, HX-Boosted")
+	w.Header().Add("Vary", "HX-Request-Type")
 	w.WriteHeader(status)
 	buf.WriteTo(w)
 }
 
-// isHTMX reports whether the request wants a fragment: an htmx request that is
-// not a boosted navigation (boosted requests swap the whole body).
-func isHTMX(r *http.Request) bool {
-	return r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true"
+// isFragment reports whether the request wants a fragment. htmx says partial
+// when it will swap the answer into an element, and full when the answer
+// replaces the body: a boosted link or form. A plain browser says neither.
+func isFragment(r *http.Request) bool {
+	return r.Header.Get("HX-Request-Type") == "partial"
 }
 
 // redirect sends the browser to a page after an action. A fragment request
-// cannot follow a 303 — the XHR would follow it invisibly and swap a whole page
+// cannot follow a 303 — fetch would follow it invisibly and swap a whole page
 // into the fragment's target — so it gets the header htmx navigates on.
 func (a *App) redirect(w http.ResponseWriter, r *http.Request, to string) {
-	if isHTMX(r) {
-		w.Header().Add("Vary", "HX-Request, HX-Boosted") // this response bypasses render
+	if isFragment(r) {
+		w.Header().Add("Vary", "HX-Request-Type") // this response bypasses render
 		w.Header().Set("HX-Redirect", to)
 		w.WriteHeader(http.StatusOK)
 		return

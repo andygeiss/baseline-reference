@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 type Rooms struct {

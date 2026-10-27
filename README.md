@@ -21,9 +21,9 @@ programs; `gochat` is the program.
 ## Stack
 
 Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`, `encoding/json/v2`) · htmx
-2.0.10 (vendored, the only script — SHA-256 checked by verify.sh) · pure CSS (cascade
+4.0.0 (vendored, the only script — SHA-256 checked by verify.sh) · pure CSS (cascade
 layers, mobile-first grid layout, oklch, media-query dark mode, motion-as-feedback with
-view-transition swaps, system font stack, mask icons, a fixed bottom bar, one
+view transitions on boosted navigation, system font stack, mask icons, a fixed bottom bar, one
 `<dialog>`) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool, attachments as
 `BLOB`s) · sessions (`alexedwards/scs/v2` over a hand-written two-pool store) · argon2id
 (`golang.org/x/crypto`) · per-IP rate limiting (`golang.org/x/time`) · mail over stdlib
@@ -54,7 +54,7 @@ Open the app, make an account, make a room, say something. Then make a token on
 the **You** page and talk to the same rooms from a terminal:
 
 ```sh
-go install github.com/andygeiss/baseline-reference/v4/cmd/gochat@latest
+go install github.com/andygeiss/baseline-reference/v5/cmd/gochat@latest
 
 echo "$TOKEN" > ~/.config/gochat/token
 export GOCHAT_ADDR=http://localhost:8080 GOCHAT_TOKEN_FILE=~/.config/gochat/token
@@ -237,7 +237,7 @@ is.
   waiver: no baseline rule asks for 404 here. Revoking a token another tab already
   revoked is a stale page, not a bad request — the answer replaces it with current
   truth and says what happened. The 422 flow is reserved for what it targets, *form
-  validation*. (htmx 2 also doesn't swap 4xx responses by default.)
+  validation*. (The layout's `hx-status` lines swap nothing for any other 4xx, either.)
 - **The invite code is a feature written to exercise a pattern** — said plainly
   because it is true. `patterns/go-config.md` §Secrets had no customer in this app
   until registration grew a gate, so the gate exists partly to give
@@ -343,7 +343,20 @@ protocol working as intended. Kept as a record; none of them is a deviation anym
   swap branch, so the canonical `htmx-config` meta stops polling through its
   `{"code":"[23]..","swap":true}` rule, by luck rather than by design. Narrowing that
   pattern to `2..` — which reads more precise — would leave a poll running forever
-  with nothing in the console to say so.
+  with nothing in the console to say so. Moot from v5.0.0: htmx 4 has no stop code,
+  and a poll ends when its answer carries no poller.
+- **A script in `<body>` runs again on every boosted swap** → baseline v5.0.0. Found
+  by driving this app in Chromium, Firefox, and WebKit during the htmx 4 sync, and true
+  of the 2.0.10 it replaced: htmx runs the scripts in the content it swaps, so the tag
+  before `</body>` started a fresh htmx on every boosted navigation — a new
+  `window.htmx` each time, and every back press asked the server twice. The layout now
+  loads it deferred in `<head>`, which no swap touches.
+- **htmx 4 swaps errors, and `noSwap` still pushes a boosted URL** → baseline v5.0.0.
+  Under 4.0.0's defaults one 500 on a poll replaced the poller, and live updates
+  stopped for good. Listing `"4xx"` and `"5xx"` under `noSwap` kept the swap out but
+  still pushed a boosted error's URL over the page that did not change. Three
+  `hx-status` lines on `<body>` do both jobs, and the 422 line's `push:false` replaced
+  the `HX-Push-Url: false` this app used to set on a boosted 422.
 - **`ParseForm` silently empties a multipart body** → the upload pattern's rule 1.
   On a multipart request it leaves `PostForm` non-nil and empty, so every
   `PostFormValue` after it answers `""` — the field is on the wire and gone in Go,

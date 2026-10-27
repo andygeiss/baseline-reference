@@ -24,14 +24,14 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"golang.org/x/sync/errgroup"
 
-	reference "github.com/andygeiss/baseline-reference/v4"
-	"github.com/andygeiss/baseline-reference/v4/internal/anthropic"
-	"github.com/andygeiss/baseline-reference/v4/internal/app"
-	"github.com/andygeiss/baseline-reference/v4/internal/auth"
-	"github.com/andygeiss/baseline-reference/v4/internal/echo"
-	"github.com/andygeiss/baseline-reference/v4/internal/logmail"
-	"github.com/andygeiss/baseline-reference/v4/internal/smtpmail"
-	"github.com/andygeiss/baseline-reference/v4/internal/store"
+	reference "github.com/andygeiss/baseline-reference/v5"
+	"github.com/andygeiss/baseline-reference/v5/internal/anthropic"
+	"github.com/andygeiss/baseline-reference/v5/internal/app"
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
+	"github.com/andygeiss/baseline-reference/v5/internal/echo"
+	"github.com/andygeiss/baseline-reference/v5/internal/logmail"
+	"github.com/andygeiss/baseline-reference/v5/internal/smtpmail"
+	"github.com/andygeiss/baseline-reference/v5/internal/store"
 )
 
 func main() {

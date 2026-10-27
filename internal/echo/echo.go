@@ -13,7 +13,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // Assistant replies by naming what it was asked, so a reader can see that the

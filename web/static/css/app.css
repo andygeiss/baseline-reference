@@ -245,8 +245,9 @@
 }
 
 @layer components {
-  /* htmx's built-in indicator styles are disabled for CSP
-     (includeIndicatorStyles:false) — these rules replace them. */
+  /* htmx's built-in indicator styles are off (includeIndicatorCSS:false):
+     they sit outside every layer, so they would beat these rules, and their
+     fade ignores reduced motion. These rules replace them. */
   .htmx-indicator { opacity: 0; } /* visibility, not motion — stays outside the wrapper */
 
   .htmx-request .htmx-indicator,

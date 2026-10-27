@@ -11,7 +11,7 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // withAssistant hands the app a scripted assistant instead of the harness
@@ -274,7 +274,7 @@ func TestAssistantDegrades(t *testing.T) {
 
 			res, _ := ta.do(t, http.MethodPost, "/rooms/"+slug+"/messages",
 				url.Values{"body": {"@assistant what is the answer?"}},
-				http.Header{"HX-Request": {"true"}})
+				htmx())
 
 			// The required step stands whatever the model did: the person's
 			// message is posted and they get their page back, not a 500. It

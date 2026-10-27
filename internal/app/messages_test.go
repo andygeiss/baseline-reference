@@ -76,6 +76,45 @@ func TestPostMessage(t *testing.T) {
 	}
 }
 
+// TestBoostedPostGetsTheRedirect is the other side of the discriminator: a
+// boosted form sends HX-Request: true too, but its answer replaces the body,
+// so it takes the plain form's 303. A fragment there would leave a page with
+// no shell, and a direct 200 would push the POST's URL into history.
+func TestBoostedPostGetsTheRedirect(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+
+	res, body := ta.do(t, http.MethodPost, "/rooms/"+slug+"/messages",
+		url.Values{"body": {"hello"}}, boosted())
+
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303:\n%s", res.StatusCode, body)
+	}
+	if got := res.Header.Get("Location"); got != "/rooms/"+slug+"#latest" {
+		t.Errorf("Location = %q, want /rooms/%s#latest", got, slug)
+	}
+}
+
+// TestUnauthenticatedBoostedGetsTheRedirect: only a fragment request needs
+// HX-Redirect. A boosted one replaces the whole body, so the 303 it follows
+// lands the login page whole, under the login URL.
+func TestUnauthenticatedBoostedGetsTheRedirect(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+
+	res, _ := ta.do(t, http.MethodGet, "/rooms", nil, boosted())
+
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login" {
+		t.Errorf("boosted GET /rooms: %d -> %q, want 303 -> /login",
+			res.StatusCode, res.Header.Get("Location"))
+	}
+	if got := res.Header.Get("HX-Redirect"); got != "" {
+		t.Errorf("HX-Redirect = %q, want none", got)
+	}
+}
+
 // TestPostMessageHTMXReturnsAFragment is the dual-mode rule: the same handler
 // answers a whole page to a browser and a fragment to htmx.
 func TestPostMessageHTMXReturnsAFragment(t *testing.T) {
@@ -93,8 +132,8 @@ func TestPostMessageHTMXReturnsAFragment(t *testing.T) {
 	if !strings.Contains(body, `id="chat"`) {
 		t.Errorf("the fragment is not the chat region:\n%s", body)
 	}
-	if got := vary(res); !strings.Contains(got, "HX-Request") {
-		t.Errorf("Vary = %q, want it to name HX-Request", got)
+	if got := vary(res); !strings.Contains(got, "HX-Request-Type") {
+		t.Errorf("Vary = %q, want it to name HX-Request-Type", got)
 	}
 }
 
@@ -260,8 +299,8 @@ func TestMessageRoutesNeedAUser(t *testing.T) {
 	}
 }
 
-// TestUnauthenticatedHTMXGetsARedirectHeader covers the htmx half of
-// requireAuth: an XHR follows a 303 by itself and would swap the whole login
+// TestUnauthenticatedHTMXGetsARedirectHeader covers the fragment half of
+// requireAuth: fetch follows a 303 by itself and would swap the whole login
 // page into whatever fragment the reader was looking at.
 func TestUnauthenticatedHTMXGetsARedirectHeader(t *testing.T) {
 	t.Parallel()
@@ -275,7 +314,7 @@ func TestUnauthenticatedHTMXGetsARedirectHeader(t *testing.T) {
 	if got := res.Header.Get("HX-Redirect"); got != "/login" {
 		t.Errorf("HX-Redirect = %q, want /login", got)
 	}
-	if got := vary(res); !strings.Contains(got, "HX-Request") {
-		t.Errorf("Vary = %q, want it to name HX-Request", got)
+	if got := vary(res); !strings.Contains(got, "HX-Request-Type") {
+		t.Errorf("Vary = %q, want it to name HX-Request-Type", got)
 	}
 }

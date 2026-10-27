@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/auth"
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // middleware is the one canonical chain, outermost → innermost.
@@ -170,13 +170,14 @@ func withUser(r *http.Request, user domain.User) *http.Request {
 
 // toLogin sends a signed-out reader to the login page.
 //
-// An htmx request gets 200 with HX-Redirect rather than a 303: the XHR would
+// A fragment request gets 200 with HX-Redirect rather than a 303: fetch would
 // follow a redirect by itself and swap the whole login page into whatever
-// fragment the reader was looking at. Both answers vary by HX-Request and
+// fragment the reader was looking at. A boosted request takes the 303, because
+// its answer replaces the body anyway. Both answers vary by HX-Request-Type and
 // neither goes through render, so they set the Vary header themselves.
 func (a *App) toLogin(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Vary", "HX-Request, HX-Boosted")
-	if isHTMX(r) {
+	w.Header().Add("Vary", "HX-Request-Type")
+	if isFragment(r) {
 		w.Header().Set("HX-Redirect", "/login")
 		w.WriteHeader(http.StatusOK)
 		return

@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // Assistant answers the conversation so far.

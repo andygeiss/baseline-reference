@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // firstPage is how many messages a room shows at once — the first paint, and
@@ -88,7 +88,7 @@ func (a *App) handleMessageOlder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := a.roomView(r, room, msgs, hasOlder, messageForm{})
-	if !isHTMX(r) {
+	if !isFragment(r) {
 		a.render(w, r, http.StatusOK, "room.html", "", view)
 		return
 	}
@@ -101,7 +101,8 @@ func (a *App) handleMessagePoll(w http.ResponseWriter, r *http.Request) {
 	// The route exists only for htmx. A reader without it is not missing a
 	// feature — the room page already renders every message, and reloading it
 	// is the plain version of polling.
-	if !isHTMX(r) {
+	if !isFragment(r) {
+		w.Header().Add("Vary", "HX-Request-Type") // this answer bypasses render too
 		http.Redirect(w, r, "/rooms/"+r.PathValue("slug"), http.StatusSeeOther)
 		return
 	}
@@ -124,7 +125,7 @@ func (a *App) handleMessagePoll(w http.ResponseWriter, r *http.Request) {
 		// htmx does not swap a 204, so the poller stays put with the cursor it
 		// already has. The quiet case — which is most cases — costs one indexed
 		// read and an empty response.
-		w.Header().Add("Vary", "HX-Request, HX-Boosted") // this response bypasses render
+		w.Header().Add("Vary", "HX-Request-Type") // this response bypasses render
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -194,7 +195,7 @@ func (a *App) handleMessagePost(w http.ResponseWriter, r *http.Request) {
 	// (patterns/go-errors-logging.md). It does not block this response.
 	a.assistantReply(r, room, msg)
 
-	if !isHTMX(r) {
+	if !isFragment(r) {
 		// The anchor sits under the last message, so the browser lands on it.
 		// That is the one bit of scrolling this stack gets for free — moving
 		// the viewport otherwise needs JavaScript.
@@ -314,8 +315,8 @@ func (a *App) renderChat(w http.ResponseWriter, r *http.Request, status int, roo
 		return
 	}
 	view := a.roomView(r, room, msgs, hasOlder, form)
-	if status == http.StatusUnprocessableEntity && !isHTMX(r) {
-		a.renderInvalid(w, r, "room.html", view) // a whole page, with HX-Push-Url handled
+	if status == http.StatusUnprocessableEntity && !isFragment(r) {
+		a.renderInvalid(w, r, "room.html", view) // a whole page
 		return
 	}
 	a.render(w, r, status, "room.html", "chat", view)

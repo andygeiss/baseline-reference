@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/auth"
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
 )
 
 func TestPasswordRoundTrip(t *testing.T) {

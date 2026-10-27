@@ -52,12 +52,17 @@
   {{with .Body}}<p class="message-body">{{.}}</p>{{end}}
   {{with .Attachment}}
     <figure class="attachment">
+      {{/* A file link opts out of the layout's boost (go-file-uploads.md):
+           boosted, htmx would parse the file as HTML and act on any htmx
+           attribute in it. Left to the browser, the picture opens in the
+           tab and the rest download. Never download=, which saves a lapsed
+           session's sign-in page as the file. */}}
       {{if .Inline}}
-        <a href="/rooms/{{$m.RoomSlug}}/files/{{.ID}}">
+        <a href="/rooms/{{$m.RoomSlug}}/files/{{.ID}}" hx-boost="false">
           <img src="/rooms/{{$m.RoomSlug}}/files/{{.ID}}" alt="{{.Name}}" loading="lazy">
         </a>
       {{else}}
-        <a class="attachment-file" href="/rooms/{{$m.RoomSlug}}/files/{{.ID}}">{{.Name}}</a>
+        <a class="attachment-file" href="/rooms/{{$m.RoomSlug}}/files/{{.ID}}" hx-boost="false">{{.Name}}</a>
       {{end}}
       <figcaption>
         <span>{{.Name}}</span>
@@ -95,18 +100,16 @@
 <li id="poll" hidden
     hx-get="/rooms/{{.Room.Slug}}/messages?since={{.Since}}"
     hx-trigger="every 3s"
-    hx-swap="outerHTML transition:false"></li>
+    hx-swap="outerHTML"></li>
 {{end}}
 
 {{define "say"}}
-{{/* hx-encoding is what makes htmx send this as multipart; enctype is what a
-     plain browser reads. Both, because every feature here works with htmx
-     switched off. */}}
+{{/* enctype makes both a plain browser and htmx send this as multipart: htmx
+     reads the form's own enctype, so it needs no hx-encoding of its own. */}}
 <form class="say" method="post" action="/rooms/{{.Room.Slug}}/messages"
       enctype="multipart/form-data"
       hx-post="/rooms/{{.Room.Slug}}/messages"
-      hx-encoding="multipart/form-data"
-      hx-target="#chat" hx-swap="outerHTML transition:false"
+      hx-target="#chat" hx-swap="outerHTML"
       hx-indicator="#sending">
   <label class="visually-hidden" for="body">Your message</label>
   <textarea id="body" name="body" rows="2"

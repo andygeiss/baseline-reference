@@ -10,7 +10,7 @@ set -eu
 cd "${1:-$(dirname "$0")}"
 
 # Pinned in the baseline's VERSIONS.md; update both together.
-HTMX_SHA256="71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de"
+HTMX_SHA256="e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f"
 
 PORT="${PORT:-8091}"
 OPS_PORT="${OPS_PORT:-6061}"
@@ -91,6 +91,39 @@ else
     echo "$HTMX_SHA256  web/static/js/htmx.min.js" | shasum -a 256 -c -
 fi
 
+step "the layout keeps every line htmx 4 needs"
+# stack/html.md. Each line fails silently when it goes: htmx 4 boosts nothing
+# without :inherited, swaps an error page over whatever asked without the
+# hx-status lines (and takes its title), and a script in <body> runs again on
+# every boosted swap.
+L=web/templates/layout.html
+for want in 'hx-boost:inherited="transition:true"' \
+    'hx-status:422:inherited="push:false"' \
+    "hx-status:4xx:inherited=\"swap:'none transition:false ignoreTitle:true' push:false\"" \
+    "hx-status:5xx:inherited=\"swap:'none transition:false ignoreTitle:true' push:false\"" \
+    '"includeIndicatorCSS":false' '"history":"reload"'; do
+    grep -qF "$want" "$L" || fail "layout.html lost $want"
+done
+# Transitions run for boosted navigation alone (patterns/css-motion.md): turned
+# on for every swap, htmx 4 wraps each empty 204 poll in one, and the reader's
+# clicks land on nothing while it runs.
+grep -q '"transitions"' "$L" && fail "view transitions are on for every swap"
+sed -n '/<head>/,/<\/head>/p' "$L" | grep -q '<script src="/static/js/htmx.min.js?v={{version}}" defer></script>' \
+    || fail "htmx is not loaded deferred from <head>"
+sed -n '/<body/,/<\/body>/p' "$L" | grep -q '<script' && fail "a <script> sits in <body>, where every boosted swap runs it again"
+grep -q 'noSwap' "$L" && fail "noSwap is read before hx-status, so a boosted error would push its URL"
+
+step "a link to a file opts out of the boost"
+# patterns/go-file-uploads.md, tier 1. Boosted, htmx parses the file as HTML
+# and acts on any htmx attribute in it, so an uploaded file could post as the
+# reader. Every file link says hx-boost="false"; none says download, which
+# saves a lapsed session's sign-in page as the file.
+BAD="$(grep -n 'href="/rooms/[^"]*/files/' web/templates/*.html \
+    | grep -v -e 'hx-boost="false"' || true)"
+[ -z "$BAD" ] || fail "a file link the boost would swap: $BAD"
+! grep -n -E '<a [^>]*[[:space:]]download([[:space:]>=])' web/templates/*.html \
+    || fail "a link carries download, which saves the sign-in page for a lapsed session"
+
 step "css: type sizes track the reader's font-size setting"
 # clamp()'s middle argument is the fluid one. Built from vw alone it ignores the
 # reader's font-size setting and fails WCAG 1.4.4 — and the rem in the min and max
@@ -134,7 +167,7 @@ step "the adapter depends on the domain and nothing else of ours"
 # the server speaks HTTP. If it ever imports internal/app, the dependency
 # direction has been inverted and the CLI drags the whole web application in.
 DEPS="$(go list -deps ./internal/chatapi | grep baseline-reference | grep -v 'internal/chatapi$' || true)"
-[ "$DEPS" = "github.com/andygeiss/baseline-reference/v4/internal/domain" ] \
+[ "$DEPS" = "github.com/andygeiss/baseline-reference/v5/internal/domain" ] \
     || fail "internal/chatapi depends on more than the domain: $DEPS"
 
 step "the model adapter depends on the domain and nothing else of ours"
@@ -142,7 +175,7 @@ step "the model adapter depends on the domain and nothing else of ours"
 # Anthropic's API. If it ever imports internal/app, the port has been inverted
 # and the vendor's shape has reached the application.
 DEPS="$(go list -deps ./internal/anthropic | grep baseline-reference | grep -v 'internal/anthropic$' || true)"
-[ "$DEPS" = "github.com/andygeiss/baseline-reference/v4/internal/domain" ] \
+[ "$DEPS" = "github.com/andygeiss/baseline-reference/v5/internal/domain" ] \
     || fail "internal/anthropic depends on more than the domain: $DEPS"
 
 step "the prompt lives in the domain, not in an adapter"
@@ -504,7 +537,7 @@ curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" | grep -q "he
 
 step "smoke: htmx post returns the chat region, not a page"
 FRAGMENT="$(curl -fsS -c "$JAR" -b "$JAR" -X POST "localhost:$PORT/rooms/general-chat/messages" \
-    -H 'HX-Request: true' -d "body=hello from htmx")"
+    -H 'HX-Request: true' -H 'HX-Request-Type: partial' -d "body=hello from htmx")"
 echo "$FRAGMENT" | grep -q 'id="chat"' || fail "fragment missing the chat region"
 echo "$FRAGMENT" | grep -q '<html' && fail "fragment is a full page"
 
@@ -514,12 +547,12 @@ step "smoke: the poll answers 204 when there is nothing new"
 LATEST="$(curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
     | sed -n 's|.*messages?since=\([0-9]*\).*|\1|p' | head -1)"
 [ -n "$LATEST" ] || fail "the room page carries no cursor"
-CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -H 'HX-Request: true' \
+CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -H 'HX-Request: true' -H 'HX-Request-Type: partial' \
     "localhost:$PORT/rooms/general-chat/messages?since=$LATEST")"
 [ "$CODE" = "204" ] || fail "a current cursor: got $CODE, want 204"
 
 step "smoke: the poll brings back what is new, and moves the cursor on"
-curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/poll.html" -H 'HX-Request: true' \
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/poll.html" -H 'HX-Request: true' -H 'HX-Request-Type: partial' \
     "localhost:$PORT/rooms/general-chat/messages?since=0"
 grep -q "hello from a form" "$WORKDIR/poll.html" || fail "the poll missed a message"
 grep -q 'id="poll"' "$WORKDIR/poll.html" || fail "the poll answer carries no new poller, so polling would stop"
@@ -532,12 +565,19 @@ CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' \
     "localhost:$PORT/rooms/general-chat/messages?since=0")"
 [ "$CODE" = "303" ] || fail "the poll route without htmx: got $CODE, want 303"
 
+step "smoke: a boosted post takes the plain form's 303"
+# A boosted form sends HX-Request: true as well, but its answer replaces the
+# body, so it gets the redirect, never the chat fragment.
+CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' \
+    -X POST "localhost:$PORT/rooms/general-chat/messages" \
+    -H 'HX-Request: true' -H 'HX-Boosted: true' -H 'HX-Request-Type: full' -d "body=hello boosted")"
+[ "$CODE" = "303" ] || fail "a boosted post: got $CODE, want 303"
+
 step "smoke: an empty message is refused with 422 and a message"
-# 422 is the contract the htmx-config meta tag exists for: htmx 2 does not swap
-# 4xx responses without it, so a silent 200 here would look identical in tests
-# and break the form in the browser.
+# 422 is the one error status the layout lets htmx swap (its hx-status:422
+# line), so this code is what makes the form show its errors in a browser.
 CODE="$(curl -s -c "$JAR" -b "$JAR" -o "$WORKDIR/invalid.html" -w '%{http_code}' \
-    -X POST "localhost:$PORT/rooms/general-chat/messages" -H 'HX-Request: true' -d "body=%20%20")"
+    -X POST "localhost:$PORT/rooms/general-chat/messages" -H 'HX-Request: true' -H 'HX-Request-Type: partial' -d "body=%20%20")"
 [ "$CODE" = "422" ] || fail "an empty message: got $CODE, want 422"
 # A picture on its own is a message, so the words name both ways to send one.
 grep -q "Write something, or attach a file" "$WORKDIR/invalid.html" || fail "422 without a message"
@@ -564,7 +604,7 @@ step "smoke: an upload is stored as what its bytes are, not what it claims"
 # A document that can carry script, named .png and declared image/png. Neither
 # the name nor the declaration is consulted (patterns/go-file-uploads.md).
 printf '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>' > "$WORKDIR/avatar.png"
-curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/lied.html" -H 'HX-Request: true' \
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/lied.html" -H 'HX-Request: true' -H 'HX-Request-Type: partial' \
     -F 'body=totally a picture' \
     -F "file=@$WORKDIR/avatar.png;type=image/png;filename=avatar.png" \
     "localhost:$PORT/rooms/general-chat/messages"
@@ -585,7 +625,7 @@ step "smoke: a picture round-trips byte for byte"
 # store what is left, so the whole file is compared.
 printf '\211PNG\r\n\032\n' > "$WORKDIR/real.png"
 head -c 64 /dev/urandom >> "$WORKDIR/real.png"
-curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/png.html" -H 'HX-Request: true' \
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/png.html" -H 'HX-Request: true' -H 'HX-Request-Type: partial' \
     -F 'body=' -F "file=@$WORKDIR/real.png;type=application/octet-stream;filename=shot.png" \
     "localhost:$PORT/rooms/general-chat/messages"
 PNG_URL="$(sed -n 's|.*<img src="\([^"]*\)".*|\1|p' "$WORKDIR/png.html" | head -1)"
@@ -608,7 +648,7 @@ grep -q 'messages?since=' "$WORKDIR/long.html" || fail "the poller's cursor is g
 grep -q 'older?since=' "$WORKDIR/long.html" && fail "the two cursors have swapped names"
 grep -q '>line 1<' "$WORKDIR/long.html" && fail "the whole room came back at once — nothing is paged"
 BEFORE="$(sed -n 's|.*older?before=\([0-9]*\).*|\1|p' "$WORKDIR/long.html" | head -1)"
-curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/older.html" -H 'HX-Request: true' \
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/older.html" -H 'HX-Request: true' -H 'HX-Request-Type: partial' \
     "localhost:$PORT/rooms/general-chat/older?before=$BEFORE"
 grep -q '<html' "$WORKDIR/older.html" && fail "the older fragment is a whole page"
 grep -q '>line 1<' "$WORKDIR/older.html" || fail "paging back did not reach the older messages"

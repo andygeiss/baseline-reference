@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v4/internal/domain"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // olderCursor finds the cursor on the "Show older" control, or reports that
