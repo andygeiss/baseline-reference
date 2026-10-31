@@ -1,9 +1,12 @@
 package store_test
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 	"github.com/andygeiss/baseline-reference/v5/internal/store"
+	"modernc.org/sqlite"
 )
 
 // newTestDB opens a real database in a temporary directory, with the production
@@ -534,6 +538,93 @@ func TestForeignKeysAreEnforced(t *testing.T) {
 	}, nil)
 	if err == nil {
 		t.Error("a message was stored in a room that does not exist")
+	}
+}
+
+// TestTheDSNIsGuarded proves go-sqlite.md rule 10. Unescaped, a "?" in the
+// path starts a query string: an innocent one swallows busy_timeout, a crafted
+// one carries a _pragma. "#" ends the name and "%" decodes. Escaped, each is
+// only a file name, opened with every pragma, and the switch is on.
+func TestTheDSNIsGuarded(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "TestX#00 50%")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"a?b.db", "c#d.db", "e%20f.db",
+		"g.db?_pragma=foreign_keys(0)",
+		"h.db?_pragma=busy_timeout(0)%3BCREATE%20TABLE%20x(a)",
+	} {
+		db, err := store.Open(t.Context(), filepath.Join(dir, name))
+		if err != nil {
+			t.Errorf("opening %q: %v", name, err)
+			continue
+		}
+		var busy, fk int
+		if err := db.Write.QueryRowContext(t.Context(), "PRAGMA busy_timeout").Scan(&busy); err != nil || busy != 5000 {
+			t.Errorf("%q: busy_timeout %d, %v; want 5000", name, busy, err)
+		}
+		if err := db.Write.QueryRowContext(t.Context(), "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+			t.Errorf("%q: foreign_keys %d, %v; want 1", name, fk, err)
+		}
+		db.Close()
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%q is not the file it opened: %v", name, err)
+		}
+	}
+	if !sqlite.StrictPragmasEnabled() {
+		t.Error("store.Open did not turn on sqlite.StrictPragmas")
+	}
+
+	// A leading "//" names a host to SQLite; cleaned, it is the same file.
+	db, err := store.Open(t.Context(), "/"+filepath.Join(dir, "a?b.db"))
+	if err != nil {
+		t.Errorf(`opening "//"+path: %v`, err)
+	} else {
+		db.Close()
+	}
+	// An empty path is a private database that vanishes; it must fail instead.
+	if db, err := store.Open(t.Context(), ""); err == nil {
+		db.Close()
+		t.Error("opened an empty path; want an error")
+	}
+}
+
+// TestLockWaitEndsAtTheDeadline proves go-sqlite.md rule 7: a write waiting for
+// a lock another connection holds gives up when its context does, not when
+// busy_timeout's five seconds run out.
+func TestLockWaitEndsAtTheDeadline(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "locked.db")
+	db, err := store.Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("opening: %v", err)
+	}
+	defer db.Close()
+
+	// A second pool over the file stands in for another process holding the lock.
+	other, err := sql.Open("sqlite", "file:"+path+"?_txlock=immediate")
+	if err != nil {
+		t.Fatalf("opening the second pool: %v", err)
+	}
+	defer other.Close()
+	holder, err := other.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("taking the lock: %v", err)
+	}
+	defer holder.Rollback()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = db.Write.ExecContext(ctx, "PRAGMA user_version = 99")
+	waited := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("write under a held lock: got %v, want context.DeadlineExceeded", err)
+	}
+	if waited > 2*time.Second {
+		t.Errorf("write waited %v; the deadline was 200ms", waited)
 	}
 }
 

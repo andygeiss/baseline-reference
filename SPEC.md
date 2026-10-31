@@ -22,15 +22,19 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`7bd81fa`**: htmx 4.0.0, the breaking change in baseline
-v5.0.0.
+Built against baseline commit **`bcbb2aa`**: `modernc.org/sqlite` v1.61.0 and rule 10 of
+`patterns/go-sqlite.md`, on branch `fix/sqlite-v1.61.0`, not yet tagged.
 
-**What moved here.** The module path is `/v5`, and htmx 4.0.0 is vendored with its SHA-256
-in `verify.sh`. The layout loads htmx deferred from `<head>`, boosts through
-`hx-boost:inherited`, and carries the three `hx-status` lines, which `verify.sh` pins.
-Fragments are told apart by `HX-Request-Type: partial`, the poll ends when its answer
-carries no poller, and every file link carries `hx-boost="false"`. `./verify.sh` under
-Go 1.27.3: all 82 gates, exit 0.
+**What moved here.** The driver is v1.61.0, with `modernc.org/libc` v1.79.0, the version its
+`go.mod` names. `store.Open` turns on `sqlite.StrictPragmas(true)`, collapses a leading `//`,
+puts `./` before a relative path and escapes `?`, `#` and `%`; the snapshot's relative
+destination gets `./` too. `TestTheDSNIsGuarded` opens six awkward paths, in a directory
+named like a table test's, and fails on every one if the escape is removed;
+`TestLockWaitEndsAtTheDeadline` holds the write lock from a second pool and fails if a
+200 ms deadline waits out `busy_timeout`, as it did under v1.58.0. Run so far only in the
+2 GB claude-sandbox, under Go 1.27.3: `gofmt`, `go vet`, `go mod tidy -diff` and every
+test green without `-race`; the race build, `go fix`, `staticcheck` and `govulncheck`
+of the driver's `lib` package do not fit in its memory. `./verify.sh` is owed.
 
 ## The task (give this to the builder, human or AI, verbatim)
 

@@ -8,9 +8,11 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"runtime"
+	"strings"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
@@ -21,6 +23,10 @@ const pragmas = "?_pragma=busy_timeout(5000)" +
 	"&_pragma=synchronous(NORMAL)" +
 	"&_pragma=foreign_keys(1)"
 
+// uriEscaper keeps a path's "?", "#" and "%" out of the DSN's syntax
+// (go-sqlite.md rule 10).
+var uriEscaper = strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23")
+
 // DB bundles the read pool and the single-connection write pool over one file.
 type DB struct {
 	Read  *sql.DB
@@ -28,6 +34,14 @@ type DB struct {
 }
 
 func Open(ctx context.Context, path string) (*DB, error) {
+	sqlite.StrictPragmas(true) // go-sqlite.md rule 10
+	if strings.HasPrefix(path, "//") {
+		path = "/" + strings.TrimLeft(path, "/") // "//" names a host
+	} else if !filepath.IsAbs(path) {
+		path = "./" + path // "" and ":memory:" are files
+	}
+	path = uriEscaper.Replace(path)
+
 	read, err := sql.Open("sqlite", "file:"+path+pragmas)
 	if err != nil {
 		return nil, fmt.Errorf("opening read pool: %w", err)

@@ -232,6 +232,9 @@ func snapshot(ctx context.Context, logger *slog.Logger, db *store.DB, dbPath str
 		// resolves a relative path against the process's working directory,
 		// not the database's.
 		dst := filepath.Join(filepath.Dir(dbPath), "snapshot-"+time.Now().UTC().Format("2006-01-02")+".db")
+		if !filepath.IsAbs(dst) {
+			dst = "./" + dst // a leading "file:" would make it a URI (go-sqlite.md rule 10)
+		}
 		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 			logger.Error("clearing yesterday's snapshot", "path", dst, "err", err)
 			return
