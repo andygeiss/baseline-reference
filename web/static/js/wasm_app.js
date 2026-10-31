@@ -3,8 +3,8 @@
 // data-module names a module, starts that module, and decides nothing: the
 // module draws, listens and talks. No build step, no npm.
 (async () => {
+  // Only roommap.html loads this, and its canvas always carries data-module.
   const el = document.querySelector("[data-module]");
-  if (!el) return;
   const go = new Go(); // defined by wasm_exec.js, which loads first
   try {
     const { instance } = await WebAssembly.instantiateStreaming(fetch(el.dataset.module), go.importObject);

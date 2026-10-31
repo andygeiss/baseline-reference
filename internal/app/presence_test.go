@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -936,4 +937,55 @@ func TestAnUnansweredRecheckActsOnNothing(t *testing.T) {
 		}
 		grace.Close(ws.CloseNormal, "")
 	})
+}
+
+// Rule 8, and go-background-work.md: a shutdown that lands while a recheck
+// waits on the store is a shutdown, not a store failure. Ada's token store
+// takes the call and never answers; the app stops before the check's own
+// deadline, and her socket closes with 1001, with nothing logged as an error.
+func TestShutdownDuringARecheckClosesWith1001(t *testing.T) {
+	t.Parallel()
+	errs := &lockedLog{}
+	o := newTestOptions(t)
+	o.Logger = slog.New(slog.NewTextHandler(errs, &slog.HandlerOptions{Level: slog.LevelError}))
+	synctest.Test(t, func(t *testing.T) {
+		// Made inside the bubble, so the bubble may cancel it.
+		stopping, stop := context.WithCancel(context.Background())
+		o.Stopping = stopping
+		ta := newTestAppWith(t, o)
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		ada := tokenSocket(t, ta, ta.makeToken(t, "map"), slug)
+
+		ta.tokens.hang()
+		time.Sleep(socketRecheck) // the check is due, and waiting on the store
+		synctest.Wait()
+		stop() // well inside socketRecheckWait
+		if got := closedWithin(t, ada); got != ws.CloseGoingAway {
+			t.Errorf("closed with %d, want 1001", got)
+		}
+		ta.Wait()
+		if got := errs.String(); got != "" {
+			t.Errorf("a shutdown during the recheck logged an error:\n%s", got)
+		}
+	})
+}
+
+// lockedLog is a log's output that the socket's goroutines and the test may
+// touch at once.
+type lockedLog struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }

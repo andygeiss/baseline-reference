@@ -216,6 +216,12 @@ func (a *App) writeSeat(roomID string, s *seat, done <-chan struct{}) uint16 {
 			// from here until a "yes" the reader drops every move.
 			asked := time.Now()
 			ok, err := a.stillSignedIn(s)
+			if errors.Is(err, context.Canceled) && a.stopping.Err() != nil {
+				// Shutdown cut the check short: that is no store failing,
+				// and the socket closes as every socket does at shutdown.
+				s.conn.Close(ws.CloseGoingAway, "server shutting down")
+				return ws.CloseGoingAway
+			}
 			if err != nil {
 				// Fail closed: a socket nobody can vouch for stops acting.
 				a.logger.Error("socket recheck", "user", s.name, "err", err)
@@ -271,7 +277,8 @@ func (a *App) credentialOf(r *http.Request) credential {
 // afresh from the store by its token: a destroyed or expired one loads empty,
 // and sessionHolder then checks the user row and the password stamp exactly as
 // a request would. An error is the store failing to answer, never a "no" — and
-// so is an answer that has not come within socketRecheckWait.
+// so is an answer that has not come within socketRecheckWait. A check the
+// shutdown cancels returns context.Canceled, which writeSeat closes 1001.
 func (a *App) stillSignedIn(s *seat) (bool, error) {
 	ctx, cancel := context.WithTimeout(a.stopping, socketRecheckWait)
 	defer cancel()
