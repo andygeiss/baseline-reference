@@ -26,9 +26,13 @@ func TestTheBrowserPackagesStaySmall(t *testing.T) {
 			ours++
 		}
 	}
-	for _, f := range forbidden {
-		if reached[f] {
-			t.Errorf("the browser module reaches %s — move the code that needs it to the server side", f)
+	// By prefix too: a module with no root package, like golang.org/x/sync,
+	// is only ever reached through a package under it.
+	for p := range reached {
+		for _, f := range forbidden {
+			if p == f || strings.HasPrefix(p, f+"/") {
+				t.Errorf("the browser module reaches %s — move the code that needs it to the server side", p)
+			}
 		}
 	}
 	// The module and its wire format. A third package of ours is a decision,

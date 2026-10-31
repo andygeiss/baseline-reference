@@ -35,9 +35,10 @@ WASM_MAX_BYTES = 60000
 INPUT_FILES = {{with .Module}}{{if .Main}}{{range $$.GoFiles}}{{$$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{range $$.EmbedFiles}}{{$$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{end}}{{end}}
 
 # This module's own packages the module is built from (patterns/wasm-client.md
-# rule 3), for check's js/wasm vet, go fix and staticcheck lines: the host
-# tools never see a js && wasm file. A third-party package would fail them on
-# code this project cannot change, and the standard library is not ours.
+# rule 3), for check's js/wasm vet, go fix and staticcheck lines and fmt's
+# js/wasm go fix: the host tools never see a js && wasm file. A third-party
+# package would fail them on code this project cannot change, and the standard
+# library is not ours.
 # Each line that uses it assigns the list first and stops on a failed or empty
 # one: `go vet $$(…)` over nothing vets . and passes.
 BROWSER = GOOS=js GOARCH=wasm go list -deps -tags "$(WASM_TAGS)" -f '{{with .Module}}{{if .Main}}{{$$.ImportPath}}{{end}}{{end}}' ./cmd/roommap
@@ -81,11 +82,14 @@ clean:
 # recipe before goimports could add it. go fix applies each fixer once and one
 # rewrite exposes the next, so it repeats until its own diff is empty — bounded,
 # so a fixer that cannot converge fails the recipe instead of hanging it.
+# The loop runs check's js/wasm go fix too (stack/makefile.md rule 1), in the
+# same loop: a rewrite to a file both builds share can expose a fixer in the
+# other build, so the loop ends only when both diffs are empty.
 # goimports again last: the import go fix adds to a single-import file is a
 # second declaration, which gofmt keeps and only goimports merges.
 fmt:
 	go run golang.org/x/tools/cmd/goimports@latest -w .
-	n=3; until go fix -diff ./... > /dev/null 2>&1; do [ $$n -gt 0 ] || exit 1; go fix ./... || exit 1; n=$$((n - 1)); done
+	l=$$($(BROWSER)) && test -n "$$l" && n=3 && until go fix -diff ./... > /dev/null 2>&1 && GOOS=js GOARCH=wasm go fix -diff -tags "$(WASM_TAGS)" $$l > /dev/null 2>&1; do [ $$n -gt 0 ] || exit 1; go fix ./... && GOOS=js GOARCH=wasm go fix -tags "$(WASM_TAGS)" $$l || exit 1; n=$$((n - 1)); done
 	go run golang.org/x/tools/cmd/goimports@latest -w .
 
 # Reaches this app from a phone over HTTPS, which install needs
