@@ -1,12 +1,15 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/presence"
@@ -148,25 +151,92 @@ func closedWith(t *testing.T, c *ws.Conn) uint16 {
 }
 
 // Rule 7: past the messages-a-second cap, the server closes with 1008.
+//
+// This drives readSeat alone, not the whole handler. Through the handler every
+// message the cap lets through is also broadcast back to the sender, and the
+// burst (socketPerSecond) is bigger than the queue (socketQueue): whether the
+// writer drains the queue before the cap is reached is the scheduler's call,
+// so the same flood closes with 1013 now and then. The queue's own cap has its
+// own test, TestAFullQueueKicksTheSeat, and the handler's path into readSeat
+// is TestAMessageThatIsNotAPositionClosesTheSocket's.
+//
+// Inside the bubble the clock stands still, so the bucket never refills
+// mid-flood and exactly socketPerSecond messages get through.
 func TestTooManyMessagesCloseTheSocket(t *testing.T) {
 	t.Parallel()
-	ta := newTestApp(t)
-	ta.signUp(t, "Ada", "correct-horse")
-	slug := ta.makeRoom(t, "General")
-	c, err := openSocket(t, ta, ta.client, slug, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := make(chan uint16, 1)
-	go func() { code <- closedWith(t, c) }()
-	for range 2 * socketPerSecond {
-		if c.Write(presence.EncodeUp(1, 1)) != nil {
-			break // closed under us, which is the point
+	synctest.Test(t, func(t *testing.T) {
+		srv, cli := socketPair(t)
+		s := &seat{name: "Ada", conn: srv}
+		moved := 0
+		read := make(chan uint16, 1)
+		go func() { read <- readSeat(s, newSocketLimiter(), func() { moved++ }) }()
+		closed := make(chan uint16, 1)
+		go func() { closed <- closedWith(t, cli) }()
+
+		for range 2 * socketPerSecond {
+			if cli.Write(presence.EncodeUp(1, 1)) != nil {
+				break // closed under us, which is the point
+			}
 		}
+		if got := <-read; got != ws.ClosePolicy {
+			t.Errorf("readSeat returned %d, want 1008", got)
+		}
+		if got := <-closed; got != ws.ClosePolicy {
+			t.Errorf("closed with %d, want 1008", got)
+		}
+		if moved != socketPerSecond {
+			t.Errorf("%d messages moved the seat, want the burst of %d", moved, socketPerSecond)
+		}
+	})
+}
+
+// socketPair is both ends of one socket over a net.Pipe, with no server in
+// between, so a test can drive one side's loop inside a synctest bubble.
+func socketPair(t *testing.T) (server, client *ws.Conn) {
+	t.Helper()
+	sc, cc := net.Pipe()
+	accepted := make(chan *ws.Conn, 1)
+	go func() {
+		br := bufio.NewReader(sc)
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			t.Errorf("reading the handshake: %v", err)
+			sc.Close()
+			accepted <- nil
+			return
+		}
+		c, err := ws.Accept(&hijacker{conn: sc, br: br, header: http.Header{}}, req)
+		if err != nil {
+			t.Errorf("accepting the socket: %v", err)
+			sc.Close()
+		}
+		accepted <- c
+	}()
+	client, err := ws.Dial(cc, "chat.example.com", "/ws", nil)
+	server = <-accepted
+	if err != nil || server == nil {
+		t.Fatalf("opening the socket pair: %v", err)
 	}
-	if got := <-code; got != ws.ClosePolicy {
-		t.Errorf("closed with %d, want 1008", got)
-	}
+	t.Cleanup(func() {
+		client.Close(ws.CloseNormal, "")
+		server.Close(ws.CloseNormal, "")
+	})
+	return server, client
+}
+
+// hijacker is the least ResponseWriter ws.Accept takes: one that hands over
+// its connection.
+type hijacker struct {
+	conn   net.Conn
+	br     *bufio.Reader
+	header http.Header
+}
+
+func (h *hijacker) Header() http.Header         { return h.header }
+func (h *hijacker) Write(p []byte) (int, error) { return h.conn.Write(p) }
+func (h *hijacker) WriteHeader(int)             {}
+func (h *hijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return h.conn, bufio.NewReadWriter(h.br, bufio.NewWriter(h.conn)), nil
 }
 
 // A message that is not one position is not acted on.

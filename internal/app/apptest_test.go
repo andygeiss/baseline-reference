@@ -54,8 +54,16 @@ var testZone = time.FixedZone("TST", 5*60*60)
 // should catch, not something to stub past.
 func newTestApp(t *testing.T, options ...func(*Options)) *testApp {
 	t.Helper()
+	return newTestAppWith(t, newTestOptions(t, options...))
+}
 
-	o := newTestOptions(t, options...)
+// newTestAppWith is newTestApp on options already made — outside a
+// testing/synctest bubble, say, for a test whose server runs inside one: scs
+// starts the session store's cleanup goroutine on a ticker that never stops,
+// and made inside a bubble it would never exit.
+func newTestAppWith(t *testing.T, o Options) *testApp {
+	t.Helper()
+
 	a, err := New(o)
 	if err != nil {
 		t.Fatalf("building the app: %v", err)

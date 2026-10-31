@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -279,20 +281,47 @@ func TestLogoutEndsTheSession(t *testing.T) {
 
 func TestLoginRateLimit(t *testing.T) {
 	t.Parallel()
-	ta := newTestApp(t)
+	// Made outside the bubble (newTestAppWith says why), and with a context
+	// that never cancels: a Done channel first touched inside a bubble belongs
+	// to it, and t.Context()'s is cancelled from outside.
+	o := newTestOptions(t, withStopping(context.Background()))
 
-	// The bucket holds five, then refills one every three seconds.
-	var last int
-	for range 7 {
-		res, _ := ta.do(t, http.MethodPost, "/login", url.Values{
-			"name": {"Ada"}, "password": {"wrong-horse"},
-		}, nil)
-		last = res.StatusCode
-	}
+	// The bucket refills on the clock, so the clock is synctest's: inside the
+	// bubble it stands still while argon2 runs, however slow -race makes it,
+	// and moves only when the test sleeps.
+	synctest.Test(t, func(t *testing.T) {
+		ta := newTestAppWith(t, o)
+		attempt := func() *http.Response {
+			res, _ := ta.do(t, http.MethodPost, "/login", url.Values{
+				"name": {"Ada"}, "password": {"wrong-horse"},
+			}, nil)
+			return res
+		}
 
-	if last != http.StatusTooManyRequests {
-		t.Errorf("status after seven attempts = %d, want 429", last)
-	}
+		// The bucket holds five...
+		for i := range 5 {
+			if res := attempt(); res.StatusCode == http.StatusTooManyRequests {
+				t.Fatalf("attempt %d = 429, want it let through", i+1)
+			}
+		}
+		// ...and refuses the sixth, saying when to come back.
+		res := attempt()
+		if res.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("sixth attempt = %d, want 429", res.StatusCode)
+		}
+		if got := res.Header.Get("Retry-After"); got != "3" {
+			t.Errorf("Retry-After = %q, want 3", got)
+		}
+
+		// Then it refills one every three seconds: one more, and no more.
+		synctest.Sleep(3 * time.Second)
+		if res := attempt(); res.StatusCode == http.StatusTooManyRequests {
+			t.Errorf("attempt after three seconds = 429, want it let through")
+		}
+		if res := attempt(); res.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("second attempt after three seconds = %d, want 429", res.StatusCode)
+		}
+	})
 }
 
 // sessionCookie returns the current session token, or "" when there is none.

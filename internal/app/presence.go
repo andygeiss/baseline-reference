@@ -109,8 +109,7 @@ func (a *App) serveSeat(roomID string, s *seat) uint16 {
 	done := make(chan struct{})
 	go func() { written <- a.writeSeat(s, done) }()
 
-	limit := rate.NewLimiter(socketPerSecond, socketPerSecond)
-	code := readSeat(s, limit, func() { a.presence.broadcast(roomID) })
+	code := readSeat(s, newSocketLimiter(), func() { a.presence.broadcast(roomID) })
 
 	a.presence.leave(roomID, s)
 	a.presence.broadcast(roomID)
@@ -120,6 +119,11 @@ func (a *App) serveSeat(roomID string, s *seat) uint16 {
 	}
 	s.conn.Close(ws.CloseNormal, "")
 	return code
+}
+
+// newSocketLimiter is one socket's messages-a-second cap.
+func newSocketLimiter() *rate.Limiter {
+	return rate.NewLimiter(socketPerSecond, socketPerSecond)
 }
 
 // readSeat moves the seat as its messages say, until the socket ends or breaks
