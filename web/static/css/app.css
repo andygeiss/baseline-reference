@@ -501,6 +501,18 @@
     & tbody th { font-weight: 600; }
   }
 
+  /* The room map (DESIGN.md, Room map). The module draws the inside; this
+     only sizes it. touch-action keeps a finger on it from scrolling. */
+  .room-map {
+    display: block;
+    inline-size: 100%;
+    aspect-ratio: 4 / 3;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    touch-action: none;
+  }
+
   .token-revoke {
     min-block-size: 2.75rem; /* 44px — the floor, inside a dense table row */
     min-inline-size: 2.75rem;

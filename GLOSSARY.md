@@ -27,6 +27,10 @@ one place: the message that carried it. _Avoid: recovery link, magic link._
 **Room** — one conversation. Everything posted lives in exactly one room.
 _Avoid: channel, thread._
 
+**Room map** — the canvas, one per room, showing everyone who has it open and
+where each of them is pointing right now. Nothing on it is stored: a person is
+on the map while their socket is open. _Avoid: cursors, who is online._
+
 **Seq** — the number that identifies a message and fixes its place in the room.
 It only grows, so it is also the cursor a reader polls from.
 _Avoid: message id, offset._

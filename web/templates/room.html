@@ -2,6 +2,9 @@
 
 {{define "main"}}
 <h1>{{.Room.Name}}</h1>
+{{/* Not boosted: the map's two scripts are in its <head>, and a boosted swap
+     brings only the body (patterns/wasm-client.md). */}}
+<p><a href="/rooms/{{.Room.Slug}}/map" hx-boost="false">See who is here</a></p>
 {{template "chat" .}}
 {{end}}
 

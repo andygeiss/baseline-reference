@@ -1,0 +1,21 @@
+{{define "title"}}Who is here · {{.Room.Name}}{{end}}
+
+{{/* The one page that is a program (patterns/wasm-client.md). Both scripts are
+     deferred, so they run in order after the canvas exists: wasm_exec.js
+     defines Go, and wasm_app.js starts whichever module data-module names. */}}
+{{define "head"}}
+  <script src="/static/js/wasm_exec.js?v={{version}}" defer></script>
+  <script src="/static/js/wasm_app.js?v={{version}}" defer></script>
+{{end}}
+
+{{define "main"}}
+<h1>Who is here</h1>
+<p>Everyone with this map open, and where they are pointing. Move your pointer
+  over it and they see yours.</p>
+<canvas class="room-map" data-module="/static/roommap.wasm?v={{version}}"
+        data-room="{{.Room.Slug}}">
+  {{/* Shown only where a canvas cannot be: the room itself needs none of this. */}}
+  The map needs a browser that draws on a canvas.
+</canvas>
+<p><a href="/rooms/{{.Room.Slug}}">Back to {{.Room.Name}}</a></p>
+{{end}}

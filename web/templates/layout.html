@@ -12,6 +12,9 @@
   <meta name="theme-color" content="#fbfcfd" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
   <script src="/static/js/htmx.min.js?v={{version}}" defer></script>
+  {{/* Empty but on the room map, which loads its module here: a script in
+       <body> runs again on every boosted swap. */}}
+  {{block "head" .}}{{end}}
 </head>
 <body hx-boost:inherited="transition:true"
       hx-status:422:inherited="push:false"

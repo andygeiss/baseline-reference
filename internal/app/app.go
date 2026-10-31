@@ -139,6 +139,7 @@ type App struct {
 	dummyHash   string
 	inviteCode  string
 	limiter     *limiter
+	presence    *hub
 
 	// stopping ends detached work; running counts it so Wait can block on it.
 	stopping context.Context
@@ -186,6 +187,7 @@ func New(o Options) (*App, error) {
 		dummyHash:   o.DummyHash,
 		inviteCode:  o.InviteCode,
 		limiter:     newLimiter(),
+		presence:    newHub(),
 		stopping:    o.Stopping,
 	}
 	funcs := template.FuncMap{

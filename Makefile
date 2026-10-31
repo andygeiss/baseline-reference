@@ -5,9 +5,31 @@
 # the build target takes them both (stack/makefile.md rule 5).
 MAIN = ./cmd/server
 
+# The room map's browser module (patterns/wasm-client.md). TINYGO_VERSION is
+# the baseline's VERSIONS.md row, and wasm refuses any other TinyGo, so the
+# .build file it records is true (stack/makefile.md rule 4).
+TINYGO_VERSION = 0.42.0
+
+# The flags the module is built with. wasm records them beside it, because the
+# digest sees only the sources.
+WASM_FLAGS = -no-debug -opt=z -panic=trap
+
+# The module's size gate, in bytes: the measured build plus room for a change.
+# check holds the committed module to it, and wasm the one it just built.
+WASM_MAX_BYTES = 60000
+
+# Every Go file of this module the js/wasm target compiles into the module, one
+# a line, by import path: the digest's inputs. The test in module_test.go runs
+# the same template, and the two have to stay the same one.
+INPUTS = GOOS=js GOARCH=wasm go list -deps -f '{{if not .Standard}}{{range .GoFiles}}{{$$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{end}}' ./cmd/roommap
+
+# Every package of this module the module is built from, for check's js/wasm
+# vet: the host vet never sees a js && wasm file.
+BROWSER = GOOS=js GOARCH=wasm go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./cmd/roommap
+
 # Targets are alphabetical, so the default is named rather than first.
 .DEFAULT_GOAL = check
-.PHONY: build check ci clean fmt lan run test
+.PHONY: build check ci clean fmt lan run test wasm
 
 # Release-shaped local binaries in bin/ (go build creates the directory).
 build:
@@ -24,6 +46,8 @@ check:
 	go mod tidy -diff
 	go test -race -shuffle=on ./...
 	CGO_ENABLED=0 go build -trimpath ./...
+	GOOS=js GOARCH=wasm go vet $$($(BROWSER))
+	s=$$(wc -c < web/static/roommap.wasm | tr -d ' '); test "$$s" -le $(WASM_MAX_BYTES) || (echo "roommap.wasm is $$s bytes, over WASM_MAX_BYTES ($(WASM_MAX_BYTES))" && exit 1)
 
 # The same gates against the commit: a file never added, or a .env, cannot
 # make it green. Run before every push. go version runs first, inside the
@@ -63,3 +87,17 @@ run:
 # The inner loop.
 test:
 	go test -race -shuffle=on ./...
+
+# The browser module, rebuilt and committed: make ci needs no TinyGo, and the
+# server embeds what is in the tree. wasm_exec.js is copied from the TinyGo
+# that built the module, because it must match its compiler. Beside the module
+# go the .build file (compiler and flags) and the .sum of its inputs — every Go
+# file above, go.mod, and the .build — which module_test.go recomputes, so a
+# source change cannot ship with an old module. The size check is last.
+wasm:
+	v=$$(tinygo version | awk '{print $$3}'); test "$$v" = "$(TINYGO_VERSION)" || (echo "tinygo is $$v, and VERSIONS.md pins $(TINYGO_VERSION): install that one" && exit 1)
+	cp "$$(tinygo env TINYGOROOT)/targets/wasm_exec.js" web/static/js/wasm_exec.js
+	tinygo build -target wasm $(WASM_FLAGS) -o web/static/roommap.wasm ./cmd/roommap
+	printf 'tinygo-version %s\ntinygo-flags %s\n' '$(TINYGO_VERSION)' '$(WASM_FLAGS)' > web/static/roommap.wasm.build
+	($(INPUTS) | sed 's|^github.com/andygeiss/baseline-reference/v5/||'; echo go.mod; echo web/static/roommap.wasm.build) | LC_ALL=C sort | xargs shasum -a 256 > web/static/roommap.wasm.sum
+	s=$$(wc -c < web/static/roommap.wasm | tr -d ' '); test "$$s" -le $(WASM_MAX_BYTES) || (echo "roommap.wasm is $$s bytes, over WASM_MAX_BYTES ($(WASM_MAX_BYTES))" && exit 1)

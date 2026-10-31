@@ -21,7 +21,9 @@ programs; `gochat` is the program.
 ## Stack
 
 Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`, `encoding/json/v2`) · htmx
-4.0.0 (vendored, the only script — SHA-256 checked by verify.sh) · pure CSS (cascade
+4.0.0 (vendored, SHA-256 checked by verify.sh — the only script on every page but the
+room map) · one WebAssembly module, the room map, built by TinyGo 0.42.0 and talking
+over a hand-written RFC 6455 socket (`patterns/wasm-client.md`) · pure CSS (cascade
 layers, mobile-first grid layout, oklch, media-query dark mode, motion-as-feedback with
 view transitions on boosted navigation, system font stack, mask icons, a fixed bottom bar, one
 `<dialog>`) · SQLite (`modernc.org/sqlite`, WAL, single-writer pool, attachments as
@@ -47,6 +49,7 @@ make check                     # default target: every gate, against the working
 make ci                        # the same gates against the commit — before a push
 make build                     # both binaries into bin/
 make lan                       # https://<your-mac>.local:8443 for a phone (see below)
+make wasm                      # rebuild the room map's module — needs TinyGo 0.42.0
 ./verify.sh                    # full acceptance gauntlet
 ```
 
@@ -174,6 +177,33 @@ whose rows are positional literals, so a route that names no access class does n
 compile, and `guard` panics at boot on a class it does not know rather than falling back
 to public. `TestPrivateRoutesTurnAwayAnAnonymousRequest` walks that table instead of a
 hand-kept list of paths.
+
+## The room map
+
+One page is a program: **See who is here**, on every room, opens a canvas that shows
+everyone with the map open and where each of them is pointing. htmx cannot redraw a
+canvas twenty times a second, so this is the one place the no-JavaScript rule bends,
+exactly as far as `patterns/wasm-client.md` allows: `wasm_exec.js` copied from TinyGo,
+one loader `wasm_app.js`, and `'wasm-unsafe-eval'` in the CSP. It is the smallest
+feature that exercises every rule of that pattern, and it fits a chat: a room is
+where people are, and this shows who is.
+
+- **The module** is `cmd/roommap`, built from it and `internal/presence` (the wire
+  format) and nothing else of ours — `deps_test.go` holds that. It is committed as
+  `web/static/roommap.wasm`, embedded, and served; `make ci` needs no TinyGo.
+  `module_test.go` recomputes `roommap.wasm.sum`, so a source change without
+  `make wasm` goes red.
+- **The socket** is `GET /ws?room=<slug>`. It refuses another Origin, or none, with
+  403, before anything else; a request with no session gets 401; a room no form
+  made gets 404. An up message is four bytes — a position — and never a name: who is
+  pointing is whoever the cookie says. Caps: 1 KiB a message, 30 a second, 8 queued
+  toward a slow reader, then the socket closes (1009, 1008, 1013). Shutdown closes
+  every socket with 1001 and `a.Wait` joins its goroutines.
+- **WebSocket by hand, not a dependency.** `internal/ws` is the server half of RFC
+  6455, binary frames only, adapted from game-lab's. The pattern names this road first.
+- **Installing TinyGo.** The version is the baseline's `VERSIONS.md` row; `make wasm`
+  refuses any other. On macOS: the release tarball from
+  github.com/tinygo-org/tinygo/releases, with `TINYGOROOT` pointing at it.
 
 ## Decisions the baseline makes a project name
 

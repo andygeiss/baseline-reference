@@ -61,6 +61,9 @@ of the driver's `lib` package do not fit in its memory. `./verify.sh` is owed.
 >    otherwise. It runs with no API key and no model by default, so the whole
 >    loop can be exercised on an empty environment; a deployment that wants a
 >    real model selects it and supplies the credential as a file.
+> 9. Every room has a map: a canvas showing everyone who has it open and where
+>    each of them is pointing, moving as they move. It is the one page that is a
+>    program, built per `patterns/wasm-client.md`; the room works without it.
 
 ## Acceptance criteria
 
@@ -70,7 +73,8 @@ of the driver's `lib` package do not fit in its memory. `./verify.sh` is owed.
    and the secret staying out of the logs, session cookie flags, token renewal on
    sign-in, rate limiting, plain-form and htmx flows, the poll's 204 and 200 answers,
    escaping, the 422 validation answer, machine tokens end to end, CSRF rejection, the
-   backup snapshot, state across a restart, graceful shutdown, and the `gochat` client
+   backup snapshot, state across a restart, graceful shutdown, the room map's module,
+   scripts and socket — Origin, cookie, and the 1001 on shutdown — and the `gochat` client
    talking to all of it).
 2. The baseline's `checklists/web-application.md` and `checklists/cli-tool.md`
    both walk clean, with deviations waived in the README.

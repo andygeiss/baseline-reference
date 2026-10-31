@@ -190,6 +190,12 @@ Every component composes the roles above, and every interactive state
   token), hash (a room), user (You), send (post a message), and trash
   (revoke). Each either decorates a labeled control or sits in one carrying
   its own accessible name.
+- **Room map** — the one canvas, on the one page that is a program. A
+  `surface` fill inside a `border` boundary, full width, `4 / 3`. The module
+  draws it, and reads `surface`, `border`, `accent` and `text` from the page's
+  own properties when it starts, so the canvas follows the scheme the rest of
+  the page does: a dot in `accent` for each person, their name in `text`.
+  `touch-action: none` keeps a finger on it from scrolling the page.
 
 ## Do's and Don'ts
 

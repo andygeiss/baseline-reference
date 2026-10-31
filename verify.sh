@@ -11,6 +11,9 @@ cd "${1:-$(dirname "$0")}"
 
 # Pinned in the baseline's VERSIONS.md; update both together.
 HTMX_SHA256="e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f"
+# The TinyGo that builds the room map's module. Pinned in the baseline's
+# VERSIONS.md; update both together, and rebuild the module with make wasm.
+TINYGO_VERSION="0.42.0"
 
 PORT="${PORT:-8091}"
 OPS_PORT="${OPS_PORT:-6061}"
@@ -32,6 +35,11 @@ step "gofmt"
 
 step "go vet"
 go vet ./...
+
+step "go vet, js/wasm: the browser packages"
+# patterns/wasm-client.md rule 3: the host vet never sees a js && wasm file, so
+# the module's own packages are vetted under the target they build for.
+GOOS=js GOARCH=wasm go vet $(GOOS=js GOARCH=wasm go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./cmd/roommap)
 
 step "go fix -diff"
 # stack/go.md: a rewrite to current idiom that is still pending is a red gate;
@@ -90,6 +98,23 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
     echo "$HTMX_SHA256  web/static/js/htmx.min.js" | shasum -a 256 -c -
 fi
+
+step "the WebAssembly client: pinned, sized, and two scripts"
+# patterns/wasm-client.md. The module is committed (rule 2), so nothing here
+# needs TinyGo: the Makefile's pin is VERSIONS.md's, the .build file records
+# that pin, and the committed module is under the size the Makefile names.
+grep -qx "TINYGO_VERSION = $TINYGO_VERSION" Makefile || fail "the Makefile's TINYGO_VERSION is not VERSIONS.md's $TINYGO_VERSION"
+grep -qx "tinygo-version $TINYGO_VERSION" web/static/roommap.wasm.build \
+    || fail "roommap.wasm was not built with TinyGo $TINYGO_VERSION — run make wasm"
+MAX="$(sed -n 's/^WASM_MAX_BYTES = //p' Makefile)"
+SIZE="$(wc -c < web/static/roommap.wasm | tr -d ' ')"
+[ -n "$MAX" ] && [ "$SIZE" -le "$MAX" ] || fail "roommap.wasm is $SIZE bytes, over WASM_MAX_BYTES ($MAX)"
+# Under web/static/js: htmx, the unedited wasm_exec.js, one loader, nothing else.
+[ "$(ls web/static/js | tr '\n' ' ')" = "htmx.min.js wasm_app.js wasm_exec.js " ] \
+    || fail "web/static/js holds more than htmx and the module's two scripts: $(ls web/static/js | tr '\n' ' ')"
+grep -q 'dataset.module' web/static/js/wasm_app.js || fail "the loader does not read data-module"
+# The anti-pattern: 'unsafe-eval' would make the module load and allow eval too.
+grep -q "'unsafe-eval'\|'unsafe-inline'" internal/app/middleware.go && fail "the CSP carries a banned keyword"
 
 step "the layout keeps every line htmx 4 needs"
 # stack/html.md. Each line fails silently when it goes: htmx 4 boosts nothing
@@ -414,7 +439,9 @@ curl -fsS -D "$WORKDIR/headers" "localhost:$PORT/login" | grep -q "Sign in" || f
 # img-src must keep data:, or the browser blocks every mask icon in app.css.
 # base-uri and form-action have no default-src fallback, so dropping either is
 # silent: the page keeps working and the protection is simply gone.
-grep -qi "content-security-policy: default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" \
+# script-src adds 'wasm-unsafe-eval' for the room map's module and nothing else
+# (patterns/security-headers.md).
+grep -qi "content-security-policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" \
     "$WORKDIR/headers" || fail "CSP header"
 grep -qi "strict-transport-security" "$WORKDIR/headers" || fail "HSTS header"
 grep -qi "x-content-type-options: nosniff" "$WORKDIR/headers" || fail "nosniff header"
@@ -534,6 +561,39 @@ CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' \
 [ "$CODE" = "303" ] || fail "plain post: got $CODE, want 303"
 curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" | grep -q "hello from a form" \
     || fail "the posted message is not in the room"
+
+step "smoke: the room map is a page that is a program"
+# patterns/wasm-client.md. The room links to it unboosted, its two scripts are
+# deferred in <head>, and the canvas names the module.
+curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
+    | grep -q 'href="/rooms/general-chat/map" hx-boost="false"' || fail "the room does not link to its map, unboosted"
+curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/map.html" "localhost:$PORT/rooms/general-chat/map"
+sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -q '<script src="/static/js/wasm_exec.js?v=[^"]*" defer></script>' \
+    || fail "wasm_exec.js is not loaded deferred from the map's <head>"
+sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -q '<script src="/static/js/wasm_app.js?v=[^"]*" defer></script>' \
+    || fail "wasm_app.js is not loaded deferred from the map's <head>"
+MODULE="$(sed -n 's|.*data-module="\([^"]*\)".*|\1|p' "$WORKDIR/map.html" | head -1)"
+[ -n "$MODULE" ] || fail "the map page names no module"
+# instantiateStreaming refuses any other type.
+curl -fsS -D "$WORKDIR/wasm.head" -o "$WORKDIR/served.wasm" "localhost:$PORT$MODULE"
+grep -qi '^content-type: *application/wasm' "$WORKDIR/wasm.head" || fail "the module is not served as application/wasm"
+cmp -s "$WORKDIR/served.wasm" web/static/roommap.wasm || fail "the served module is not the committed one"
+
+step "smoke: the socket checks Origin itself, and acts only for a cookie"
+# patterns/wasm-client.md rules 5 and 6. The CSRF middleware lets every GET by,
+# so these refusals are the handshake's own.
+socket() { # $1 cookie jar or "", $2 room, then extra curl arguments
+    J="$1"; R="$2"; shift 2
+    curl -s -o /dev/null -w '%{http_code}' --max-time 2 ${J:+-b "$J"} \
+        -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+        -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$@" "localhost:$PORT/ws?room=$R" || true
+}
+SELF="Origin: http://localhost:$PORT"
+[ "$(socket "$JAR" general-chat -H 'Origin: https://evil.example')" = "403" ] || fail "/ws let another site's page open the socket"
+[ "$(socket "$JAR" general-chat)" = "403" ] || fail "/ws opened with no Origin at all"
+[ "$(socket "" general-chat -H "$SELF")" = "401" ] || fail "/ws opened with no cookie"
+[ "$(socket "$JAR" no-such-room -H "$SELF")" = "404" ] || fail "/ws opened for a room no form made"
+[ "$(socket "$JAR" general-chat -H "$SELF")" = "101" ] || fail "/ws refused the page's own origin with a cookie"
 
 step "smoke: htmx post returns the chat region, not a page"
 FRAGMENT="$(curl -fsS -c "$JAR" -b "$JAR" -X POST "localhost:$PORT/rooms/general-chat/messages" \
@@ -914,10 +974,25 @@ curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
     | grep -q "written just before the restart" \
     || fail "the conversation was lost after the restart"
 
-step "smoke: graceful shutdown"
+step "smoke: graceful shutdown closes an open socket with 1001"
+# patterns/wasm-client.md rule 8: srv.Shutdown does not track a hijacked
+# connection, so the app closes each socket itself and waits for it.
+curl -s -o /dev/null --max-time 30 -b "$JAR" -H "Origin: http://localhost:$PORT" \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+    -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "localhost:$PORT/ws?room=general-chat" &
+HOLD_PID=$!
+OPENED=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(grep -c 'socket opened' "$WORKDIR/server.log")" -gt "$(grep -c 'socket closed' "$WORKDIR/server.log")" ] && OPENED=yes && break
+    sleep 0.2
+done
+[ -n "$OPENED" ] || fail "the socket held for the shutdown never opened"
 kill -TERM "$SERVER_PID"
 wait "$SERVER_PID" || fail "server exited non-zero on SIGTERM"
 SERVER_PID=""
+kill "$HOLD_PID" 2>/dev/null || true
 grep -q "shutting down" "$WORKDIR/server.log" || fail "no graceful shutdown log line"
+tail -n 20 "$WORKDIR/server.log" | grep 'socket closed' | grep -q 'code=1001' \
+    || fail "the open socket was not closed with 1001 on shutdown"
 
 printf '\nAll gates passed.\n'

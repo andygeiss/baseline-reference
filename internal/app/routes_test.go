@@ -13,7 +13,7 @@ func TestEveryRouteNamesAnAccessClass(t *testing.T) {
 	t.Parallel()
 	for _, rt := range newTestApp(t).routes() {
 		switch rt.access {
-		case public, pageAuth, apiAuth:
+		case public, pageAuth, apiAuth, socketAuth:
 		default:
 			t.Errorf("route %q names no access class", rt.pattern)
 		}
@@ -79,9 +79,9 @@ func TestPrivateRoutesTurnAwayAnAnonymousRequest(t *testing.T) {
 
 			// A browser is sent to the sign-in page; a program is told 401,
 			// because 200 of HTML reads as success to anything checking only
-			// the status.
+			// the status. A socket has neither a page nor JSON to read.
 			want := http.StatusSeeOther
-			if rt.access == apiAuth {
+			if rt.access == apiAuth || rt.access == socketAuth {
 				want = http.StatusUnauthorized
 			}
 			if res.StatusCode != want {

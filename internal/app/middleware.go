@@ -195,6 +195,11 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
+// Unwrap lets http.ResponseController reach the connection underneath. Without
+// it the room map's socket cannot Hijack through this wrapper: the controller
+// finds no Hijacker here and answers ErrNotSupported.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 func (a *App) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -229,10 +234,15 @@ func (a *App) recoverPanic(next http.Handler) http.Handler {
 // the browser refuses every mask. Such an image runs no script and reaches no
 // third party, so allowing it gives an attacker nothing new.
 //
+// script-src adds 'wasm-unsafe-eval' and nothing else: without it no browser
+// compiles the room map's module, and it allows no JavaScript eval, which
+// the banned unsafe-eval keyword would (patterns/security-headers.md).
+//
 // base-uri and form-action have no default-src fallback, so they are written
 // out: the first stops an injected <base> from re-pointing every root-relative
 // URL on the page, the second stops an injected form from posting off-origin.
 const csp = "default-src 'self'; " +
+	"script-src 'self' 'wasm-unsafe-eval'; " +
 	"img-src 'self' data:; " +
 	"frame-ancestors 'none'; " +
 	"base-uri 'none'; " +

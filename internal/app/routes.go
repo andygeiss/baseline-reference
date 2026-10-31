@@ -13,10 +13,11 @@ import (
 type access int
 
 const (
-	_        access = iota
-	public          // no credential needed
-	pageAuth        // a session or a token; a browser without one gets the sign-in page
-	apiAuth         // a session or a token; a program without one gets 401 and JSON
+	_          access = iota
+	public            // no credential needed
+	pageAuth          // a session or a token; a browser without one gets the sign-in page
+	apiAuth           // a session or a token; a program without one gets 401 and JSON
+	socketAuth        // a session or a token; a socket without one gets a bare 401
 )
 
 // route is one row of the table below. The access class sits between the
@@ -33,7 +34,9 @@ type route struct {
 // route that is not in it does not exist.
 //
 // Every mutation is a POST: a plain form can only GET or POST, and every action
-// here must work with htmx switched off.
+// here must work with htmx switched off. GET /ws is the one exception, because a
+// browser opens a WebSocket with a GET; it only moves a pointer for the person
+// the cookie names, and creates nothing.
 func (a *App) routes() []route {
 	return []route{
 		// Public: the two ways in, and the way out.
@@ -63,6 +66,12 @@ func (a *App) routes() []route {
 		{"GET /rooms/{slug}/messages", pageAuth, a.handleMessagePoll},
 		{"POST /rooms/{slug}/messages", pageAuth, a.handleMessagePost},
 		{"GET /rooms/{slug}/older", pageAuth, a.handleMessageOlder},
+		// The room's map: a page that is a program, and the socket it talks
+		// to (patterns/wasm-client.md). The socket is the one GET that
+		// mutates; it checks Origin itself, because the CSRF middleware
+		// waves every GET through.
+		{"GET /rooms/{slug}/map", pageAuth, a.handleRoomMap},
+		{"GET /ws", socketAuth, a.handleSocket},
 		// Attachments are served by a handler, never by a file server: a file
 		// server names no reader and types a file by its extension, which is
 		// whatever the sender called it (patterns/go-file-uploads.md).
@@ -124,8 +133,10 @@ func (a *App) guard(c access, h http.HandlerFunc) http.Handler {
 		return a.requireAuth(h)
 	case apiAuth:
 		return a.requireAPIAuth(h)
+	case socketAuth:
+		return a.requireSocketAuth(h)
 	default:
-		panic(fmt.Sprintf("route access class %d is not one of public, pageAuth, apiAuth", c))
+		panic(fmt.Sprintf("route access class %d is not one of public, pageAuth, apiAuth, socketAuth", c))
 	}
 }
 
