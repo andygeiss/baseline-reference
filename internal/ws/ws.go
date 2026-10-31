@@ -10,7 +10,8 @@
 //
 // A Conn speaks binary messages only. A text frame closes the connection with
 // 1003, a broken frame with 1002, and one that claims more bytes than
-// [Conn.MaxMessage] allows with 1009 — before anything is allocated for it.
+// [Conn.MaxMessage] allows with 1009 — before anything is allocated for it —
+// and one [Conn.AllowFrame] refuses with 1008.
 // Read from one goroutine; Write, Ping and Close may be called from any.
 package ws
 
@@ -104,6 +105,13 @@ type Conn struct {
 	// claiming more closes the connection with 1009 before the bytes are read
 	// or space is made for them. 0 means [DefaultMaxMessage].
 	MaxMessage int
+	// AllowFrame, when set, is asked once for every frame read — a ping, a
+	// pong, a close and an empty continuation as much as a frame that
+	// carries a message — and a false closes the connection with 1008
+	// before the frame's payload is read. It is how a server caps frames a
+	// second: a cap on messages never sees a peer that sends only pings, or
+	// one message in a thousand empty fragments, and each costs a read.
+	AllowFrame func() bool
 	// ReadTimeout is how long Read waits for the next frame before giving
 	// up, or 0 to wait for ever. A server sets it to twice its ping interval,
 	// so a peer that has stopped answering is found rather than kept. Every
@@ -315,6 +323,9 @@ func (c *Conn) readFrame() (fin bool, op byte, payload []byte, err error) {
 	hdr := c.hdr[:2]
 	if _, err := io.ReadFull(c.br, hdr); err != nil {
 		return false, 0, nil, c.lost(err)
+	}
+	if c.AllowFrame != nil && !c.AllowFrame() {
+		return false, 0, nil, c.fail(ClosePolicy, "too many frames")
 	}
 	fin = hdr[0]&0x80 != 0
 	op = hdr[0] & 0x0F

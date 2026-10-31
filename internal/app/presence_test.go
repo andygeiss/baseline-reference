@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -162,21 +163,25 @@ func closedWith(t *testing.T, c *ws.Conn) uint16 {
 	}
 }
 
-// Rule 7: past the messages-a-second cap, the server closes with 1008.
+// Rule 7: past the frames-a-second cap, the server closes with 1008.
 //
-// This drives readSeat alone, to count exactly what moved the seat; the same
-// flood through the whole handler is TestAFloodClosesWith1008.
+// This drives readSeat alone, under the cap the handler sets, to count exactly
+// what moved the seat; the same flood through the whole handler is
+// TestAFloodClosesWith1008, and the cap counting pings and empty fragments is
+// ws's TestTheFrameCapCountsEveryFrame.
 //
 // Inside the bubble the clock stands still, so the bucket never refills
-// mid-flood and exactly socketPerSecond messages get through.
+// mid-flood and exactly socketPerSecond one-frame messages get through.
 func TestTooManyMessagesCloseTheSocket(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		srv, cli := socketPair(t)
+		srv.AllowFrame = newSocketLimiter().Allow
 		s := &seat{name: "Ada", conn: srv}
+		s.vouch(time.Now().Add(time.Hour))
 		moved := 0
 		read := make(chan uint16, 1)
-		go func() { read <- readSeat(s, newSocketLimiter(), func() { moved++ }) }()
+		go func() { read <- readSeat(s, func() { moved++ }) }()
 		closed := make(chan uint16, 1)
 		go func() { closed <- closedWith(t, cli) }()
 
@@ -246,7 +251,7 @@ func (h *hijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return h.conn, bufio.NewReadWriter(h.br, bufio.NewWriter(h.conn)), nil
 }
 
-// A message that is not one position is not acted on.
+// A message that is not one position is not acted on: it is malformed, 1002.
 func TestAMessageThatIsNotAPositionClosesTheSocket(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -259,8 +264,8 @@ func TestAMessageThatIsNotAPositionClosesTheSocket(t *testing.T) {
 	if err := c.Write([]byte("Grace")); err != nil {
 		t.Fatal(err)
 	}
-	if got := closedWith(t, c); got != ws.ClosePolicy {
-		t.Errorf("closed with %d, want 1008", got)
+	if got := closedWith(t, c); got != ws.CloseProtocolError {
+		t.Errorf("closed with %d, want 1002", got)
 	}
 }
 
@@ -402,11 +407,13 @@ func links(html string) []string {
 	return tags
 }
 
-// The two scripts live in the map page's <head>, and htmx swaps only the body
-// — on a boosted link, and on Back or Forward to a boosted page. So the link
-// in and every link out carry hx-boost="false": arriving and leaving are full
-// loads. Every other page keeps its boost.
-func TestTheMapIsEnteredAndLeftByFullLoads(t *testing.T) {
+// The two scripts live in the map page's <head>, and a boosted link swaps only
+// the body, so the link in carries hx-boost="false": arriving is a full load.
+// Leaving needs no opt-out — the module stops itself once its canvas is gone,
+// and Back or Forward is a full load under the layout's "history":"reload" —
+// so every link out, like every link on every other page, keeps its boost.
+// And htmx stays last in <head> (stack/htmx.md), after the page's scripts.
+func TestTheMapIsEnteredByAFullLoad(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.signUp(t, "Ada", "correct-horse")
@@ -427,14 +434,22 @@ func TestTheMapIsEnteredAndLeftByFullLoads(t *testing.T) {
 	}
 
 	_, page := ta.do(t, http.MethodGet, "/rooms/"+slug+"/map", nil, nil)
-	_, body, _ := strings.Cut(page, "</head>")
+	head, body, _ := strings.Cut(page, "</head>")
+	if !strings.Contains(head, `"history":"reload"`) {
+		t.Error(`the layout's htmx-config lost "history":"reload", so Back to a boosted page would swap only its body`)
+	}
+	last := strings.TrimSpace(head)
+	last = last[strings.LastIndex(last, "\n")+1:]
+	if !strings.Contains(last, "/static/js/htmx.min.js") {
+		t.Errorf("htmx is not last in <head>; the last line is %s", last)
+	}
 	out := links(body)
 	if len(out) < 4 { // the header, the two nav entries, back to the room
 		t.Fatalf("the map page has %d links, want the header's, the nav's and the way back", len(out))
 	}
 	for _, a := range out {
-		if !strings.Contains(a, `hx-boost="false"`) {
-			t.Errorf("a link out of the map is boosted: %s", a)
+		if strings.Contains(a, "hx-boost") {
+			t.Errorf("a link out of the map opts out of the boost: %s", a)
 		}
 	}
 
@@ -746,5 +761,96 @@ func TestAStoreErrorClosesTheSocketWith1011(t *testing.T) {
 		if got := closedWithin(t, c); got != ws.CloseInternalError {
 			t.Errorf("closed with %d, want 1011", got)
 		}
+	})
+}
+
+// Rule 6, tier 1: while a recheck has fallen due and not been answered, the
+// socket acts on nothing, and an answer that misses its deadline is a 1011.
+// Ada's socket runs on a token whose store takes the call and never answers;
+// Grace watches on a session, whose store does. A move Ada sends before the
+// check reaches Grace; one sent while it hangs never does; and the check gives
+// up inside the interval, closing Ada's socket.
+func TestAnUnansweredRecheckActsOnNothing(t *testing.T) {
+	t.Parallel()
+	socketBubble(t, func(t *testing.T, ta *testApp) {
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		ada := tokenSocket(t, ta, ta.makeToken(t, "map"), slug)
+		grace := quietSocket(t, ta, secondPerson(t, ta, "Grace"), slug)
+
+		adaClosed := make(chan uint16, 1)
+		go func() {
+			for {
+				_, err := ada.Read()
+				if err == nil {
+					continue
+				}
+				ce, _ := errors.AsType[*ws.CloseError](err)
+				if ce == nil {
+					adaClosed <- 0 // closed by this test, below
+					return
+				}
+				adaClosed <- ce.Code
+				return
+			}
+		}()
+		var mu sync.Mutex
+		var seen []presence.Seat // every place Grace saw Ada
+		go func() {
+			for {
+				msg, err := grace.Read()
+				if err != nil {
+					return
+				}
+				seats, _ := presence.DecodeDown(msg)
+				mu.Lock()
+				for _, s := range seats {
+					if s.Name == "Ada" {
+						seen = append(seen, s)
+					}
+				}
+				mu.Unlock()
+			}
+		}()
+		sawAt := func(x, y uint16) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, s := range seen {
+				if s.X == x && s.Y == y {
+					return true
+				}
+			}
+			return false
+		}
+
+		if err := ada.Write(presence.EncodeUp(1, 2)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+		if !sawAt(1, 2) {
+			t.Fatal("a move before any check did not reach Grace")
+		}
+
+		ta.tokens.hang()
+		time.Sleep(socketRecheck) // Ada's check is due, and waiting on the store
+		if err := ada.Write(presence.EncodeUp(9, 9)); err != nil {
+			t.Fatal(err)
+		}
+
+		select {
+		case got := <-adaClosed:
+			if got != ws.CloseInternalError {
+				t.Errorf("closed with %d, want 1011", got)
+			}
+		case <-time.After(socketRecheck):
+			t.Errorf("still open %v after the check fell due: the deadline is not inside the interval", socketRecheck)
+			ada.Close(ws.CloseNormal, "")
+			<-adaClosed
+		}
+		time.Sleep(time.Millisecond)
+		if sawAt(9, 9) {
+			t.Error("a move sent while the check was unanswered reached Grace")
+		}
+		grace.Close(ws.CloseNormal, "")
 	})
 }

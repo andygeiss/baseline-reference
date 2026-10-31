@@ -343,6 +343,9 @@ type fakeTokens struct {
 	// down, once set, is what every lookup returns: the store failing to
 	// answer, which is not the same as answering "no such token".
 	down error
+	// hung, once set, makes every lookup wait for its context to end: a
+	// store that takes the call and never answers.
+	hung bool
 }
 
 // goDown makes every later lookup fail with err.
@@ -350,6 +353,13 @@ func (f *fakeTokens) goDown(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.down = err
+}
+
+// hang makes every later lookup block until its caller gives up.
+func (f *fakeTokens) hang() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hung = true
 }
 
 func newFakeTokens(users *fakeUsers) *fakeTokens { return &fakeTokens{users: users} }
@@ -367,6 +377,11 @@ func (f *fakeTokens) UserByHash(ctx context.Context, hash string) (domain.User, 
 	if f.down != nil {
 		defer f.mu.Unlock()
 		return domain.User{}, f.down
+	}
+	if f.hung {
+		f.mu.Unlock()
+		<-ctx.Done()
+		return domain.User{}, ctx.Err()
 	}
 	var userID string
 	for i, t := range f.tokens {

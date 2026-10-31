@@ -200,22 +200,24 @@ where people are, and this shows who is.
   source change without `make wasm` goes red, a file tagged `tinygo` included.
   `check` vets, `go fix -diff`s and staticchecks the same package list for
   `js/wasm` under the same tags, and stops on a list that fails or comes back empty.
-- **Into and out of the map are full loads.** The link in and every link on the
-  map page — the header, the bottom nav, the way back — carry `hx-boost="false"`:
-  htmx swaps only the body, on a boosted link and on Back to a boosted page, and the
-  two scripts are in `<head>`. The layout's links take that from a `leave` template
-  that only `roommap.html` fills.
+- **Into the map is a full load.** The link in carries `hx-boost="false"`: htmx
+  swaps only the body, and the two scripts are in `<head>`. Links out stay boosted —
+  the module stops itself once its canvas leaves the page — and Back or Forward is a
+  full load anyway, since the layout's `htmx-config` sets `"history":"reload"`.
 - **The socket** is `GET /ws?room=<slug>`. It refuses another Origin, or none, with
   403, before anything else; a request with no session gets 401; a room no form
   made gets 404. An up message is four bytes — a position — and never a name: who is
-  pointing is whoever the cookie says — re-resolved, not remembered: every 5 seconds
-  the socket loads its session from the store by token and checks the user row and
+  pointing is whoever the cookie says — re-resolved, not remembered: every 5 seconds,
+  under a 2-second deadline, the socket loads its session from the store by token and checks the user row and
   password stamp the way every request does, so signing out, a password reset, a
   deleted account, or — for a socket opened with a machine token — revoking the
-  token closes it with 1008 within 5 seconds (1011 if the store cannot answer). The
+  token closes it with 1008 within 5 seconds (1011 if the store cannot answer in
+  time). From the moment a check falls due until it answers, moves are dropped. The
   handler returns right after the handshake and the socket runs on a goroutine the
-  app counts. Caps: 1 KiB a message, its fragments counted together, 30 a second, 8
-  queued toward a slow reader, then the socket closes (1009, 1008, 1013). A sender's own moves never queue: they owe it
+  app counts. Caps: 1 KiB a message, its fragments counted together; 30 frames a
+  second, pings and empty fragments included; 8 queued toward a slow reader. Past
+  one the socket closes (1009, 1008, 1013); a message that is not a position is
+  malformed (1002). A sender's own moves never queue: they owe it
   one fresh map, so a flood meets the rate cap (1008), not its own queue (1013).
   Shutdown closes every socket with 1001 and `a.Wait` joins its goroutines.
 - **WebSocket by hand, not a dependency.** `internal/ws` is the server half of RFC

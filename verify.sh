@@ -148,6 +148,8 @@ done
 grep -q '"transitions"' "$L" && fail "view transitions are on for every swap"
 sed -n '/<head>/,/<\/head>/p' "$L" | grep -q '<script src="/static/js/htmx.min.js?v={{version}}" defer></script>' \
     || fail "htmx is not loaded deferred from <head>"
+grep -B1 '^</head>' "$L" | head -1 | grep -q 'htmx.min.js' \
+    || fail "htmx is not last in <head>: a page's own head block goes before it (stack/htmx.md)"
 sed -n '/<body/,/<\/body>/p' "$L" | grep -q '<script' && fail "a <script> sits in <body>, where every boosted swap runs it again"
 grep -q 'noSwap' "$L" && fail "noSwap is read before hx-status, so a boosted error would push its URL"
 
@@ -576,17 +578,20 @@ curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" | grep -q "he
     || fail "the posted message is not in the room"
 
 step "smoke: the room map is a page that is a program"
-# patterns/wasm-client.md. The room links to it unboosted, every link out of it
-# is unboosted, its two scripts are deferred in <head>, and the canvas names the
-# module.
+# patterns/wasm-client.md. The room links to it unboosted, its two scripts are
+# deferred in <head> before htmx, and the canvas names the module.
 curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
     | grep -q 'href="/rooms/general-chat/map" hx-boost="false"' || fail "the room does not link to its map, unboosted"
 curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/map.html" "localhost:$PORT/rooms/general-chat/map"
-# Leaving is a full load too: htmx swaps only the body, on a boosted link and
-# on Back to a boosted page, and the scripts are in <head>.
+# Leaving needs nothing: the module stops itself once its canvas is swapped
+# out, and Back or Forward is a full load under "history":"reload" (checked on
+# the layout above). So the links out keep the boost.
 sed -n '/<\/head>/,$p' "$WORKDIR/map.html" | grep -o '<a [^>]*>' > "$WORKDIR/map.links"
 [ -s "$WORKDIR/map.links" ] || fail "the map page has no links"
-grep -v 'hx-boost="false"' "$WORKDIR/map.links" && fail "a link out of the map is boosted"
+grep -q 'hx-boost="false"' "$WORKDIR/map.links" && fail "a link out of the map opts out of the boost"
+# htmx stays last in <head> (stack/htmx.md): the page's own scripts come first.
+sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -v '^[[:space:]]*$' | tail -2 | head -1 | grep -q 'htmx.min.js' \
+    || fail "htmx is not last in the map's <head>"
 sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -q '<script src="/static/js/wasm_exec.js?v=[^"]*" defer></script>' \
     || fail "wasm_exec.js is not loaded deferred from the map's <head>"
 sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -q '<script src="/static/js/wasm_app.js?v=[^"]*" defer></script>' \

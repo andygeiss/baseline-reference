@@ -8,10 +8,6 @@
   <script src="/static/js/wasm_app.js?v={{version}}" defer></script>
 {{end}}
 
-{{/* Leaving is a full load, as arriving is: room.html's link in carries
-     hx-boost="false" too. */}}
-{{define "leave"}} hx-boost="false"{{end}}
-
 {{define "main"}}
 <h1>Who is here</h1>
 <p>Everyone with this map open, and where they are pointing. Move your pointer
@@ -21,5 +17,5 @@
   {{/* Shown only where a canvas cannot be: the room itself needs none of this. */}}
   The map needs a browser that draws on a canvas.
 </canvas>
-<p><a href="/rooms/{{.Room.Slug}}" hx-boost="false">Back to {{.Room.Name}}</a></p>
+<p><a href="/rooms/{{.Room.Slug}}">Back to {{.Room.Name}}</a></p>
 {{end}}

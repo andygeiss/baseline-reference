@@ -287,3 +287,66 @@ func TestCloseCarriesItsCode(t *testing.T) {
 		t.Errorf("1001 encodes as %x", got)
 	}
 }
+
+// capped accepts a socket that allows n frames, then reads until it ends.
+// The connection's error lands on errs.
+func capped(errs chan<- error, n int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := ws.Accept(w, r)
+		if err != nil {
+			errs <- err
+			return
+		}
+		frames := 0
+		c.AllowFrame = func() bool { frames++; return frames <= n }
+		for {
+			if _, err := c.Read(); err != nil {
+				errs <- err
+				return
+			}
+		}
+	})
+}
+
+// Rule 7 caps frames a second, not messages: a peer that sends only pings, or
+// one message in empty fragments, sends no message for a message cap to
+// count. Each frame is asked about, and the first refused closes with 1008.
+func TestTheFrameCapCountsEveryFrame(t *testing.T) {
+	t.Parallel()
+	// Masked with a zero key, so the payload goes as written.
+	ping := []byte{0x89, 0x80, 0, 0, 0, 0}         // FIN ping, empty
+	open := []byte{0x02, 0x80, 0, 0, 0, 0}         // binary, not FIN, empty
+	continuation := []byte{0x00, 0x80, 0, 0, 0, 0} // continuation, not FIN, empty
+	for name, frames := range map[string][][]byte{
+		"pings":                  {ping, ping, ping, ping},
+		"empty continuations":    {open, continuation, continuation, continuation},
+		"pings inside a message": {open, ping, continuation, ping},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			errs := make(chan error, 1)
+			ln := serve(t, capped(errs, len(frames)-1))
+			nc := ln.dial(t)
+			code, _, br := handshake(t, nc, "Upgrade: websocket\r\nConnection: Upgrade\r\n"+
+				"Sec-WebSocket-Key: "+rfcKey+"\r\nSec-WebSocket-Version: 13\r\nOrigin: http://chat.test\r\n")
+			if code != http.StatusSwitchingProtocols {
+				t.Fatalf("handshake answered %d", code)
+			}
+			var all []byte
+			for _, f := range frames {
+				all = append(all, f...)
+			}
+			go nc.Write(all)
+			go io.Copy(io.Discard, br) // pongs and the close frame wait for a reader
+			var ce *ws.CloseError
+			select {
+			case err := <-errs:
+				if !errors.As(err, &ce) || ce.Code != ws.ClosePolicy {
+					t.Errorf("the server ended with %v, want 1008", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Errorf("the server took %d frames under a cap of %d", len(frames), len(frames)-1)
+			}
+		})
+	}
+}

@@ -26,8 +26,11 @@ const (
 	// socketMaxMessage is the largest message read. An up message is four
 	// bytes; a kibibyte is plenty and anything bigger is not this client.
 	socketMaxMessage = 1 << 10
-	// socketPerSecond is how many messages a second one socket may send, with
-	// a burst of the same. The module sends at most twenty.
+	// socketPerSecond is how many frames a second one socket may send, with
+	// a burst of the same — every frame, pings and empty fragments included,
+	// since each costs a read and a message cap sees none of them. The
+	// module sends at most twenty one-frame messages, and the browser's
+	// pongs answer only our pings.
 	socketPerSecond = 30
 	// socketQueue is how many messages wait for a slow reader. Past it the
 	// server closes the socket with 1013 rather than buffering.
@@ -48,6 +51,11 @@ const (
 	// message would be up to socketPerSecond lookups a second each, and
 	// would never recheck a socket that only watches.
 	socketRecheck = 5 * time.Second
+	// socketRecheckWait is how long one recheck may take. It is inside the
+	// interval, so an answer that has not come by the next check is a
+	// missed deadline (1011), never a check still running when the next
+	// one falls due. The socket acts on nothing while it waits.
+	socketRecheckWait = 2 * time.Second
 )
 
 type mapPage struct {
@@ -56,9 +64,10 @@ type mapPage struct {
 }
 
 // handleRoomMap is the page the module runs on. It is reached by a plain link
-// that opts out of the boost, and every link on it opts out too: the two
-// scripts are in this page's <head>, and a boosted swap — or Back to a boosted
-// entry — brings the body without them.
+// that opts out of the boost: the two scripts are in this page's <head>, and a
+// boosted swap brings the body without them. Links out stay boosted — the
+// module stops itself once its canvas leaves — and Back or Forward reloads the
+// page whole, since the layout's htmx-config sets history to "reload".
 func (a *App) handleRoomMap(w http.ResponseWriter, r *http.Request) {
 	room, err := a.rooms.BySlug(r.Context(), r.PathValue("slug"))
 	if errors.Is(err, domain.ErrNotFound) {
@@ -98,6 +107,7 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.MaxMessage = socketMaxMessage
+	conn.AllowFrame = newSocketLimiter().Allow
 	conn.ReadTimeout = 2 * socketPing
 	conn.WriteTimeout = socketWrite
 
@@ -111,6 +121,8 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 		echo:   make(chan struct{}, 1),
 		kick:   make(chan struct{}, 1),
 	}
+	// The handshake's own authentication vouches for the first interval.
+	s.vouch(time.Now().Add(socketRecheck))
 	if !a.presence.join(room.ID, s) {
 		conn.Close(ws.CloseTryAgain, "this room's map is full")
 		return
@@ -132,7 +144,7 @@ func (a *App) serveSeat(roomID string, s *seat) uint16 {
 	done := make(chan struct{})
 	go func() { written <- a.writeSeat(roomID, s, done) }()
 
-	code := readSeat(s, newSocketLimiter(), func() { a.presence.broadcast(roomID, s) })
+	code := readSeat(s, func() { a.presence.broadcast(roomID, s) })
 
 	a.presence.leave(roomID, s)
 	a.presence.broadcast(roomID, nil)
@@ -144,14 +156,20 @@ func (a *App) serveSeat(roomID string, s *seat) uint16 {
 	return code
 }
 
-// newSocketLimiter is one socket's messages-a-second cap.
+// newSocketLimiter is one socket's frames-a-second cap, which ws asks about
+// every frame it reads.
 func newSocketLimiter() *rate.Limiter {
 	return rate.NewLimiter(socketPerSecond, socketPerSecond)
 }
 
 // readSeat moves the seat as its messages say, until the socket ends or breaks
-// a cap, and returns the code it closed with.
-func readSeat(s *seat, limit *rate.Limiter, moved func()) uint16 {
+// a cap, and returns the code it closed with. The frames-a-second cap is the
+// connection's own (1008, in ws); a message that is not one position is
+// malformed (1002). A move that arrives while the seat's credential is not
+// vouched for — a recheck has fallen due and not been answered — is dropped:
+// the socket acts on nothing then (rule 6). The next move after a good answer
+// puts the pointer right, since each one carries the whole position.
+func readSeat(s *seat, moved func()) uint16 {
 	for {
 		msg, err := s.conn.Read()
 		if err != nil {
@@ -160,14 +178,13 @@ func readSeat(s *seat, limit *rate.Limiter, moved func()) uint16 {
 			}
 			return ws.CloseGoingAway
 		}
-		if !limit.Allow() {
-			s.conn.Close(ws.ClosePolicy, "too many messages")
-			return ws.ClosePolicy
-		}
 		x, y, ok := presence.DecodeUp(msg)
 		if !ok {
-			s.conn.Close(ws.ClosePolicy, "a message is one position")
-			return ws.ClosePolicy
+			s.conn.Close(ws.CloseProtocolError, "a message is one position")
+			return ws.CloseProtocolError
+		}
+		if !s.vouched(time.Now()) {
+			continue
 		}
 		s.move(x, y)
 		moved()
@@ -182,7 +199,7 @@ func readSeat(s *seat, limit *rate.Limiter, moved func()) uint16 {
 func (a *App) writeSeat(roomID string, s *seat, done <-chan struct{}) uint16 {
 	ping := time.NewTicker(socketPing)
 	defer ping.Stop()
-	recheck := time.NewTicker(socketRecheck)
+	recheck := time.NewTimer(time.Until(s.vouchedUntil()))
 	defer recheck.Stop()
 	for {
 		select {
@@ -195,6 +212,9 @@ func (a *App) writeSeat(roomID string, s *seat, done <-chan struct{}) uint16 {
 			s.conn.Close(ws.CloseTryAgain, "too slow to keep up")
 			return ws.CloseTryAgain
 		case <-recheck.C:
+			// The check falls due as the last one's vouching runs out, so
+			// from here until a "yes" the reader drops every move.
+			asked := time.Now()
 			ok, err := a.stillSignedIn(s)
 			if err != nil {
 				// Fail closed: a socket nobody can vouch for stops acting.
@@ -206,6 +226,10 @@ func (a *App) writeSeat(roomID string, s *seat, done <-chan struct{}) uint16 {
 				s.conn.Close(ws.ClosePolicy, "signed out")
 				return ws.ClosePolicy
 			}
+			// The answer holds as of the moment it was asked, so the next
+			// check is one interval from then, whatever the store took.
+			s.vouch(asked.Add(socketRecheck))
+			recheck.Reset(time.Until(s.vouchedUntil()))
 		case msg := <-s.out:
 			if err := s.conn.Write(msg); err != nil {
 				s.conn.Close(ws.CloseGoingAway, "")
@@ -244,9 +268,10 @@ func (a *App) credentialOf(r *http.Request) credential {
 // this goroutine's context, so it is loaded afresh from the store by its
 // token: a destroyed or expired one loads empty, and sessionUser then checks
 // the user row and the password stamp exactly as a request would. An error is
-// the store failing to answer, never a "no".
+// the store failing to answer, never a "no" — and so is an answer that has not
+// come within socketRecheckWait.
 func (a *App) stillSignedIn(s *seat) (bool, error) {
-	ctx, cancel := context.WithTimeout(a.stopping, socketWrite)
+	ctx, cancel := context.WithTimeout(a.stopping, socketRecheckWait)
 	defer cancel()
 	var user domain.User
 	var err error
@@ -286,6 +311,28 @@ type seat struct {
 
 	mu   sync.Mutex
 	x, y uint16
+	// until is when the last good recheck's say runs out: the moment the
+	// next check falls due. Before it the seat acts; from it until the
+	// check answers "yes", it does not.
+	until time.Time
+}
+
+// vouch says the seat's credential holds until t.
+func (s *seat) vouch(t time.Time) {
+	s.mu.Lock()
+	s.until = t
+	s.mu.Unlock()
+}
+
+func (s *seat) vouchedUntil() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.until
+}
+
+// vouched reports whether the seat may act at now: no recheck is due.
+func (s *seat) vouched(now time.Time) bool {
+	return now.Before(s.vouchedUntil())
 }
 
 func (s *seat) move(x, y uint16) {

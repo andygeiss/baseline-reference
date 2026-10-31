@@ -95,7 +95,7 @@ fmt:
 lan:
 	LAN_HOST="$$(scutil --get LocalHostName).local" caddy run --config Caddyfile.lan
 
-# Loads .env when it is there, so a local start is one command. Only run:
+# Loads .env when it is there, so a local start is one command. No gate may:
 # check and test MUST NOT depend on a developer's machine (rule 6). One shell
 # line, because each recipe line gets its own shell.
 run:
