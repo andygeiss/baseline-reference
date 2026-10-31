@@ -44,6 +44,7 @@ const (
 	CloseBadPayload    uint16 = 1007
 	ClosePolicy        uint16 = 1008
 	CloseTooLarge      uint16 = 1009
+	CloseInternalError uint16 = 1011
 	// CloseTryAgain is 1013. It says the peer did nothing wrong and should
 	// come back: a server too busy to keep talking now, or a client that
 	// fell behind what the server was sending it. ClosePolicy is the other

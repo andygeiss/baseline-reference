@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sync"
@@ -8,6 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 	"github.com/andygeiss/baseline-reference/v5/internal/presence"
 	"github.com/andygeiss/baseline-reference/v5/internal/ws"
@@ -36,6 +38,16 @@ const (
 	// socketWrite bounds every write, so a reader that stopped reading costs
 	// one timeout rather than a goroutine for ever.
 	socketWrite = 10 * time.Second
+	// socketRecheck is how often an open socket asks again whether the
+	// credential it opened under still names its person (rule 6): signing
+	// out, a password reset, a revoked token, or a deleted account closes it
+	// with 1008 within this long. Five seconds, because what a socket does
+	// dies with it — a pointer, and a view of the room's pointers — so a few
+	// seconds' grace costs nothing that outlives the connection, while two
+	// reads a socket every five seconds cost the store next to nothing. Per
+	// message would be up to socketPerSecond lookups a second each, and
+	// would never recheck a socket that only watches.
+	socketRecheck = 5 * time.Second
 )
 
 type mapPage struct {
@@ -65,7 +77,8 @@ func (a *App) handleRoomMap(w http.ResponseWriter, r *http.Request) {
 // It acts only for the person the session already names (rule 6): the room
 // was made by a POST form, the account by another, and an up message carries a
 // position and nothing else — never a name, never a room. Who is pointing is
-// whoever the cookie says.
+// whoever the cookie says, and the writer asks the store again every
+// socketRecheck, so the cookie's say ends when the session or the account does.
 func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 	room, err := a.rooms.BySlug(r.Context(), r.URL.Query().Get("room"))
 	if errors.Is(err, domain.ErrNotFound) {
@@ -87,7 +100,16 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 	conn.ReadTimeout = 2 * socketPing
 	conn.WriteTimeout = socketWrite
 
-	s := &seat{name: userFrom(r.Context()).Name, conn: conn, out: make(chan []byte, socketQueue), kick: make(chan struct{}, 1)}
+	user := userFrom(r.Context())
+	s := &seat{
+		name:   user.Name,
+		userID: user.ID,
+		cred:   a.credentialOf(r),
+		conn:   conn,
+		out:    make(chan []byte, socketQueue),
+		echo:   make(chan struct{}, 1),
+		kick:   make(chan struct{}, 1),
+	}
 	if !a.presence.join(room.ID, s) {
 		conn.Close(ws.CloseTryAgain, "this room's map is full")
 		return
@@ -107,12 +129,12 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 func (a *App) serveSeat(roomID string, s *seat) uint16 {
 	written := make(chan uint16, 1)
 	done := make(chan struct{})
-	go func() { written <- a.writeSeat(s, done) }()
+	go func() { written <- a.writeSeat(roomID, s, done) }()
 
-	code := readSeat(s, newSocketLimiter(), func() { a.presence.broadcast(roomID) })
+	code := readSeat(s, newSocketLimiter(), func() { a.presence.broadcast(roomID, s) })
 
 	a.presence.leave(roomID, s)
-	a.presence.broadcast(roomID)
+	a.presence.broadcast(roomID, nil)
 	close(done)
 	if w := <-written; w != 0 {
 		code = w
@@ -153,11 +175,14 @@ func readSeat(s *seat, limit *rate.Limiter, moved func()) uint16 {
 
 // writeSeat sends what the hub queues, pings an idle socket, and is the one
 // place a socket is closed for a reason of the server's: a reader too slow
-// for its queue (1013), or a shutdown (1001). It returns that code, or 0 when
-// the reader ended first.
-func (a *App) writeSeat(s *seat, done <-chan struct{}) uint16 {
+// for its queue (1013), a credential that no longer names its person (1008),
+// a store that cannot say (1011), or a shutdown (1001). It returns that code,
+// or 0 when the reader ended first.
+func (a *App) writeSeat(roomID string, s *seat, done <-chan struct{}) uint16 {
 	ping := time.NewTicker(socketPing)
 	defer ping.Stop()
+	recheck := time.NewTicker(socketRecheck)
+	defer recheck.Stop()
 	for {
 		select {
 		case <-done:
@@ -168,8 +193,25 @@ func (a *App) writeSeat(s *seat, done <-chan struct{}) uint16 {
 		case <-s.kick:
 			s.conn.Close(ws.CloseTryAgain, "too slow to keep up")
 			return ws.CloseTryAgain
+		case <-recheck.C:
+			ok, err := a.stillSignedIn(s)
+			if err != nil {
+				// Fail closed: a socket nobody can vouch for stops acting.
+				a.logger.Error("socket recheck", "user", s.name, "err", err)
+				s.conn.Close(ws.CloseInternalError, "")
+				return ws.CloseInternalError
+			}
+			if !ok {
+				s.conn.Close(ws.ClosePolicy, "signed out")
+				return ws.ClosePolicy
+			}
 		case msg := <-s.out:
 			if err := s.conn.Write(msg); err != nil {
+				s.conn.Close(ws.CloseGoingAway, "")
+				return 0
+			}
+		case <-s.echo:
+			if err := s.conn.Write(a.presence.latest(roomID, s)); err != nil {
 				s.conn.Close(ws.CloseGoingAway, "")
 				return 0
 			}
@@ -182,13 +224,64 @@ func (a *App) writeSeat(s *seat, done <-chan struct{}) uint16 {
 	}
 }
 
+// credential is what the handshake presented, kept so the socket can ask the
+// store again who it names. Exactly one is set.
+type credential struct {
+	tokenHash string // a machine token's hash
+	session   string // the scs session token
+}
+
+func (a *App) credentialOf(r *http.Request) credential {
+	if secret := auth.BearerToken(r.Header.Get("Authorization")); secret != "" {
+		return credential{tokenHash: auth.HashToken(secret)}
+	}
+	return credential{session: a.sessions.Token(r.Context())}
+}
+
+// stillSignedIn resolves the seat's credential the way authenticate does, and
+// reports whether it still names the seat's person. A session is not bound to
+// this goroutine's context, so it is loaded afresh from the store by its
+// token: a destroyed or expired one loads empty, and sessionUser then checks
+// the user row and the password stamp exactly as a request would. An error is
+// the store failing to answer, never a "no".
+func (a *App) stillSignedIn(s *seat) (bool, error) {
+	ctx, cancel := context.WithTimeout(a.stopping, socketWrite)
+	defer cancel()
+	var user domain.User
+	var err error
+	if s.cred.tokenHash != "" {
+		user, err = a.tokenUser(ctx, s.cred.tokenHash)
+	} else {
+		var loaded context.Context
+		if loaded, err = a.sessions.Load(ctx, s.cred.session); err == nil {
+			user, err = a.sessionUser(loaded)
+		}
+	}
+	switch {
+	case err == nil:
+		return user.ID == s.userID, nil
+	case errors.Is(err, errNoCredential), errors.Is(err, errBadCredential):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
 // seat is one open map: whose it is, where they point, and the queue toward
 // them.
 type seat struct {
-	name string
-	conn *ws.Conn
-	out  chan []byte
-	kick chan struct{}
+	name   string
+	userID string
+	cred   credential
+	conn   *ws.Conn
+	out    chan []byte
+	kick   chan struct{}
+	// echo says the seat's own move changed the map. It holds one: however
+	// fast a seat moves, it waits for one fresh map, never a queue of them,
+	// so a sender cannot fill its own queue and be closed 1013 for its own
+	// speed. The move still comes back — the module draws its own dot from
+	// the map it is sent, as it draws everyone's.
+	echo chan struct{}
 
 	mu   sync.Mutex
 	x, y uint16
@@ -238,17 +331,22 @@ func (h *hub) leave(roomID string, s *seat) {
 	}
 }
 
-// broadcast queues the room's whole map to every seat in it. It never blocks:
-// a seat whose queue is full is kicked, and its writer closes it.
-func (h *hub) broadcast(roomID string) {
+// broadcast queues the room's whole map to every seat in it but from, whose
+// own move it is (nil when nobody's is): from is nudged instead, and its
+// writer fetches the latest map. It never blocks: a seat whose queue is full is
+// kicked, and its writer closes it.
+func (h *hub) broadcast(roomID string, from *seat) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	seats := make([]presence.Seat, 0, len(h.rooms[roomID]))
+	msg := h.mapLocked(roomID)
 	for s := range h.rooms[roomID] {
-		seats = append(seats, s.at())
-	}
-	msg := presence.EncodeDown(seats)
-	for s := range h.rooms[roomID] {
+		if s == from {
+			select {
+			case s.echo <- struct{}{}:
+			default: // a fresh map is already owed
+			}
+			continue
+		}
 		select {
 		case s.out <- msg:
 		default:
@@ -258,6 +356,28 @@ func (h *hub) broadcast(roomID string) {
 			}
 		}
 	}
+}
+
+// latest is the room's map as it is now, for s, and drops every map still
+// queued toward s: under the lock each of those is older than this one, and
+// sent after it they would draw the room as it was.
+func (h *hub) latest(roomID string, s *seat) []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	msg := h.mapLocked(roomID)
+	for range len(s.out) {
+		<-s.out
+	}
+	return msg
+}
+
+// mapLocked encodes the room's whole map; h.mu is held.
+func (h *hub) mapLocked(roomID string) []byte {
+	seats := make([]presence.Seat, 0, len(h.rooms[roomID]))
+	for s := range h.rooms[roomID] {
+		seats = append(seats, s.at())
+	}
+	return presence.EncodeDown(seats)
 }
 
 // requireSocketAuth guards GET /ws. A socket has no sign-in page to be sent to

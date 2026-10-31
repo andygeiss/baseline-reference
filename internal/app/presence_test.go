@@ -152,13 +152,8 @@ func closedWith(t *testing.T, c *ws.Conn) uint16 {
 
 // Rule 7: past the messages-a-second cap, the server closes with 1008.
 //
-// This drives readSeat alone, not the whole handler. Through the handler every
-// message the cap lets through is also broadcast back to the sender, and the
-// burst (socketPerSecond) is bigger than the queue (socketQueue): whether the
-// writer drains the queue before the cap is reached is the scheduler's call,
-// so the same flood closes with 1013 now and then. The queue's own cap has its
-// own test, TestAFullQueueKicksTheSeat, and the handler's path into readSeat
-// is TestAMessageThatIsNotAPositionClosesTheSocket's.
+// This drives readSeat alone, to count exactly what moved the seat; the same
+// flood through the whole handler is TestAFloodClosesWith1008.
 //
 // Inside the bubble the clock stands still, so the bucket never refills
 // mid-flood and exactly socketPerSecond messages get through.
@@ -267,12 +262,61 @@ func TestAFullQueueKicksTheSeat(t *testing.T) {
 		t.Fatal("an empty room refused a seat")
 	}
 	for range socketQueue + 1 {
-		h.broadcast("room") // never blocks, or this test hangs
+		h.broadcast("room", nil) // never blocks, or this test hangs
 	}
 	select {
 	case <-slow.kick:
 	default:
 		t.Error("a full queue did not kick the seat")
+	}
+}
+
+// A seat's own moves never fill its own queue: however many, they owe it one
+// fresh map, and that map supersedes whatever was still queued. Without this
+// a flooding client filled its queue with its own echoes and was closed 1013,
+// a slow reader, before the rate cap could close it 1008.
+func TestASeatsOwnMovesDoNotFillItsQueue(t *testing.T) {
+	t.Parallel()
+	h := newHub()
+	ada := &seat{name: "Ada", out: make(chan []byte, socketQueue), echo: make(chan struct{}, 1), kick: make(chan struct{}, 1)}
+	grace := &seat{name: "Grace", out: make(chan []byte, socketQueue), echo: make(chan struct{}, 1), kick: make(chan struct{}, 1)}
+	h.join("room", ada)
+	h.join("room", grace)
+
+	grace.move(5, 5)
+	h.broadcast("room", grace) // queued toward Ada
+	for i := range 4 * socketQueue {
+		ada.move(uint16(i), 7)
+		h.broadcast("room", ada)
+	}
+	select {
+	case <-ada.kick:
+		t.Fatal("the sender's own moves kicked it")
+	default:
+	}
+	if len(ada.echo) != 1 {
+		t.Fatalf("%d fresh maps owed, want 1", len(ada.echo))
+	}
+	// The same traffic still kicks a reader who is not the sender: nobody
+	// drains Grace's queue here, so she fell behind.
+	select {
+	case <-grace.kick:
+	default:
+		t.Error("the reader that fell behind was not kicked")
+	}
+
+	msg := h.latest("room", ada)
+	if len(ada.out) != 0 {
+		t.Errorf("%d older maps still queued behind the latest", len(ada.out))
+	}
+	seats, ok := presence.DecodeDown(msg)
+	if !ok {
+		t.Fatal("latest is not a map")
+	}
+	for _, st := range seats {
+		if st.Name == "Ada" && st.X != 4*socketQueue-1 {
+			t.Errorf("the latest map has Ada at %d, want her last move", st.X)
+		}
 	}
 }
 
@@ -334,4 +378,168 @@ func TestTheMapPageCarriesTheModule(t *testing.T) {
 	if !strings.Contains(body, `data-module="/static/roommap.wasm?v=test"`) {
 		t.Error("no element names the module")
 	}
+}
+
+// socketBubble runs f with a test app whose server lives inside a
+// testing/synctest bubble, so socketRecheck passes on synctest's clock. The
+// options are made outside it, with a stopping context that never cancels
+// (TestLoginRateLimit says why).
+func socketBubble(t *testing.T, f func(t *testing.T, ta *testApp)) {
+	t.Helper()
+	o := newTestOptions(t, withStopping(context.Background()))
+	synctest.Test(t, func(t *testing.T) { f(t, newTestAppWith(t, o)) })
+}
+
+// quietSocket is openSocket with no read deadline of its own, so a test can
+// wait out several rechecks without the client giving up first.
+func quietSocket(t *testing.T, ta *testApp, client *http.Client, slug string) *ws.Conn {
+	t.Helper()
+	c, err := openSocket(t, ta, client, slug, "")
+	if err != nil {
+		t.Fatalf("opening the socket: %v", err)
+	}
+	c.ReadTimeout = 0
+	return c
+}
+
+// Rule 6, tier 1: what the cookie holds is re-resolved, not remembered. Each
+// way a session stops naming its person closes an open socket with 1008
+// within socketRecheck — the socket does not outlive the sign-in it opened
+// under.
+func TestAnEndedSessionClosesTheSocket(t *testing.T) {
+	t.Parallel()
+	cases := map[string]func(t *testing.T, ta *testApp){
+		"signing out": func(t *testing.T, ta *testApp) {
+			if res, _ := ta.do(t, http.MethodPost, "/logout", url.Values{}, nil); res.StatusCode != http.StatusSeeOther {
+				t.Fatalf("signing out: %d", res.StatusCode)
+			}
+		},
+		// From another browser, the way go-data-deletion.md's "signed out
+		// everywhere" means it: this socket's session is still in the store,
+		// and only the missing user row can end it.
+		"deleting the account elsewhere": func(t *testing.T, ta *testApp) {
+			mine := ta.client
+			elsewhere := *mine
+			elsewhere.Jar = emptyJar(t)
+			ta.client = &elsewhere
+			defer func() { ta.client = mine }()
+			if res, _ := ta.do(t, http.MethodPost, "/login", url.Values{
+				"name": {"Ada"}, "password": {"correct-horse"},
+			}, nil); res.StatusCode != http.StatusSeeOther {
+				t.Fatalf("signing in elsewhere: %d", res.StatusCode)
+			}
+			if res, _ := ta.do(t, http.MethodPost, "/account/delete", url.Values{
+				"name": {"Ada"}, "password": {"correct-horse"},
+			}, nil); res.StatusCode != http.StatusSeeOther {
+				t.Fatalf("deleting the account: %d", res.StatusCode)
+			}
+		},
+		// A reset moves the password stamp, which ends every older session
+		// (go-auth-sessions.md) — this socket's included.
+		"a password reset": func(t *testing.T, ta *testApp) {
+			user, err := ta.users.ByName(t.Context(), "Ada")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ta.users.SetPassword(t.Context(), user.ID, "new-hash"); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, end := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			socketBubble(t, func(t *testing.T, ta *testApp) {
+				ta.signUp(t, "Ada", "correct-horse")
+				slug := ta.makeRoom(t, "General")
+				c := quietSocket(t, ta, ta.client, slug)
+				// The stamp is a clock reading, and the bubble's clock has
+				// not moved since sign-up.
+				time.Sleep(time.Millisecond)
+
+				end(t, ta)
+				// Bounded by the bubble's clock, so a socket that is never
+				// closed fails here rather than hanging the run.
+				closed := make(chan uint16, 1)
+				go func() {
+					for {
+						_, err := c.Read()
+						if err == nil {
+							continue
+						}
+						ce, _ := errors.AsType[*ws.CloseError](err)
+						if ce == nil {
+							closed <- 0
+							return
+						}
+						closed <- ce.Code
+						return
+					}
+				}()
+				select {
+				case got := <-closed:
+					if got != ws.ClosePolicy {
+						t.Errorf("closed with %d, want 1008", got)
+					}
+				case <-time.After(socketRecheck):
+					t.Errorf("still open %v after the session ended", socketRecheck)
+					c.Close(ws.CloseNormal, "")
+					<-closed
+				}
+			})
+		})
+	}
+}
+
+// The other half: a session that is still good keeps its socket across many
+// rechecks, and the socket still works at the end.
+func TestALiveSessionKeepsTheSocket(t *testing.T) {
+	t.Parallel()
+	socketBubble(t, func(t *testing.T, ta *testApp) {
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		c := quietSocket(t, ta, ta.client, slug)
+
+		// Under socketPing, so no ping goes unanswered while nobody reads.
+		time.Sleep(3*socketRecheck + time.Second)
+
+		if err := c.Write(presence.EncodeUp(42, 43)); err != nil {
+			t.Fatalf("the socket closed under a live session: %v", err)
+		}
+		for {
+			msg, err := c.Read()
+			if err != nil {
+				t.Fatalf("the socket closed under a live session: %v", err)
+			}
+			seats, _ := presence.DecodeDown(msg)
+			for _, s := range seats {
+				if s.Name == "Ada" && s.X == 42 && s.Y == 43 {
+					return // her own move came back, as the module draws it
+				}
+			}
+		}
+	})
+}
+
+// Rule 7 through the whole handler: a flood is closed by the rate cap, 1008.
+// Inside the bubble the writer happens to drain fast enough even with the old
+// echo, so this alone would not have caught the 1013 race; the hub's half,
+// TestASeatsOwnMovesDoNotFillItsQueue, is what pins that fix.
+func TestAFloodClosesWith1008(t *testing.T) {
+	t.Parallel()
+	socketBubble(t, func(t *testing.T, ta *testApp) {
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		c := quietSocket(t, ta, ta.client, slug)
+		closed := make(chan uint16, 1)
+		go func() { closed <- closedWith(t, c) }()
+		for range 2 * socketPerSecond {
+			if c.Write(presence.EncodeUp(1, 1)) != nil {
+				break
+			}
+		}
+		if got := <-closed; got != ws.ClosePolicy {
+			t.Errorf("closed with %d, want 1008", got)
+		}
+	})
 }

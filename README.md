@@ -196,9 +196,14 @@ where people are, and this shows who is.
 - **The socket** is `GET /ws?room=<slug>`. It refuses another Origin, or none, with
   403, before anything else; a request with no session gets 401; a room no form
   made gets 404. An up message is four bytes — a position — and never a name: who is
-  pointing is whoever the cookie says. Caps: 1 KiB a message, 30 a second, 8 queued
-  toward a slow reader, then the socket closes (1009, 1008, 1013). Shutdown closes
-  every socket with 1001 and `a.Wait` joins its goroutines.
+  pointing is whoever the cookie says — re-resolved, not remembered: every 5 seconds
+  the socket loads its session from the store by token and checks the user row and
+  password stamp the way every request does, so signing out, a password reset, or a
+  deleted account closes it with 1008 within 5 seconds (1011 if the store cannot
+  answer). Caps: 1 KiB a message, 30 a second, 8 queued toward a slow reader, then
+  the socket closes (1009, 1008, 1013). A sender's own moves never queue: they owe it
+  one fresh map, so a flood meets the rate cap (1008), not its own queue (1013).
+  Shutdown closes every socket with 1001 and `a.Wait` joins its goroutines.
 - **WebSocket by hand, not a dependency.** `internal/ws` is the server half of RFC
   6455, binary frames only, adapted from game-lab's. The pattern names this road first.
 - **Installing TinyGo.** The version is the baseline's `VERSIONS.md` row; `make wasm`

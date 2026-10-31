@@ -91,25 +91,35 @@ var (
 // and this decides only who is asking.
 func (a *App) authenticate(r *http.Request) (domain.User, error) {
 	if secret := auth.BearerToken(r.Header.Get("Authorization")); secret != "" {
-		user, err := a.tokens.UserByHash(r.Context(), auth.HashToken(secret))
-		if errors.Is(err, domain.ErrNotFound) {
-			return domain.User{}, errBadCredential
-		}
-		if err != nil {
-			return domain.User{}, err
-		}
-		return user, nil
+		return a.tokenUser(r.Context(), auth.HashToken(secret))
 	}
+	return a.sessionUser(r.Context())
+}
 
-	id := a.sessions.GetString(r.Context(), "userID")
+// tokenUser resolves a machine token, by its hash.
+func (a *App) tokenUser(ctx context.Context, hash string) (domain.User, error) {
+	user, err := a.tokens.UserByHash(ctx, hash)
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.User{}, errBadCredential
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	return user, nil
+}
+
+// sessionUser resolves the browser session loaded into ctx: a request's, which
+// LoadAndSave loaded, or a socket's, which loads its own (stillSignedIn).
+func (a *App) sessionUser(ctx context.Context) (domain.User, error) {
+	id := a.sessions.GetString(ctx, "userID")
 	if id == "" {
 		return domain.User{}, errNoCredential
 	}
-	user, err := a.users.ByID(r.Context(), id)
+	user, err := a.users.ByID(ctx, id)
 	if errors.Is(err, domain.ErrNotFound) {
 		// The account is gone but the cookie is not. Drop the session rather
 		// than looping the reader through a sign-in they already did.
-		_ = a.sessions.Destroy(r.Context())
+		_ = a.sessions.Destroy(ctx)
 		return domain.User{}, errNoCredential
 	}
 	if err != nil {
@@ -119,8 +129,8 @@ func (a *App) authenticate(r *http.Request) (domain.User, error) {
 	// moves that stamp, so every session opened before it stops here — which is
 	// the point of resetting a password somebody else may know. A machine token
 	// is a separate credential and is revoked separately, on the profile page.
-	if a.sessions.GetString(r.Context(), "pwAt") != user.PasswordChangedAt {
-		_ = a.sessions.Destroy(r.Context())
+	if a.sessions.GetString(ctx, "pwAt") != user.PasswordChangedAt {
+		_ = a.sessions.Destroy(ctx)
 		return domain.User{}, errNoCredential
 	}
 	return user, nil
