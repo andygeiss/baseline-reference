@@ -127,7 +127,7 @@ SIZE="$(wc -c < web/static/roommap.wasm | tr -d ' ')"
     || fail "web/static/js holds more than htmx and the module's two scripts: $(ls web/static/js | tr '\n' ' ')"
 grep -q 'dataset.module' web/static/js/wasm_app.js || fail "the loader does not read data-module"
 # The anti-pattern: 'unsafe-eval' would make the module load and allow eval too.
-grep -q "'unsafe-eval'\|'unsafe-inline'" internal/app/middleware.go && fail "the CSP carries a banned keyword"
+grep -qi "'unsafe-eval'\|'unsafe-inline'" internal/app/middleware.go && fail "the CSP carries a banned keyword"
 
 step "the layout keeps every line htmx 4 needs"
 # stack/html.md. Each line fails silently when it goes: htmx 4 boosts nothing

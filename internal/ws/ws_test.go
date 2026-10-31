@@ -264,6 +264,30 @@ func TestAnUnmaskedClientFrameClosesWith1002(t *testing.T) {
 	}
 }
 
+// RFC 6455 section 5.2: a 64-bit length has its top bit clear. One with the
+// bit set is a protocol error, closed with 1002 before the cap or make()
+// ever sees it, not a message too large and not a panic.
+func TestALengthWithItsTopBitSetClosesWith1002(t *testing.T) {
+	t.Parallel()
+	errs := make(chan error, 1)
+	ln := serve(t, echo(errs))
+	nc := ln.dial(t)
+	code, _, br := handshake(t, nc, "Upgrade: websocket\r\nConnection: Upgrade\r\n"+
+		"Sec-WebSocket-Key: "+rfcKey+"\r\nSec-WebSocket-Version: 13\r\nOrigin: http://chat.test\r\n")
+	if code != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake answered %d", code)
+	}
+	frame := []byte{0x82, 0x80 | 127} // FIN binary, masked, 64-bit length
+	frame = binary.BigEndian.AppendUint64(frame, 1<<63|1)
+	frame = append(frame, 0, 0, 0, 0) // the mask key
+	go nc.Write(frame)
+	go io.Copy(io.Discard, br) // the server's close frame waits for a reader
+	var ce *ws.CloseError
+	if err := <-errs; !errors.As(err, &ce) || ce.Code != ws.CloseProtocolError {
+		t.Errorf("the server ended with %v, want 1002", err)
+	}
+}
+
 // The close a server sends on shutdown carries 1001, and the client reads it
 // as that code.
 func TestCloseCarriesItsCode(t *testing.T) {

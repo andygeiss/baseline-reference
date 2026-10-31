@@ -41,10 +41,12 @@ func TestSecureHeaders(t *testing.T) {
 			t.Errorf("CSP lost %q", directive)
 		}
 	}
-	// The two keywords that undo the policy. 'wasm-unsafe-eval' contains the
-	// letters of the second but not its quotes, so it does not match.
+	// The two keywords that undo the policy, matched with both quotes and
+	// case-folded, since a browser reads 'UNSAFE-EVAL' as 'unsafe-eval'.
+	// 'wasm-unsafe-eval' passes only because the pattern's leading quote
+	// sits where its "wasm-" is.
 	for _, banned := range []string{"'unsafe-eval'", "'unsafe-inline'"} {
-		if strings.Contains(csp, banned) {
+		if strings.Contains(strings.ToLower(csp), banned) {
 			t.Errorf("CSP carries %s", banned)
 		}
 	}

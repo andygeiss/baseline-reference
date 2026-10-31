@@ -205,7 +205,7 @@ where people are, and this shows who is.
   the module stops itself once its canvas leaves the page — and Back or Forward is a
   full load anyway, since the layout's `htmx-config` sets `"history":"reload"`.
 - **The socket** is `GET /ws?room=<slug>`. It refuses another Origin, or none, with
-  403, before anything else; a request with no session gets 401; a room no form
+  403, before any upgrade; a request with no session gets 401; a room no form
   made gets 404. An up message is four bytes — a position — and never a name: who is
   pointing is whoever the cookie says — re-resolved, not remembered: every 5 seconds,
   under a 2-second deadline, the socket loads its session from the store by token and checks the user row and
