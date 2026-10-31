@@ -12,10 +12,11 @@ import (
 
 // The room map's module is committed, because make ci needs no TinyGo, and
 // embedded and served as it is (patterns/wasm-client.md rule 2). make wasm
-// writes beside it the digest of its inputs — every Go file the js/wasm target
-// compiles into it, go.mod, and the .build file naming compiler and flags — and
-// this test recomputes it, so a source change without a rebuild goes red here
-// rather than shipping an old module.
+// writes beside it the digest of its inputs — every Go file and embedded file
+// of this module's own packages as TinyGo compiles them, go.mod, and the .build
+// file naming compiler, flags, and build tags — and this test recomputes it, so
+// a source change without a rebuild goes red here rather than shipping an old
+// module.
 
 const module = "github.com/andygeiss/baseline-reference/v5"
 
@@ -41,9 +42,11 @@ func TestTheCommittedModuleIsBuiltFromTheTree(t *testing.T) {
 	}
 }
 
-// The digest sees only the sources, so the .build file records the TinyGo and
-// the flags, and is hashed in with them. This holds its lines to the Makefile,
-// so a flag edited there without a rebuild goes red like a source edit.
+// The digest sees only the sources, so the .build file records the TinyGo, the
+// flags, and the build tags, and is hashed in with them. This holds each line
+// to the Makefile, so a flag or a tag edited there without a rebuild goes red
+// like a source edit. That WASM_TAGS is what TinyGo prints is make wasm's
+// check, since make ci has no TinyGo to ask.
 func TestTheRecordedBuildMatchesTheMakefile(t *testing.T) {
 	t.Parallel()
 	vars := makeVars(t)
@@ -57,7 +60,11 @@ func TestTheRecordedBuildMatchesTheMakefile(t *testing.T) {
 			got[key] = value
 		}
 	}
-	want := map[string]string{"tinygo-version": vars["TINYGO_VERSION"], "tinygo-flags": vars["WASM_FLAGS"]}
+	want := map[string]string{
+		"tinygo-version": vars["TINYGO_VERSION"],
+		"tinygo-flags":   vars["WASM_FLAGS"],
+		"tinygo-tags":    vars["WASM_TAGS"],
+	}
 	for key, w := range want {
 		if w == "" || got[key] != w {
 			t.Errorf("roommap.wasm.build records %s %q, and the Makefile says %q — run make wasm and commit the module", key, got[key], w)
@@ -100,12 +107,29 @@ func sums(t *testing.T, path string) map[string]string {
 	return want
 }
 
-// inputs is every file make wasm hashes, each with its digest. The go list
-// template is the Makefile's INPUTS.
-func inputs(t *testing.T) map[string]string {
+// tinygoTags is the build tags make wasm recorded in the .build file — the
+// Makefile's WASM_TAGS, which TestTheRecordedBuildMatchesTheMakefile holds it
+// to — for go list's -tags: the files TinyGo compiled, not the ones go alone
+// would.
+func tinygoTags(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command("go", "list", "-deps", "-f",
-		`{{if not .Standard}}{{range .GoFiles}}{{$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{end}}`, "./cmd/roommap")
+	b, err := os.ReadFile("web/static/roommap.wasm.build")
+	if err != nil {
+		t.Fatalf("%v — run make wasm and commit the module", err)
+	}
+	for line := range strings.Lines(string(b)) {
+		if tags, ok := strings.CutPrefix(strings.TrimSpace(line), "tinygo-tags "); ok {
+			return tags
+		}
+	}
+	t.Fatal("roommap.wasm.build records no tinygo-tags — run make wasm and commit the module")
+	return ""
+}
+
+// goListWasm runs go list for the js/wasm target under TinyGo's build tags.
+func goListWasm(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("go", append([]string{"list", "-tags", tinygoTags(t)}, args...)...)
 	cmd.Env = append(cmd.Environ(), "GOOS=js", "GOARCH=wasm")
 	out, err := cmd.Output()
 	if err != nil {
@@ -114,8 +138,21 @@ func inputs(t *testing.T) map[string]string {
 		}
 		t.Fatalf("go list: %v", err)
 	}
+	return string(out)
+}
+
+// inputs is every file make wasm hashes, each with its digest. The go list
+// template is the Makefile's INPUT_FILES, read from there, and the tags are
+// the ones the .build file recorded, so this lists what make wasm listed.
+func inputs(t *testing.T) map[string]string {
+	t.Helper()
+	template := strings.ReplaceAll(makeVars(t)["INPUT_FILES"], "$$", "$")
+	if template == "" {
+		t.Fatal("the Makefile has no INPUT_FILES")
+	}
+	out := goListWasm(t, "-deps", "-f", template, "./cmd/roommap")
 	files := []string{"go.mod", "web/static/roommap.wasm.build"}
-	for line := range strings.Lines(string(out)) {
+	for line := range strings.Lines(out) {
 		if line = strings.TrimSpace(line); line != "" {
 			files = append(files, strings.TrimPrefix(line, module+"/"))
 		}

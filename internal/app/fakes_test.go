@@ -340,6 +340,16 @@ type fakeTokens struct {
 	mu     sync.Mutex
 	tokens []domain.Token
 	users  *fakeUsers
+	// down, once set, is what every lookup returns: the store failing to
+	// answer, which is not the same as answering "no such token".
+	down error
+}
+
+// goDown makes every later lookup fail with err.
+func (f *fakeTokens) goDown(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.down = err
 }
 
 func newFakeTokens(users *fakeUsers) *fakeTokens { return &fakeTokens{users: users} }
@@ -354,6 +364,10 @@ func (f *fakeTokens) Add(_ context.Context, t *domain.Token) error {
 
 func (f *fakeTokens) UserByHash(ctx context.Context, hash string) (domain.User, error) {
 	f.mu.Lock()
+	if f.down != nil {
+		defer f.mu.Unlock()
+		return domain.User{}, f.down
+	}
 	var userID string
 	for i, t := range f.tokens {
 		if t.Hash == hash {

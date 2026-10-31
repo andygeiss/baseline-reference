@@ -14,18 +14,33 @@ TINYGO_VERSION = 0.44.0
 # digest sees only the sources.
 WASM_FLAGS = -no-debug -opt=z -panic=trap
 
+# The build tags TinyGo compiles the module under, as `tinygo info -target
+# wasm $(WASM_FLAGS)` prints them, commas for spaces: a flag such as
+# -scheduler changes them. wasm refuses a TinyGo that prints others, as it
+# refuses another version, and records them in the .build. Every go list, vet,
+# fix and staticcheck line over the browser packages runs under them, because
+# a file tagged tinygo is otherwise never listed, never vetted, and never in
+# the digest.
+WASM_TAGS = tinygo.wasm,tinygo,purego,osusergo,math_big_pure_go,gc.precise,scheduler.asyncify,tinygo.unwind.asyncify,serial.none,tinygo.unicore
+
 # The module's size gate, in bytes: the measured build plus room for a change.
 # check holds the committed module to it, and wasm the one it just built.
 WASM_MAX_BYTES = 60000
 
-# Every Go file of this module the js/wasm target compiles into the module, one
-# a line, by import path: the digest's inputs. The test in module_test.go runs
-# the same template, and the two have to stay the same one.
-INPUTS = GOOS=js GOARCH=wasm go list -deps -f '{{if not .Standard}}{{range .GoFiles}}{{$$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{end}}' ./cmd/roommap
+# The module's inputs, one a line, by import path: every Go file and embedded
+# file of this module's own packages, as TinyGo sees them — go list runs under
+# WASM_TAGS. module_test.go reads this template from here and the tags from
+# the .build, so the digest it recomputes is listed exactly the way wasm
+# listed it, with no TinyGo.
+INPUT_FILES = {{with .Module}}{{if .Main}}{{range $$.GoFiles}}{{$$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{range $$.EmbedFiles}}{{$$.ImportPath}}/{{.}}{{"\n"}}{{end}}{{end}}{{end}}
 
-# Every package of this module the module is built from, for check's js/wasm
-# vet: the host vet never sees a js && wasm file.
-BROWSER = GOOS=js GOARCH=wasm go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./cmd/roommap
+# This module's own packages the module is built from (patterns/wasm-client.md
+# rule 3), for check's js/wasm vet, go fix and staticcheck lines: the host
+# tools never see a js && wasm file. A third-party package would fail them on
+# code this project cannot change, and the standard library is not ours.
+# Each line that uses it assigns the list first and stops on a failed or empty
+# one: `go vet $$(…)` over nothing vets . and passes.
+BROWSER = GOOS=js GOARCH=wasm go list -deps -tags "$(WASM_TAGS)" -f '{{with .Module}}{{if .Main}}{{$$.ImportPath}}{{end}}{{end}}' ./cmd/roommap
 
 # Targets are alphabetical, so the default is named rather than first.
 .DEFAULT_GOAL = check
@@ -46,7 +61,9 @@ check:
 	go mod tidy -diff
 	go test -race -shuffle=on ./...
 	CGO_ENABLED=0 go build -trimpath ./...
-	GOOS=js GOARCH=wasm go vet $$($(BROWSER))
+	l=$$($(BROWSER)) && test -n "$$l" && GOOS=js GOARCH=wasm go vet -tags "$(WASM_TAGS)" $$l
+	l=$$($(BROWSER)) && test -n "$$l" && GOOS=js GOARCH=wasm go fix -diff -tags "$(WASM_TAGS)" $$l
+	l=$$($(BROWSER)) && test -n "$$l" && go run -exec 'env GOOS=js GOARCH=wasm' honnef.co/go/tools/cmd/staticcheck@latest -tags "$(WASM_TAGS)" $$l
 	s=$$(wc -c < web/static/roommap.wasm | tr -d ' '); test "$$s" -le $(WASM_MAX_BYTES) || (echo "roommap.wasm is $$s bytes, over WASM_MAX_BYTES ($(WASM_MAX_BYTES))" && exit 1)
 
 # The same gates against the commit: a file never added, or a .env, cannot
@@ -91,13 +108,15 @@ test:
 # The browser module, rebuilt and committed: make ci needs no TinyGo, and the
 # server embeds what is in the tree. wasm_exec.js is copied from the TinyGo
 # that built the module, because it must match its compiler. Beside the module
-# go the .build file (compiler and flags) and the .sum of its inputs — every Go
-# file above, go.mod, and the .build — which module_test.go recomputes, so a
-# source change cannot ship with an old module. The size check is last.
+# go the .build file (compiler, flags, and build tags) and the .sum of its
+# inputs — every file INPUT_FILES lists under WASM_TAGS, go.mod, and the
+# .build — which module_test.go recomputes, so a source change cannot ship
+# with an old module. The size check is last.
 wasm:
 	v=$$(tinygo version | awk '{print $$3}'); test "$$v" = "$(TINYGO_VERSION)" || (echo "tinygo is $$v, and VERSIONS.md pins $(TINYGO_VERSION): install that one" && exit 1)
+	t=$$(tinygo info -target wasm $(WASM_FLAGS) | sed -n 's/^build tags: *//p' | tr ' ' ','); test "$$t" = "$(WASM_TAGS)" || (echo "tinygo builds under tags $$t, and WASM_TAGS says $(WASM_TAGS): set WASM_TAGS to them" && exit 1)
 	cp "$$(tinygo env TINYGOROOT)/targets/wasm_exec.js" web/static/js/wasm_exec.js
 	tinygo build -target wasm $(WASM_FLAGS) -o web/static/roommap.wasm ./cmd/roommap
-	printf 'tinygo-version %s\ntinygo-flags %s\n' '$(TINYGO_VERSION)' '$(WASM_FLAGS)' > web/static/roommap.wasm.build
-	($(INPUTS) | sed 's|^github.com/andygeiss/baseline-reference/v5/||'; echo go.mod; echo web/static/roommap.wasm.build) | LC_ALL=C sort | xargs shasum -a 256 > web/static/roommap.wasm.sum
+	printf 'tinygo-version %s\ntinygo-flags %s\ntinygo-tags %s\n' '$(TINYGO_VERSION)' '$(WASM_FLAGS)' '$(WASM_TAGS)' > web/static/roommap.wasm.build
+	l=$$(GOOS=js GOARCH=wasm go list -deps -tags "$(WASM_TAGS)" -f '$(INPUT_FILES)' ./cmd/roommap) && test -n "$$l" && (echo "$$l" | sed 's|^github.com/andygeiss/baseline-reference/v5/||'; echo go.mod; echo web/static/roommap.wasm.build) | LC_ALL=C sort | xargs shasum -a 256 > web/static/roommap.wasm.sum
 	s=$$(wc -c < web/static/roommap.wasm | tr -d ' '); test "$$s" -le $(WASM_MAX_BYTES) || (echo "roommap.wasm is $$s bytes, over WASM_MAX_BYTES ($(WASM_MAX_BYTES))" && exit 1)

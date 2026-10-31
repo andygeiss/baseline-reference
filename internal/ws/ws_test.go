@@ -216,6 +216,35 @@ func TestAMessageOverTheCapClosesWith1009(t *testing.T) {
 	}
 }
 
+// Rule 7 caps a message, not a frame: two fragments of ten bytes each are
+// under the 16-byte cap alone and over it together, and the second one closes
+// the socket with 1009 before its payload is read.
+func TestAFragmentedMessageOverTheCapClosesWith1009(t *testing.T) {
+	t.Parallel()
+	errs := make(chan error, 1)
+	ln := serve(t, echo(errs))
+	nc := ln.dial(t)
+	code, _, br := handshake(t, nc, "Upgrade: websocket\r\nConnection: Upgrade\r\n"+
+		"Sec-WebSocket-Key: "+rfcKey+"\r\nSec-WebSocket-Version: 13\r\nOrigin: http://chat.test\r\n")
+	if code != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake answered %d", code)
+	}
+	// Masked with a zero key, so the payload goes as written.
+	first := append([]byte{0x02, 0x80 | 10, 0, 0, 0, 0}, make([]byte, 10)...) // binary, not FIN
+	last := append([]byte{0x80, 0x80 | 10, 0, 0, 0, 0}, make([]byte, 10)...)  // continuation, FIN
+	go nc.Write(append(first, last...))
+	go io.Copy(io.Discard, br) // the server's close frame waits for a reader
+	var ce *ws.CloseError
+	select {
+	case err := <-errs:
+		if !errors.As(err, &ce) || ce.Code != ws.CloseTooLarge {
+			t.Errorf("the server ended with %v, want 1009", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the server took the 20-byte message: the cap counts a frame, not the message")
+	}
+}
+
 // A browser masks every frame; an unmasked one is the RFC's one MUST-close.
 func TestAnUnmaskedClientFrameClosesWith1002(t *testing.T) {
 	t.Parallel()

@@ -1,8 +1,6 @@
 package reference
 
 import (
-	"errors"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -14,22 +12,14 @@ import (
 var forbidden = []string{"net/http", "os/signal", "golang.org/x/sync"}
 
 // The browser packages are not a list kept here: they are whatever the module
-// is built from, under the target it builds for, so a package the module
-// starts importing is held to the rule the moment it does.
+// is built from, under the target and the build tags TinyGo builds it with, so
+// a package the module starts importing is held to the rule the moment it does.
 func TestTheBrowserPackagesStaySmall(t *testing.T) {
 	t.Parallel()
-	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "./cmd/roommap")
-	cmd.Env = append(cmd.Environ(), "GOOS=js", "GOARCH=wasm")
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			t.Fatalf("go list: %v\n%s", err, ee.Stderr)
-		}
-		t.Fatalf("go list: %v", err)
-	}
+	out := goListWasm(t, "-deps", "-f", "{{.ImportPath}}", "./cmd/roommap")
 	reached := map[string]bool{}
 	ours := 0
-	for line := range strings.Lines(string(out)) {
+	for line := range strings.Lines(out) {
 		path := strings.TrimSpace(line)
 		reached[path] = true
 		if strings.HasPrefix(path, module) {

@@ -36,10 +36,21 @@ step "gofmt"
 step "go vet"
 go vet ./...
 
-step "go vet, js/wasm: the browser packages"
-# patterns/wasm-client.md rule 3: the host vet never sees a js && wasm file, so
-# the module's own packages are vetted under the target they build for.
-GOOS=js GOARCH=wasm go vet $(GOOS=js GOARCH=wasm go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./cmd/roommap)
+step "go vet, go fix -diff and staticcheck, js/wasm: the browser packages"
+# patterns/wasm-client.md rule 3: the host tools never see a js && wasm file,
+# so this module's own packages are checked under the target they build for and
+# the build tags TinyGo compiles them with — the Makefile's WASM_TAGS, which
+# make wasm holds to what TinyGo prints. A failed or empty list is a red gate,
+# not a vet of . that passes.
+WASM_TAGS="$(sed -n 's/^WASM_TAGS = //p' Makefile)"
+[ -n "$WASM_TAGS" ] || fail "the Makefile names no WASM_TAGS"
+BROWSER="$(GOOS=js GOARCH=wasm go list -deps -tags "$WASM_TAGS" -f '{{with .Module}}{{if .Main}}{{$.ImportPath}}{{end}}{{end}}' ./cmd/roommap)" \
+    || fail "listing the browser packages"
+[ -n "$BROWSER" ] || fail "the browser package list is empty"
+GOOS=js GOARCH=wasm go vet -tags "$WASM_TAGS" $BROWSER
+GOOS=js GOARCH=wasm go fix -diff -tags "$WASM_TAGS" $BROWSER
+# With GOOS in front go run would build staticcheck itself for the browser.
+go run -exec 'env GOOS=js GOARCH=wasm' honnef.co/go/tools/cmd/staticcheck@latest -tags "$WASM_TAGS" $BROWSER
 
 step "go fix -diff"
 # stack/go.md: a rewrite to current idiom that is still pending is a red gate;
@@ -106,6 +117,8 @@ step "the WebAssembly client: pinned, sized, and two scripts"
 grep -qx "TINYGO_VERSION = $TINYGO_VERSION" Makefile || fail "the Makefile's TINYGO_VERSION is not VERSIONS.md's $TINYGO_VERSION"
 grep -qx "tinygo-version $TINYGO_VERSION" web/static/roommap.wasm.build \
     || fail "roommap.wasm was not built with TinyGo $TINYGO_VERSION — run make wasm"
+grep -qx "tinygo-tags $WASM_TAGS" web/static/roommap.wasm.build \
+    || fail "roommap.wasm was not built under the Makefile's WASM_TAGS — run make wasm"
 MAX="$(sed -n 's/^WASM_MAX_BYTES = //p' Makefile)"
 SIZE="$(wc -c < web/static/roommap.wasm | tr -d ' ')"
 [ -n "$MAX" ] && [ "$SIZE" -le "$MAX" ] || fail "roommap.wasm is $SIZE bytes, over WASM_MAX_BYTES ($MAX)"
@@ -563,11 +576,17 @@ curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" | grep -q "he
     || fail "the posted message is not in the room"
 
 step "smoke: the room map is a page that is a program"
-# patterns/wasm-client.md. The room links to it unboosted, its two scripts are
-# deferred in <head>, and the canvas names the module.
+# patterns/wasm-client.md. The room links to it unboosted, every link out of it
+# is unboosted, its two scripts are deferred in <head>, and the canvas names the
+# module.
 curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/rooms/general-chat" \
     | grep -q 'href="/rooms/general-chat/map" hx-boost="false"' || fail "the room does not link to its map, unboosted"
 curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/map.html" "localhost:$PORT/rooms/general-chat/map"
+# Leaving is a full load too: htmx swaps only the body, on a boosted link and
+# on Back to a boosted page, and the scripts are in <head>.
+sed -n '/<\/head>/,$p' "$WORKDIR/map.html" | grep -o '<a [^>]*>' > "$WORKDIR/map.links"
+[ -s "$WORKDIR/map.links" ] || fail "the map page has no links"
+grep -v 'hx-boost="false"' "$WORKDIR/map.links" && fail "a link out of the map is boosted"
 sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -q '<script src="/static/js/wasm_exec.js?v=[^"]*" defer></script>' \
     || fail "wasm_exec.js is not loaded deferred from the map's <head>"
 sed -n '/<head>/,/<\/head>/p' "$WORKDIR/map.html" | grep -q '<script src="/static/js/wasm_app.js?v=[^"]*" defer></script>' \

@@ -56,8 +56,9 @@ type mapPage struct {
 }
 
 // handleRoomMap is the page the module runs on. It is reached by a plain link
-// that opts out of the boost: the two scripts are in this page's <head>, and a
-// boosted swap would bring the body without them.
+// that opts out of the boost, and every link on it opts out too: the two
+// scripts are in this page's <head>, and a boosted swap — or Back to a boosted
+// entry — brings the body without them.
 func (a *App) handleRoomMap(w http.ResponseWriter, r *http.Request) {
 	room, err := a.rooms.BySlug(r.Context(), r.PathValue("slug"))
 	if errors.Is(err, domain.ErrNotFound) {

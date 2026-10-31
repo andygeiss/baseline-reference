@@ -21,7 +21,7 @@
       hx-status:4xx:inherited="swap:'none transition:false ignoreTitle:true' push:false"
       hx-status:5xx:inherited="swap:'none transition:false ignoreTitle:true' push:false">
   <header class="site-header">
-    <a href="/rooms">Go Chat</a>
+    <a href="/rooms"{{template "leave" .}}>Go Chat</a>
     {{with .User.Name}}<span class="site-who">{{.}}</span>{{end}}
   </header>
   <main>
@@ -33,10 +33,10 @@
       {{/* The bar is position: fixed, so this footer collapses to a zero-height
            grid row and the page shell needs no change (css-layout.md). */}}
       <nav aria-label="Sections">
-        <a href="/rooms" {{if eq .Nav "rooms"}}aria-current="page"{{end}}>
+        <a href="/rooms"{{template "leave" .}} {{if eq .Nav "rooms"}}aria-current="page"{{end}}>
           <span class="icon icon-hash" aria-hidden="true"></span>Rooms
         </a>
-        <a href="/profile" {{if eq .Nav "profile"}}aria-current="page"{{end}}>
+        <a href="/profile"{{template "leave" .}} {{if eq .Nav "profile"}}aria-current="page"{{end}}>
           <span class="icon icon-user" aria-hidden="true"></span>You
         </a>
       </nav>
@@ -46,3 +46,8 @@
   </footer>
 </body>
 </html>
+{{- /* Empty but on the room map, where every link out says hx-boost="false",
+     as the link in does: htmx swaps only the body, on a boosted link and on
+     Back to a boosted page, and the map's scripts live in <head>. Leaving and
+     returning are full loads (patterns/wasm-client.md). */}}
+{{- define "leave"}}{{end -}}

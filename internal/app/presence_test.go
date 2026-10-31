@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -26,16 +27,27 @@ func openSocket(t *testing.T, ta *testApp, client *http.Client, slug, origin str
 	if err != nil {
 		t.Fatal(err)
 	}
-	nc, err := client.Transport.(*http.Transport).DialContext(t.Context(), "tcp", u.Host)
-	if err != nil {
-		t.Fatalf("dialing the test server: %v", err)
-	}
 	header := http.Header{}
 	for _, c := range client.Jar.Cookies(u) {
 		header.Add("Cookie", c.Name+"="+c.Value)
 	}
 	if origin != "" {
 		header.Set("Origin", origin)
+	}
+	return dialSocket(t, ta.server, slug, header)
+}
+
+// dialSocket opens GET /ws?room=slug on server with exactly the headers given,
+// and an Origin of the server's own host unless they name one.
+func dialSocket(t *testing.T, server *httptest.Server, slug string, header http.Header) (*ws.Conn, error) {
+	t.Helper()
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc, err := server.Client().Transport.(*http.Transport).DialContext(t.Context(), "tcp", u.Host)
+	if err != nil {
+		t.Fatalf("dialing the test server: %v", err)
 	}
 	conn, err := ws.Dial(nc, u.Host, "/ws?room="+url.QueryEscape(slug), header)
 	if err != nil {
@@ -380,6 +392,113 @@ func TestTheMapPageCarriesTheModule(t *testing.T) {
 	}
 }
 
+// links is every <a> start tag in html, as written.
+func links(html string) []string {
+	var tags []string
+	for _, rest := range strings.Split(html, "<a ")[1:] {
+		tag, _, _ := strings.Cut(rest, ">")
+		tags = append(tags, "<a "+tag+">")
+	}
+	return tags
+}
+
+// The two scripts live in the map page's <head>, and htmx swaps only the body
+// — on a boosted link, and on Back or Forward to a boosted page. So the link
+// in and every link out carry hx-boost="false": arriving and leaving are full
+// loads. Every other page keeps its boost.
+func TestTheMapIsEnteredAndLeftByFullLoads(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+
+	_, room := ta.do(t, http.MethodGet, "/rooms/"+slug, nil, nil)
+	in := 0
+	for _, a := range links(room) {
+		if strings.Contains(a, `href="/rooms/`+slug+`/map"`) {
+			in++
+			if !strings.Contains(a, `hx-boost="false"`) {
+				t.Errorf("the link into the map is boosted: %s", a)
+			}
+		}
+	}
+	if in == 0 {
+		t.Error("the room page has no link to its map")
+	}
+
+	_, page := ta.do(t, http.MethodGet, "/rooms/"+slug+"/map", nil, nil)
+	_, body, _ := strings.Cut(page, "</head>")
+	out := links(body)
+	if len(out) < 4 { // the header, the two nav entries, back to the room
+		t.Fatalf("the map page has %d links, want the header's, the nav's and the way back", len(out))
+	}
+	for _, a := range out {
+		if !strings.Contains(a, `hx-boost="false"`) {
+			t.Errorf("a link out of the map is boosted: %s", a)
+		}
+	}
+
+	_, rooms := ta.do(t, http.MethodGet, "/rooms", nil, nil)
+	for _, a := range links(rooms) {
+		if strings.Contains(a, "hx-boost") {
+			t.Errorf("a page that is not the map opts out of the boost: %s", a)
+		}
+	}
+}
+
+// Rule 8, tier 1: the handler returns right after the handshake, and the
+// socket lives on a goroutine the app tracks. Served inside its handler, the
+// socket would let LoadAndSave commit the session it opened under once it
+// closed — after a logout had deleted it. The routes are wrapped here so the
+// test sees the handler return, and the socket must still carry a move after.
+func TestTheSocketHandlerReturnsAtTheHandshake(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+
+	returned := make(chan struct{}, 1)
+	routes := ta.Routes()
+	server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routes.ServeHTTP(w, r)
+		if r.URL.Path == "/ws" {
+			returned <- struct{}{}
+		}
+	}))
+	u, err := url.Parse(ta.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := http.Header{}
+	for _, c := range ta.client.Jar.Cookies(u) {
+		header.Add("Cookie", c.Name+"="+c.Value)
+	}
+	c, err := dialSocket(t, server, slug, header)
+	if err != nil {
+		t.Fatalf("opening the socket: %v", err)
+	}
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler still holds the socket 5s after the handshake")
+	}
+	if err := c.Write(presence.EncodeUp(7, 8)); err != nil {
+		t.Fatalf("the socket died with its handler: %v", err)
+	}
+	for {
+		msg, err := c.Read()
+		if err != nil {
+			t.Fatalf("the socket died with its handler: %v", err)
+		}
+		seats, _ := presence.DecodeDown(msg)
+		for _, s := range seats {
+			if s.Name == "Ada" && s.X == 7 && s.Y == 8 {
+				return
+			}
+		}
+	}
+}
+
 // socketBubble runs f with a test app whose server lives inside a
 // testing/synctest bubble, so socketRecheck passes on synctest's clock. The
 // options are made outside it, with a stopping context that never cancels
@@ -540,6 +659,92 @@ func TestAFloodClosesWith1008(t *testing.T) {
 		}
 		if got := <-closed; got != ws.ClosePolicy {
 			t.Errorf("closed with %d, want 1008", got)
+		}
+	})
+}
+
+// tokenSocket opens the map's socket the way a program does: a machine token
+// in Authorization, no cookie, and the Origin naming the host.
+func tokenSocket(t *testing.T, ta *testApp, secret, slug string) *ws.Conn {
+	t.Helper()
+	c, err := dialSocket(t, ta.server, slug, http.Header{"Authorization": {"Bearer " + secret}})
+	if err != nil {
+		t.Fatalf("opening the socket with a token: %v", err)
+	}
+	c.ReadTimeout = 0
+	return c
+}
+
+// closedWithin reads c until it closes, and returns the code, or fails the
+// test if the bubble's clock passes socketRecheck first. The millisecond is
+// the tie: the socket's ticker and this timer would otherwise both fire at the
+// same instant of the bubble's clock, in no promised order.
+func closedWithin(t *testing.T, c *ws.Conn) uint16 {
+	t.Helper()
+	closed := make(chan uint16, 1)
+	go func() {
+		for {
+			_, err := c.Read()
+			if err == nil {
+				continue
+			}
+			ce, _ := errors.AsType[*ws.CloseError](err)
+			if ce == nil {
+				closed <- 0
+				return
+			}
+			closed <- ce.Code
+			return
+		}
+	}()
+	select {
+	case got := <-closed:
+		return got
+	case <-time.After(socketRecheck + time.Millisecond):
+		t.Errorf("still open %v later", socketRecheck)
+		c.Close(ws.CloseNormal, "")
+		<-closed
+		return 0
+	}
+}
+
+// Rule 6, tier 1, for the other credential: a socket opened with a machine
+// token closes with 1008 within socketRecheck of the token's revocation.
+func TestARevokedTokenClosesTheSocket(t *testing.T) {
+	t.Parallel()
+	socketBubble(t, func(t *testing.T, ta *testApp) {
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		secret := ta.makeToken(t, "map")
+		c := tokenSocket(t, ta, secret, slug)
+
+		tokens, err := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t))
+		if err != nil || len(tokens) != 1 {
+			t.Fatalf("listing tokens: %v (%d tokens)", err, len(tokens))
+		}
+		if res, _ := ta.do(t, http.MethodPost, "/profile/tokens/"+tokens[0].ID+"/delete", url.Values{}, nil); res.StatusCode != http.StatusSeeOther {
+			t.Fatalf("revoking: %d", res.StatusCode)
+		}
+		if got := closedWithin(t, c); got != ws.ClosePolicy {
+			t.Errorf("closed with %d, want 1008", got)
+		}
+	})
+}
+
+// Rule 6: a store that cannot answer is not a "yes". The socket fails closed,
+// with 1011 rather than 1008: the credential may be fine, and the client may
+// try again.
+func TestAStoreErrorClosesTheSocketWith1011(t *testing.T) {
+	t.Parallel()
+	socketBubble(t, func(t *testing.T, ta *testApp) {
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		secret := ta.makeToken(t, "map")
+		c := tokenSocket(t, ta, secret, slug)
+
+		ta.tokens.goDown(errors.New("the store is down"))
+		if got := closedWithin(t, c); got != ws.CloseInternalError {
+			t.Errorf("closed with %d, want 1011", got)
 		}
 	})
 }
