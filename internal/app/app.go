@@ -69,6 +69,9 @@ type (
 	TokenStore interface {
 		Add(ctx context.Context, t *domain.Token) error
 		UserByHash(ctx context.Context, hash string) (domain.User, error)
+		// Owner is UserByHash without marking the token used: the open
+		// socket's recheck, which only reads (wasm-client.md rule 6).
+		Owner(ctx context.Context, hash string) (domain.User, error)
 		ByUser(ctx context.Context, userID string) ([]domain.Token, error)
 		Delete(ctx context.Context, userID, id string) error
 	}

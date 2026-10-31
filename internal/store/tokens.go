@@ -31,17 +31,11 @@ func (s *Tokens) Add(ctx context.Context, t *domain.Token) error {
 }
 
 // UserByHash returns whoever owns the token with that hash, and marks it used.
+// A request uses it: being used is what a request does with a token.
 func (s *Tokens) UserByHash(ctx context.Context, hash string) (domain.User, error) {
-	var u domain.User
-	err := s.db.Read.QueryRowContext(ctx,
-		`SELECT u.id, u.name, u.password_hash
-		   FROM tokens t JOIN users u ON u.id = t.user_id
-		  WHERE t.hash = ?`, hash).Scan(&u.ID, &u.Name, &u.PasswordHash)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.User{}, domain.ErrNotFound
-	}
+	u, err := s.Owner(ctx, hash)
 	if err != nil {
-		return domain.User{}, fmt.Errorf("selecting token: %w", err)
+		return domain.User{}, err
 	}
 
 	// Touch it so a person can tell which token to revoke. The WHERE clause
@@ -54,6 +48,24 @@ func (s *Tokens) UserByHash(ctx context.Context, hash string) (domain.User, erro
 		  WHERE hash = ? AND (last_used_at IS NULL OR last_used_at < ?)`,
 		now(), hash, cutoff); err != nil {
 		return domain.User{}, fmt.Errorf("touching token: %w", err)
+	}
+	return u, nil
+}
+
+// Owner returns whoever owns the token with that hash, and writes nothing. An
+// open socket asks it again and again to learn whether its token still
+// stands; that is not the token being used, and it must not queue a write.
+func (s *Tokens) Owner(ctx context.Context, hash string) (domain.User, error) {
+	var u domain.User
+	err := s.db.Read.QueryRowContext(ctx,
+		`SELECT u.id, u.name, u.password_hash
+		   FROM tokens t JOIN users u ON u.id = t.user_id
+		  WHERE t.hash = ?`, hash).Scan(&u.ID, &u.Name, &u.PasswordHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.User{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.User{}, fmt.Errorf("selecting token: %w", err)
 	}
 	return u, nil
 }

@@ -96,9 +96,19 @@ func (a *App) authenticate(r *http.Request) (domain.User, error) {
 	return a.sessionUser(r.Context())
 }
 
-// tokenUser resolves a machine token, by its hash.
+// tokenUser resolves a machine token, by its hash, and marks it used.
 func (a *App) tokenUser(ctx context.Context, hash string) (domain.User, error) {
-	user, err := a.tokens.UserByHash(ctx, hash)
+	return credentialUser(a.tokens.UserByHash(ctx, hash))
+}
+
+// tokenOwner is tokenUser that writes nothing: the open socket's recheck.
+func (a *App) tokenOwner(ctx context.Context, hash string) (domain.User, error) {
+	return credentialUser(a.tokens.Owner(ctx, hash))
+}
+
+// credentialUser turns the token store's "no such token" into the refusal
+// both surfaces answer 401, and passes anything else through.
+func credentialUser(user domain.User, err error) (domain.User, error) {
 	if errors.Is(err, domain.ErrNotFound) {
 		return domain.User{}, errBadCredential
 	}
@@ -108,19 +118,37 @@ func (a *App) tokenUser(ctx context.Context, hash string) (domain.User, error) {
 	return user, nil
 }
 
-// sessionUser resolves the browser session loaded into ctx: a request's, which
-// LoadAndSave loaded, or a socket's, which loads its own (stillSignedIn).
+// errSessionEnded means the session names somebody it no longer may: the
+// account is gone, or a reset moved the password stamp. sessionHolder reports
+// it and leaves the session alone; only a request clears it (sessionUser).
+var errSessionEnded = errors.New("session ended")
+
+// sessionUser resolves the browser session a request loaded into ctx, and
+// clears a session that has ended.
 func (a *App) sessionUser(ctx context.Context) (domain.User, error) {
+	user, err := a.sessionHolder(ctx)
+	if errors.Is(err, errSessionEnded) {
+		// The account is gone, or its password moved, but the cookie is not.
+		// Drop the session rather than looping the reader through a sign-in
+		// they already did.
+		_ = a.sessions.Destroy(ctx)
+		return domain.User{}, errNoCredential
+	}
+	return user, err
+}
+
+// sessionHolder resolves the session loaded into ctx and writes nothing: a
+// request's, which LoadAndSave loaded, or a socket's, which loads its own
+// (stillSignedIn). An ended session is errSessionEnded, for the caller to
+// act on.
+func (a *App) sessionHolder(ctx context.Context) (domain.User, error) {
 	id := a.sessions.GetString(ctx, "userID")
 	if id == "" {
 		return domain.User{}, errNoCredential
 	}
 	user, err := a.users.ByID(ctx, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		// The account is gone but the cookie is not. Drop the session rather
-		// than looping the reader through a sign-in they already did.
-		_ = a.sessions.Destroy(ctx)
-		return domain.User{}, errNoCredential
+		return domain.User{}, errSessionEnded
 	}
 	if err != nil {
 		return domain.User{}, err
@@ -130,8 +158,7 @@ func (a *App) sessionUser(ctx context.Context) (domain.User, error) {
 	// the point of resetting a password somebody else may know. A machine token
 	// is a separate credential and is revoked separately, on the profile page.
 	if a.sessions.GetString(ctx, "pwAt") != user.PasswordChangedAt {
-		_ = a.sessions.Destroy(ctx)
-		return domain.User{}, errNoCredential
+		return domain.User{}, errSessionEnded
 	}
 	return user, nil
 }

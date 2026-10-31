@@ -1,5 +1,5 @@
-# Copied from the baseline (stack/makefile.md). Adjust per its rule 5; record
-# any other deviation in the README.
+# Copied from the baseline (stack/makefile.md). Adjust per its rules 1, 3 and
+# 5; record any other deviation in the README.
 
 # This module ships two binaries, so MAIN names the one `make run` starts and
 # the build target takes them both (stack/makefile.md rule 5).

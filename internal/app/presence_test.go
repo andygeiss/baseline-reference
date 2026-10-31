@@ -539,19 +539,27 @@ func quietSocket(t *testing.T, ta *testApp, client *http.Client, slug string) *w
 // Rule 6, tier 1: what the cookie holds is re-resolved, not remembered. Each
 // way a session stops naming its person closes an open socket with 1008
 // within socketRecheck — the socket does not outlive the sign-in it opened
-// under.
+// under. The recheck only reads: a session it finds ended is still in the
+// store after the close, and the next request that carries the cookie is what
+// clears it.
 func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 	t.Parallel()
-	cases := map[string]func(t *testing.T, ta *testApp){
-		"signing out": func(t *testing.T, ta *testApp) {
+	// signsOut names the one case that removes the session itself, so there
+	// is no row left for the recheck to have kept.
+	type ending struct {
+		end      func(t *testing.T, ta *testApp)
+		signsOut bool
+	}
+	cases := map[string]ending{
+		"signing out": {signsOut: true, end: func(t *testing.T, ta *testApp) {
 			if res, _ := ta.do(t, http.MethodPost, "/logout", url.Values{}, nil); res.StatusCode != http.StatusSeeOther {
 				t.Fatalf("signing out: %d", res.StatusCode)
 			}
-		},
+		}},
 		// From another browser, the way go-data-deletion.md's "signed out
 		// everywhere" means it: this socket's session is still in the store,
 		// and only the missing user row can end it.
-		"deleting the account elsewhere": func(t *testing.T, ta *testApp) {
+		"deleting the account elsewhere": {end: func(t *testing.T, ta *testApp) {
 			mine := ta.client
 			elsewhere := *mine
 			elsewhere.Jar = emptyJar(t)
@@ -567,10 +575,10 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 			}, nil); res.StatusCode != http.StatusSeeOther {
 				t.Fatalf("deleting the account: %d", res.StatusCode)
 			}
-		},
+		}},
 		// A reset moves the password stamp, which ends every older session
 		// (go-auth-sessions.md) — this socket's included.
-		"a password reset": func(t *testing.T, ta *testApp) {
+		"a password reset": {end: func(t *testing.T, ta *testApp) {
 			user, err := ta.users.ByName(t.Context(), "Ada")
 			if err != nil {
 				t.Fatal(err)
@@ -578,9 +586,9 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 			if _, err := ta.users.SetPassword(t.Context(), user.ID, "new-hash"); err != nil {
 				t.Fatal(err)
 			}
-		},
+		}},
 	}
-	for name, end := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			socketBubble(t, func(t *testing.T, ta *testApp) {
@@ -591,7 +599,8 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 				// not moved since sign-up.
 				time.Sleep(time.Millisecond)
 
-				end(t, ta)
+				session := sessionToken(t, ta)
+				tc.end(t, ta)
 				// Bounded by the bubble's clock, so a socket that is never
 				// closed fails here rather than hanging the run.
 				closed := make(chan uint16, 1)
@@ -619,6 +628,19 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 					t.Errorf("still open %v after the session ended", socketRecheck)
 					c.Close(ws.CloseNormal, "")
 					<-closed
+				}
+				if tc.signsOut {
+					return
+				}
+				if !sessionStored(t, ta, session) {
+					t.Fatal("the socket's recheck destroyed the session; it must only read")
+				}
+				// The next request with the cookie is what clears it.
+				if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil); res.StatusCode != http.StatusSeeOther {
+					t.Errorf("a request on the ended session: %d, want 303 to sign in", res.StatusCode)
+				}
+				if sessionStored(t, ta, session) {
+					t.Error("the session outlived the next request")
 				}
 			})
 		})
@@ -742,6 +764,67 @@ func TestARevokedTokenClosesTheSocket(t *testing.T) {
 		}
 		if got := closedWithin(t, c); got != ws.ClosePolicy {
 			t.Errorf("closed with %d, want 1008", got)
+		}
+	})
+}
+
+// sessionToken is the session token in ta.client's cookie jar.
+func sessionToken(t *testing.T, ta *testApp) string {
+	t.Helper()
+	u, err := url.Parse(ta.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range ta.client.Jar.Cookies(u) {
+		if c.Name == ta.sessions.Cookie.Name {
+			return c.Value
+		}
+	}
+	t.Fatal("the client holds no session cookie")
+	return ""
+}
+
+// sessionStored reports whether the session store still holds token's row.
+func sessionStored(t *testing.T, ta *testApp, token string) bool {
+	t.Helper()
+	_, found, err := ta.sessions.Store.Find(token)
+	if err != nil {
+		t.Fatalf("finding the session: %v", err)
+	}
+	return found
+}
+
+// Rule 6, tier 1: the recheck only reads. Several rechecks of a socket opened
+// with a machine token leave the token's last-used time where opening the
+// socket put it — the fake marks a token on every use, to the second, so one
+// marking recheck would move it.
+func TestTheRecheckDoesNotMarkTheToken(t *testing.T) {
+	t.Parallel()
+	socketBubble(t, func(t *testing.T, ta *testApp) {
+		ta.signUp(t, "Ada", "correct-horse")
+		slug := ta.makeRoom(t, "General")
+		secret := ta.makeToken(t, "map")
+		c := tokenSocket(t, ta, secret, slug)
+		lastUsed := func() string {
+			tokens, err := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t))
+			if err != nil || len(tokens) != 1 {
+				t.Fatalf("listing tokens: %v (%d tokens)", err, len(tokens))
+			}
+			return tokens[0].LastUsedAt
+		}
+		opened := lastUsed()
+		if opened == "" {
+			t.Fatal("opening the socket did not mark the token used")
+		}
+
+		// Under socketPing, so no ping goes unanswered while nobody reads.
+		time.Sleep(3*socketRecheck + time.Second)
+
+		if got := lastUsed(); got != opened {
+			t.Errorf("last used %s after the rechecks, want %s from the handshake", got, opened)
+		}
+		if err := c.Write(presence.EncodeUp(1, 2)); err != nil {
+			t.Errorf("the socket closed under a live token: %v", err)
 		}
 	})
 }

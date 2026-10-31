@@ -373,6 +373,15 @@ func (f *fakeTokens) Add(_ context.Context, t *domain.Token) error {
 }
 
 func (f *fakeTokens) UserByHash(ctx context.Context, hash string) (domain.User, error) {
+	return f.lookup(ctx, hash, true)
+}
+
+func (f *fakeTokens) Owner(ctx context.Context, hash string) (domain.User, error) {
+	return f.lookup(ctx, hash, false)
+}
+
+// lookup is both reads; touch says whether this one marks the token used.
+func (f *fakeTokens) lookup(ctx context.Context, hash string, touch bool) (domain.User, error) {
 	f.mu.Lock()
 	if f.down != nil {
 		defer f.mu.Unlock()
@@ -387,7 +396,9 @@ func (f *fakeTokens) UserByHash(ctx context.Context, hash string) (domain.User, 
 	for i, t := range f.tokens {
 		if t.Hash == hash {
 			userID = t.UserID
-			f.tokens[i].LastUsedAt = time.Now().UTC().Format(time.RFC3339)
+			if touch {
+				f.tokens[i].LastUsedAt = time.Now().UTC().Format(time.RFC3339)
+			}
 			break
 		}
 	}

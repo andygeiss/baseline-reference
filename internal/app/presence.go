@@ -264,29 +264,31 @@ func (a *App) credentialOf(r *http.Request) credential {
 }
 
 // stillSignedIn resolves the seat's credential the way authenticate does, and
-// reports whether it still names the seat's person. A session is not bound to
-// this goroutine's context, so it is loaded afresh from the store by its
-// token: a destroyed or expired one loads empty, and sessionUser then checks
-// the user row and the password stamp exactly as a request would. An error is
-// the store failing to answer, never a "no" — and so is an answer that has not
-// come within socketRecheckWait.
+// reports whether it still names the seat's person. It only reads (rule 6): a
+// token is looked up without being marked used, and an ended session is
+// reported, not destroyed — the next request that carries the cookie clears
+// it. A session is not bound to this goroutine's context, so it is loaded
+// afresh from the store by its token: a destroyed or expired one loads empty,
+// and sessionHolder then checks the user row and the password stamp exactly as
+// a request would. An error is the store failing to answer, never a "no" — and
+// so is an answer that has not come within socketRecheckWait.
 func (a *App) stillSignedIn(s *seat) (bool, error) {
 	ctx, cancel := context.WithTimeout(a.stopping, socketRecheckWait)
 	defer cancel()
 	var user domain.User
 	var err error
 	if s.cred.tokenHash != "" {
-		user, err = a.tokenUser(ctx, s.cred.tokenHash)
+		user, err = a.tokenOwner(ctx, s.cred.tokenHash)
 	} else {
 		var loaded context.Context
 		if loaded, err = a.sessions.Load(ctx, s.cred.session); err == nil {
-			user, err = a.sessionUser(loaded)
+			user, err = a.sessionHolder(loaded)
 		}
 	}
 	switch {
 	case err == nil:
 		return user.ID == s.userID, nil
-	case errors.Is(err, errNoCredential), errors.Is(err, errBadCredential):
+	case errors.Is(err, errNoCredential), errors.Is(err, errBadCredential), errors.Is(err, errSessionEnded):
 		return false, nil
 	default:
 		return false, err

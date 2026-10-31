@@ -481,6 +481,24 @@ func TestTokens(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
+	// First, while nothing has used the token: Owner must not be what marks it.
+	t.Run("Owner finds the owner and marks nothing", func(t *testing.T) {
+		got, err := tokens.Owner(t.Context(), "hash-1")
+		if err != nil || got.ID != ada.ID {
+			t.Fatalf("Owner = %v, %v; want Ada", got, err)
+		}
+		if _, err := tokens.Owner(t.Context(), "nothing"); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("Owner of an unknown hash: err = %v, want ErrNotFound", err)
+		}
+		listed, err := tokens.ByUser(t.Context(), ada.ID)
+		if err != nil || len(listed) != 1 {
+			t.Fatalf("ByUser = %v, %v", listed, err)
+		}
+		if listed[0].LastUsedAt != "" {
+			t.Errorf("LastUsedAt = %q after Owner, want it untouched", listed[0].LastUsedAt)
+		}
+	})
+
 	t.Run("the hash finds its owner", func(t *testing.T) {
 		got, err := tokens.UserByHash(t.Context(), "hash-1")
 		if err != nil || got.ID != ada.ID {
