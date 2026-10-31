@@ -13,7 +13,7 @@ cd "${1:-$(dirname "$0")}"
 HTMX_SHA256="e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f"
 # The TinyGo that builds the room map's module. Pinned in the baseline's
 # VERSIONS.md; update both together, and rebuild the module with make wasm.
-TINYGO_VERSION="0.42.0"
+TINYGO_VERSION="0.44.0"
 
 PORT="${PORT:-8091}"
 OPS_PORT="${OPS_PORT:-6061}"

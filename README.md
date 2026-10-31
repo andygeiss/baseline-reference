@@ -22,7 +22,7 @@ programs; `gochat` is the program.
 
 Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`, `encoding/json/v2`) · htmx
 4.0.0 (vendored, SHA-256 checked by verify.sh — the only script on every page but the
-room map) · one WebAssembly module, the room map, built by TinyGo 0.42.0 and talking
+room map) · one WebAssembly module, the room map, built by TinyGo 0.44.0 and talking
 over a hand-written RFC 6455 socket (`patterns/wasm-client.md`) · pure CSS (cascade
 layers, mobile-first grid layout, oklch, media-query dark mode, motion-as-feedback with
 view transitions on boosted navigation, system font stack, mask icons, a fixed bottom bar, one
@@ -49,7 +49,7 @@ make check                     # default target: every gate, against the working
 make ci                        # the same gates against the commit — before a push
 make build                     # both binaries into bin/
 make lan                       # https://<your-mac>.local:8443 for a phone (see below)
-make wasm                      # rebuild the room map's module — needs TinyGo 0.42.0
+make wasm                      # rebuild the room map's module — needs TinyGo 0.44.0
 ./verify.sh                    # full acceptance gauntlet
 ```
 

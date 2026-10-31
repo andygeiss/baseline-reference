@@ -8,7 +8,7 @@ MAIN = ./cmd/server
 # The room map's browser module (patterns/wasm-client.md). TINYGO_VERSION is
 # the baseline's VERSIONS.md row, and wasm refuses any other TinyGo, so the
 # .build file it records is true (stack/makefile.md rule 4).
-TINYGO_VERSION = 0.42.0
+TINYGO_VERSION = 0.44.0
 
 # The flags the module is built with. wasm records them beside it, because the
 # digest sees only the sources.
