@@ -369,7 +369,12 @@ func (c *Conn) readFrame() (fin bool, op byte, payload []byte, err error) {
 	// counted against the cap: it is held to 125 bytes above, and counting
 	// it would close a socket over a ping that landed inside a message
 	// already near the cap.
-	if op&0x8 == 0 && uint64(len(c.frag))+length > uint64(c.maxMessage()) {
+	//
+	// The length is compared with what the cap has left, never added to what
+	// is held: a sum overflows where a difference cannot. The difference is
+	// never negative, because every earlier fragment passed this same check,
+	// so what is held never exceeds the cap.
+	if op&0x8 == 0 && length > uint64(c.maxMessage()-len(c.frag)) {
 		return false, 0, nil, c.fail(CloseTooLarge, "message over "+strconv.Itoa(c.maxMessage())+" bytes")
 	}
 

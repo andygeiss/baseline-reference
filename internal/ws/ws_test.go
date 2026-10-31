@@ -245,6 +245,36 @@ func TestAFragmentedMessageOverTheCapClosesWith1009(t *testing.T) {
 	}
 }
 
+// Rule 7 compares a fragment's length with what the cap has left, never as a
+// sum: a continuation claiming 2^63-1 bytes after a one-byte fragment closes
+// with 1009 from its header alone, with no overflow and no panic.
+func TestAFragmentClaimingTheLargestLengthClosesWith1009(t *testing.T) {
+	t.Parallel()
+	errs := make(chan error, 1)
+	ln := serve(t, echo(errs))
+	nc := ln.dial(t)
+	code, _, br := handshake(t, nc, "Upgrade: websocket\r\nConnection: Upgrade\r\n"+
+		"Sec-WebSocket-Key: "+rfcKey+"\r\nSec-WebSocket-Version: 13\r\nOrigin: http://chat.test\r\n")
+	if code != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake answered %d", code)
+	}
+	frame := []byte{0x02, 0x80 | 1, 0, 0, 0, 0, 'x'} // binary, not FIN, one byte
+	frame = append(frame, 0x80, 0x80|127)            // continuation, FIN, 64-bit length
+	frame = binary.BigEndian.AppendUint64(frame, 1<<63-1)
+	frame = append(frame, 0, 0, 0, 0) // the mask key
+	go nc.Write(frame)
+	go io.Copy(io.Discard, br) // the server's close frame waits for a reader
+	var ce *ws.CloseError
+	select {
+	case err := <-errs:
+		if !errors.As(err, &ce) || ce.Code != ws.CloseTooLarge {
+			t.Errorf("the server ended with %v, want 1009", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the server waited on a fragment claiming 2^63-1 bytes")
+	}
+}
+
 // A browser masks every frame; an unmasked one is the RFC's one MUST-close.
 func TestAnUnmaskedClientFrameClosesWith1002(t *testing.T) {
 	t.Parallel()
