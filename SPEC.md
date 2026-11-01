@@ -22,19 +22,17 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`bcbb2aa`**: `modernc.org/sqlite` v1.61.0 and rule 10 of
-`patterns/go-sqlite.md`, on branch `fix/sqlite-v1.61.0`, not yet tagged.
+Built against baseline commit **`a5975cb`**: `patterns/wasm-client.md` and its CSP token,
+on branch `promote-deviations`, tagged v5.2.0 on Andy's call after sixteen review passes
+that had not converged (the last found nine).
 
-**What moved here.** The driver is v1.61.0, with `modernc.org/libc` v1.79.0, the version its
-`go.mod` names. `store.Open` turns on `sqlite.StrictPragmas(true)`, collapses a leading `//`,
-puts `./` before a relative path and escapes `?`, `#` and `%`; the snapshot's relative
-destination gets `./` too. `TestTheDSNIsGuarded` opens six awkward paths, in a directory
-named like a table test's, and fails on every one if the escape is removed;
-`TestLockWaitEndsAtTheDeadline` holds the write lock from a second pool and fails if a
-200 ms deadline waits out `busy_timeout`, as it did under v1.58.0. Run so far only in the
-2 GB claude-sandbox, under Go 1.27.3: `gofmt`, `go vet`, `go mod tidy -diff` and every
-test green without `-race`; the race build, `go fix`, `staticcheck` and `govulncheck`
-of the driver's `lib` package do not fit in its memory. `./verify.sh` is owed.
+**What moved here.** A room map: a TinyGo 0.44.0 module committed beside its `.build` and
+`.sum`, with `WASM_TAGS`, fail-closed js/wasm vet, `go fix` and staticcheck lines, one
+`fmt` loop, and the size gate; a hand-written RFC 6455 server half behind `GET /ws` that
+refuses a missing or foreign `Origin`, caps each message and control frame without summing
+lengths, counts frames a second, and returns from its handler at the handshake; and a
+read-only re-check of the session or machine token every 5 s under a 2 s deadline that
+closes 1008, 1011 or 1001. `./verify.sh` exits 0 against `a5975cb`.
 
 ## The task (give this to the builder, human or AI, verbatim)
 
