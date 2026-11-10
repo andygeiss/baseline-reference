@@ -113,6 +113,10 @@ func (a *App) handleMessagePoll(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/rooms/"+r.PathValue("slug"), http.StatusSeeOther)
 		return
 	}
+	// A poll is a read like any other, and a cursor is not a capability
+	// (patterns/htmx-live-updates.md rule 8). requireAuth put the reader in the
+	// context, and a room here is every signed-in reader's — the README's Who
+	// owns what. For a room that is not, Since would take the reader too.
 	room, ok := a.room(w, r)
 	if !ok {
 		return
