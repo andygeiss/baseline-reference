@@ -79,6 +79,14 @@ func TestRoomPagesBackwards(t *testing.T) {
 	if !ok {
 		t.Fatal("no Show older control on a room with more messages than one page")
 	}
+	// The control carries an id, or htmx cannot put focus back on its
+	// replacement, and both of its attributes carry one URL.
+	want := "/rooms/" + slug + "/older?before=" + cursor
+	for _, attr := range []string{`<a id="messages-more"`, `href="` + want + `"`, `hx-get="` + want + `"`} {
+		if !strings.Contains(first, attr) {
+			t.Errorf("the Show older control is missing %s", attr)
+		}
+	}
 
 	// One press. The answer replaces the control, so it carries the rest of the
 	// room and no control of its own once there is nothing older.
@@ -95,6 +103,11 @@ func TestRoomPagesBackwards(t *testing.T) {
 	}
 	if _, ok := olderCursor(older); ok {
 		t.Error("the control came back on the last page, with nothing older to ask for")
+	}
+	// Where the control was, an end marker with the control's id: the focus the
+	// swap took lands on it instead of falling to <body>.
+	if !strings.Contains(older, `<li id="messages-more" class="more" tabindex="-1">No older messages</li>`) {
+		t.Errorf("the last page carries no end marker under the control's id:\n%s", older)
 	}
 }
 

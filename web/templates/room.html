@@ -31,14 +31,26 @@
      cursor rides in the query string (patterns/htmx-lists.md).
 
      hx-target is the enclosing <li>, so the answer — the next control, and the
-     older rows under it — lands exactly where this one sat. */}}
+     older rows under it — lands exactly where this one sat.
+
+     The id is for focus. The swap replaces the link that was just pressed, and
+     htmx puts focus back only on an element it finds by id: without one, focus
+     falls to <body> after every press and the next Tab skips the fresh
+     control. */}}
 {{define "more"}}
 <li class="more">
-  <a href="/rooms/{{.Room.Slug}}/older?before={{.Older}}"
-     hx-get="/rooms/{{.Room.Slug}}/older?before={{.Older}}"
+  <a id="messages-more"
+     href="{{.OlderURL}}"
+     hx-get="{{.OlderURL}}"
      hx-target="closest li"
      hx-swap="outerHTML">Show older messages</a>
 </li>
+{{end}}
+
+{{/* What the last press gets where the control was: the same id, so the focus
+     the swap took has somewhere to land, and nothing left to press. */}}
+{{define "no-more"}}
+<li id="messages-more" class="more" tabindex="-1">No older messages</li>
 {{end}}
 
 {{/* No .Format anywhere: the handler already turned the moment into strings, in
@@ -149,6 +161,6 @@
      That order is the list's order — this fragment replaces a control that sits
      above the oldest message on the page. */}}
 {{define "older-update"}}
-{{if .HasOlder}}{{template "more" .}}{{end}}
+{{if .HasOlder}}{{template "more" .}}{{else}}{{template "no-more" .}}{{end}}
 {{range .Messages}}{{template "message" .}}{{end}}
 {{end}}

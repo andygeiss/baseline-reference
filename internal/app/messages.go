@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -43,8 +44,14 @@ type roomPage struct {
 	// paged list and a polled one start answering each other's questions
 	// (patterns/htmx-lists.md).
 	Since    int64
-	Older    int64
 	HasOlder bool
+
+	// OlderURL is the "Show older" control's address, built once here and
+	// written into both of its attributes. html/template escapes a value as a
+	// URL only where it knows the attribute holds one, and hx-get is not such
+	// an attribute — so the template is handed a finished URL, never the
+	// pieces of one (patterns/htmx-lists.md).
+	OlderURL string
 
 	Form       messageForm
 	MaxBodyLen int
@@ -366,7 +373,8 @@ func (a *App) roomView(r *http.Request, room domain.Room, msgs []domain.Message,
 		MaxFileMB:  domain.MaxAttachmentBytes >> 20,
 	}
 	if len(msgs) > 0 {
-		page.Older = msgs[0].Seq
+		page.OlderURL = "/rooms/" + url.PathEscape(room.Slug) + "/older?" +
+			url.Values{"before": {strconv.FormatInt(msgs[0].Seq, 10)}}.Encode()
 	}
 	return page
 }
