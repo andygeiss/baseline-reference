@@ -249,10 +249,55 @@ func snapshot(ctx context.Context, logger *slog.Logger, db *store.DB, dbPath str
 			return
 		}
 		logger.Info("snapshot written", "path", dst)
+		// Only after a copy that succeeded: a failing VACUUM must not eat the
+		// older files it was meant to add to.
+		if err := pruneSnapshots(filepath.Dir(dst), keptSnapshots); err != nil {
+			logger.Error("pruning old snapshots", "err", err)
+		}
 	}
 	// every runs write at boot, so a fresh deployment is never a day away from
 	// its first copy.
 	return every(ctx, 24*time.Hour, write)
+}
+
+// keptSnapshots is how many snapshot files stay beside the database. Each one
+// holds everyone deleted since it was written, so this number is how long a
+// deleted account can outlive its delete on this machine, and the README names
+// it (patterns/go-data-deletion.md).
+const keptSnapshots = 3
+
+// pruneSnapshots removes every snapshot in dir but the newest keep.
+//
+// It deletes files, so it deletes only what snapshot wrote: a regular file
+// named snapshot-<date>.db whose date parses. The dates sort as text, and
+// os.ReadDir returns names sorted, so the oldest come first.
+func pruneSnapshots(dir string, keep int) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("listing %s: %w", dir, err)
+	}
+	var ours []string
+	for _, e := range entries {
+		day, ok := strings.CutPrefix(e.Name(), "snapshot-")
+		if !ok {
+			continue
+		}
+		if day, ok = strings.CutSuffix(day, ".db"); !ok || !e.Type().IsRegular() {
+			continue
+		}
+		if _, err := time.Parse(time.DateOnly, day); err != nil {
+			continue
+		}
+		ours = append(ours, e.Name())
+	}
+	var errs []error
+	for len(ours) > keep {
+		if err := os.Remove(filepath.Join(dir, ours[0])); err != nil {
+			errs = append(errs, err)
+		}
+		ours = ours[1:]
+	}
+	return errors.Join(errs...)
 }
 
 // every runs do now, then on a ticker until ctx is canceled — an owned

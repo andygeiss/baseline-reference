@@ -228,7 +228,7 @@ where people are, and this shows who is.
 
 ## Decisions the baseline makes a project name
 
-Three patterns end by asking for an answer in the README rather than handing out a
+Four patterns end by asking for an answer in the README rather than handing out a
 default. Here they are, in one place.
 
 - **Time zone: one for the whole app** (`patterns/time-and-dates.md`). No JavaScript
@@ -248,6 +248,12 @@ default. Here they are, in one place.
   everything, and a row and its file cannot disagree — which is why this app has no
   orphan sweeper. The cost is the 2 MB cap: the right size for a screenshot or a log,
   the wrong size for video.
+- **Three snapshots are kept** (`patterns/go-data-deletion.md`). Each daily
+  `VACUUM INTO` file beside the database still holds everyone deleted since it was
+  written, so the number decides how long a deleted account outlives its delete on this
+  machine: the ticker that writes a snapshot removes all but the newest three. Three is
+  a weekend without anybody looking, and no more. Copies that left the machine are the
+  deployment's to expire.
 
 ## Baseline deviations
 

@@ -433,6 +433,10 @@ step "smoke: booting server on :$PORT (ops :$OPS_PORT)"
 # child process inherits (patterns/go-config.md).
 mkdir -p "$WORKDIR/creds"
 printf '%s\n' "$INVITE" > "$WORKDIR/creds/invite_code"
+# Four snapshots from days long gone, for the pruning check further down.
+for day in 2026-01-01 2026-01-02 2026-01-03 2026-01-04; do
+    : > "$WORKDIR/snapshot-$day.db"
+done
 # -timezone is a named zone on purpose: a minimal container has no
 # /usr/share/zoneinfo, so booting with one is what proves the database is inside
 # the binary (patterns/time-and-dates.md).
@@ -986,11 +990,24 @@ step "smoke: the backup snapshot is written and opens"
 # patterns/go-sqlite.md: this app's answer to "if the server disappears right
 # now, what have you lost?" is "up to a day", so it writes a consistent copy
 # beside the database at boot and once a day after.
-SNAPSHOT="$(ls "$WORKDIR"/snapshot-*.db 2>/dev/null | head -1)"
+# The dates sort as text, so the last name is the one this boot wrote.
+SNAPSHOT="$(ls "$WORKDIR"/snapshot-*.db 2>/dev/null | tail -1)"
 [ -n "$SNAPSHOT" ] || fail "no snapshot was written at boot"
+case "$SNAPSHOT" in
+    */snapshot-2026-01-*) fail "no snapshot was written at boot: only the planted ones are there" ;;
+esac
 # A snapshot that cannot be read is not a backup. VACUUM INTO writes a whole
 # database, so sqlite's own header is what proves it.
 head -c 15 "$SNAPSHOT" | grep -q "SQLite format 3" || fail "the snapshot is not a SQLite database"
+
+step "smoke: old snapshots are pruned to the three the README names"
+# patterns/go-data-deletion.md: each snapshot holds everyone deleted since it
+# was written, so the ticker that writes one deletes the rest. Four were planted
+# before boot; the newest two of them and today's are what may be left.
+KEPT="$(ls "$WORKDIR"/snapshot-*.db | wc -l | tr -d ' ')"
+[ "$KEPT" = "3" ] || fail "$KEPT snapshots beside the database, want 3"
+[ ! -e "$WORKDIR/snapshot-2026-01-01.db" ] && [ ! -e "$WORKDIR/snapshot-2026-01-02.db" ] \
+    || fail "the oldest snapshots were not the ones removed"
 
 step "smoke: state survives restart"
 # A fresh message rather than one from the top of this run: the room pages, so
