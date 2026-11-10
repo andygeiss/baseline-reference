@@ -349,6 +349,41 @@ func TestAReplyTheAppGaveUpOnReturnsTheContextsError(t *testing.T) {
 	}
 }
 
+// roundTrip lets a test answer for the transport, where a test server cannot
+// say when the client has started reading.
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// cancelOnRead is a body whose first read is the moment the app gives up.
+type cancelOnRead struct{ cancel context.CancelFunc }
+
+func (b cancelOnRead) Read([]byte) (int, error) { b.cancel(); return 0, context.Canceled }
+func (cancelOnRead) Close() error               { return nil }
+
+// TestACancelWhileTheReplyIsReadReturnsTheContextsError: the answer's headers
+// have arrived and the app gives up while the body is read. That is the app
+// stopping, not a reply that does not decode, and shutdown tells the two apart
+// by errors.Is (patterns/go-http-client.md, One request, end to end).
+func TestACancelWhileTheReplyIsReadReturnsTheContextsError(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	a := New("test-key")
+	a.http = &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: cancelOnRead{cancel}, Request: r}, nil
+	})}
+
+	_, err := a.Reply(ctx, history())
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Reply() = %v, want context.Canceled", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "decoding the reply") {
+		t.Errorf("Reply() = %v: the app's own cancel reads as a reply that does not decode", err)
+	}
+}
+
 // TestAReplyThatDoesNotDecodeStaysOutOfTheError: the decoder's text quotes the
 // answer — the name of a member it met twice, here — and the answer is the
 // model's words about the room. The error is a fixed sentence

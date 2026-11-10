@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/chatapi"
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -257,6 +258,43 @@ func TestUnknownStatusIsStillAnError(t *testing.T) {
 // error, and a fixed sentence. The decoder's own text quotes the answer — a
 // member's name here — so it is not wrapped
 // (patterns/go-http-client.md, One request, end to end).
+// TestACancelWhileTheAnswerIsReadReturnsTheContextsError: the headers have
+// arrived and the caller gives up while the body is read. That is the caller
+// stopping, not an answer that is not JSON
+// (patterns/go-http-client.md, One request, end to end).
+//
+// The server waits before it cancels so that the client is reading the body by
+// then. Were the cancel to land earlier, the call would fail in transport and
+// this test would pass without testing the decode: it can go quiet, never red.
+func TestACancelWhileTheAnswerIsReadReturnsTheContextsError(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	held := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"name":`) // the headers and the start of an answer
+		w.(http.Flusher).Flush()
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-held:
+		}
+		cancel()
+		<-held // and the rest never comes
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(held) }) // first: Close waits for the handler
+
+	_, err := chatapi.New(srv.URL, "gochat_token").Me(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "not the JSON") {
+		t.Errorf("err = %v: the caller's own cancel reads as a bad answer", err)
+	}
+}
+
 func TestAnswerThatIsNotJSONIsAnError(t *testing.T) {
 	t.Parallel()
 	for name, body := range map[string]string{

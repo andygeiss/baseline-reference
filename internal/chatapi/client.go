@@ -10,6 +10,7 @@ package chatapi
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -259,9 +260,11 @@ func decode(res *http.Response, out any) error {
 			return nil
 		}
 		// Capped: a server that answers forever would otherwise fill this
-		// process. No %w: the decoder's text quotes the answer.
+		// process. No %w: the decoder's text quotes the answer. The context's
+		// error first: a cancel that lands while the body is read is the
+		// caller giving up, not a bad answer.
 		if err := json.UnmarshalRead(io.LimitReader(res.Body, maxBody), out); err != nil {
-			return errors.New("chatapi: the answer is not the JSON this client expects")
+			return cmp.Or(res.Request.Context().Err(), errors.New("chatapi: the answer is not the JSON this client expects"))
 		}
 		return nil
 

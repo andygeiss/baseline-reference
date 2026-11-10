@@ -166,6 +166,11 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 
 	var out response
 	if err := json.UnmarshalRead(io.LimitReader(res.Body, maxBody), &out); err != nil {
+		// The context's error first: a cancel that lands while the body is
+		// read is the app giving up, and shutdown tells that by errors.Is.
+		if cerr := ctx.Err(); cerr != nil {
+			return "", fmt.Errorf("asking the model: %w", cerr)
+		}
 		// No %w: the decoder's text quotes the answer, and the answer is the
 		// model's words about the room's conversation.
 		return "", errors.New("decoding the reply")
