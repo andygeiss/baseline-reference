@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/auth"
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/auth"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // middleware is the one canonical chain, outermost → innermost.

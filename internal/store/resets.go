@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 type Resets struct {

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
-	"github.com/andygeiss/baseline-reference/v5/internal/store"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/store"
 	"modernc.org/sqlite"
 )
 

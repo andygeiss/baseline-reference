@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/auth"
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/auth"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // tokenView is one token as the page sees it. LastUsed is a Stamp rather than

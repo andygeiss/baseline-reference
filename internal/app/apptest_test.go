@@ -19,8 +19,8 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/auth"
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/auth"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // dummyHash is built once for the whole package. Each one costs a real

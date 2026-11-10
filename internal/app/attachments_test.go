@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // Bytes that are what they claim to be, and bytes that are not.

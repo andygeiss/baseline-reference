@@ -9,10 +9,10 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/auth"
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
-	"github.com/andygeiss/baseline-reference/v5/internal/presence"
-	"github.com/andygeiss/baseline-reference/v5/internal/ws"
+	"github.com/andygeiss/baseline-reference/v6/internal/auth"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/presence"
+	"github.com/andygeiss/baseline-reference/v6/internal/ws"
 )
 
 // A room's map is the one page here that is a program: a canvas showing who

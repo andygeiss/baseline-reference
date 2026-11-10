@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // The fakes: working in-memory stores, written by hand.

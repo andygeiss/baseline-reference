@@ -22,16 +22,16 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`b2f040a`**, on the baseline's branch `owed-fixes`:
-untagged, and not merged. It is the last commit of the 2026-11-10 backlog run that
-changes anything a project reads. That run read the baseline's oldest unread documents
-four times and did not converge. Its owner then took two areas out of the baseline, a
-CLI that listens and a program a tool keeps running, and changed what a tag needs: no
-known high, and every known medium listed. **One high is known and waits on his
-decision:** a password reset leaves the user's machine tokens. This repository follows
-the rule as it is written, so its reset leaves them too.
+Built against baseline commit **`b2f040a`**, tagged v6.0.0 on Andy's call. It is the
+last commit of the 2026-11-10 backlog run that changes anything a project reads. That
+run read the baseline's oldest unread documents four times and did not converge. Its
+owner then took two areas out of the baseline, a CLI that listens and a program a tool
+keeps running, and changed what a tag needs: no known high, and every known medium
+listed. **One high was known at the tag, and the tag shipped on his decision:** a
+password reset leaves the user's machine tokens. This repository follows the rule as it
+is written, so its reset leaves them too.
 
-**What moved here,** in three syncs on the branch `sync-owed-run`. Sessions: the store
+**What moved here,** in three syncs. Sessions: the store
 hashes its token, keeps a deleted row emptied, writes no emptied and no expired row, and
 its janitor runs an hour behind; the user row carries a password counter, and every
 statement a password or a reset link allows names the value its request loaded. The 500

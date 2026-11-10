@@ -16,8 +16,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/presence"
-	"github.com/andygeiss/baseline-reference/v5/internal/ws"
+	"github.com/andygeiss/baseline-reference/v6/internal/presence"
+	"github.com/andygeiss/baseline-reference/v6/internal/ws"
 )
 
 // openSocket opens GET /ws?room=slug through the whole middleware chain, as the

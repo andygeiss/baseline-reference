@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/ws"
+	"github.com/andygeiss/baseline-reference/v6/internal/ws"
 )
 
 // debugLog is a logger that keeps every level, so a test can tell an error

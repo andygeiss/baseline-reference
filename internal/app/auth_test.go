@@ -17,8 +17,8 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/auth"
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/auth"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 func TestRegister(t *testing.T) {

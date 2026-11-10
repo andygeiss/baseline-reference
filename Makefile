@@ -131,5 +131,5 @@ wasm:
 	cp "$$(tinygo env TINYGOROOT)/targets/wasm_exec.js" web/static/js/wasm_exec.js
 	tinygo build -target wasm $(WASM_FLAGS) -o web/static/roommap.wasm ./cmd/roommap
 	printf 'tinygo-version %s\nwasm-opt-version %s\ntinygo-flags %s\ntinygo-tags %s\n' '$(TINYGO_VERSION)' '$(WASMOPT_VERSION)' '$(WASM_FLAGS)' '$(WASM_TAGS)' > web/static/roommap.wasm.build
-	l=$$(GOOS=js GOARCH=wasm go list -deps -tags "$(WASM_TAGS)" -f '$(INPUT_FILES)' ./cmd/roommap) && test -n "$$l" && (echo "$$l" | sed 's|^github.com/andygeiss/baseline-reference/v5/||'; echo go.mod; echo web/static/roommap.wasm.build) | LC_ALL=C sort | xargs shasum -a 256 > web/static/roommap.wasm.sum
+	l=$$(GOOS=js GOARCH=wasm go list -deps -tags "$(WASM_TAGS)" -f '$(INPUT_FILES)' ./cmd/roommap) && test -n "$$l" && (echo "$$l" | sed 's|^github.com/andygeiss/baseline-reference/v6/||'; echo go.mod; echo web/static/roommap.wasm.build) | LC_ALL=C sort | xargs shasum -a 256 > web/static/roommap.wasm.sum
 	s=$$(wc -c < web/static/roommap.wasm | tr -d ' '); test "$$s" -le $(WASM_MAX_BYTES) || (echo "roommap.wasm is $$s bytes, over WASM_MAX_BYTES ($(WASM_MAX_BYTES))" && exit 1)

@@ -16,7 +16,7 @@ import (
 
 	"github.com/alexedwards/scs/v2"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // The ports: what this app needs from persistence, in its own words. Each one

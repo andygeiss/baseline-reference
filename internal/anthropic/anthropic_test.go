@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // serving points an adapter at a test server. No test in this package reaches

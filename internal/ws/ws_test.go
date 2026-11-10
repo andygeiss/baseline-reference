@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/ws"
+	"github.com/andygeiss/baseline-reference/v6/internal/ws"
 )
 
 // The RFC's own handshake example, section 1.3: this key gets this answer.

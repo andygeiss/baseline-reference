@@ -18,7 +18,7 @@ import (
 // a source change without a rebuild goes red here rather than shipping an old
 // module.
 
-const module = "github.com/andygeiss/baseline-reference/v5"
+const module = "github.com/andygeiss/baseline-reference/v6"
 
 func TestTheCommittedModuleIsBuiltFromTheTree(t *testing.T) {
 	t.Parallel()

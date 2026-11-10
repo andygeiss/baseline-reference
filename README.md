@@ -57,7 +57,7 @@ Open the app, make an account, make a room, say something. Then make a token on
 the **You** page and talk to the same rooms from a terminal:
 
 ```sh
-go install github.com/andygeiss/baseline-reference/v5/cmd/gochat@latest
+go install github.com/andygeiss/baseline-reference/v6/cmd/gochat@latest
 
 echo "$TOKEN" > ~/.config/gochat/token
 export GOCHAT_ADDR=http://localhost:8080 GOCHAT_TOKEN_FILE=~/.config/gochat/token

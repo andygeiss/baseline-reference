@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/chatapi"
-	"github.com/andygeiss/baseline-reference/v5/internal/domain"
+	"github.com/andygeiss/baseline-reference/v6/internal/chatapi"
+	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
 
 // serverSaying stands in for a Go Chat server, answering every request the same

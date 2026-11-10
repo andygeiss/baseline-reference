@@ -13,7 +13,7 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/andygeiss/baseline-reference/v5/internal/presence"
+	"github.com/andygeiss/baseline-reference/v6/internal/presence"
 )
 
 // sendEvery is the least time between two positions sent up. Twenty a second
