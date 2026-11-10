@@ -1089,6 +1089,14 @@ HELDTOKENPID=$!
     -H "Cookie: session=$HELDSESSION" -H 'X-Forwarded-For: 198.51.100.22' \
     "localhost:$PORT/account/delete" > "$WORKDIR/held-delete.code" &
 HELDDELETEPID=$!
+# A third, which checks no password: it sets the address a reset link is mailed
+# to. Signed in when its headers arrive, finished after the reset has ended
+# that session, it would point the next link at whoever the reset locks out.
+( printf 'email='; sleep 2; printf 'elsewhere%%40example.net' ) | curl -s -o /dev/null \
+    -w '%{http_code}' -T - -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H "Cookie: session=$HELDSESSION" \
+    "localhost:$PORT/profile/email" > "$WORKDIR/held-email.code" &
+HELDEMAILPID=$!
 sleep 0.4
 # Its own client IP throughout: the reset endpoints are rate limited per address
 # like every other way in, and this gate is about the link, not about how often
@@ -1127,7 +1135,7 @@ step "smoke: a password reset deletes the user's machine tokens"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $OLDSECRET" "localhost:$PORT/rooms")"
 [ "$CODE" = "401" ] || fail "a token made before the reset still answers $CODE, want 401"
 
-step "smoke: a token creation and an account delete held open across the reset change no row"
+step "smoke: a token creation, an account delete and an address write held open across the reset change no row"
 # patterns/go-auth-sessions.md rule 1: every statement a password allowed names
 # the password counter its request loaded, and no row changed is a refusal. Both
 # requests passed the sign-in check before the reset and checked the old
@@ -1144,6 +1152,13 @@ curl -fsS -c "$JAR3" -b "$JAR3" "localhost:$PORT/profile" > "$WORKDIR/held-profi
     || fail "the account a held-open delete named is gone"
 grep -q 'action="/profile/tokens/' "$WORKDIR/held-profile.html" \
     && fail "a token was made with a password that had been reset"
+# The address write checks no password, so no baseline rule names it. It names
+# the counter all the same: the address is where the next reset link goes.
+wait "$HELDEMAILPID" || fail "the held-open address request did not finish"
+CODE="$(cat "$WORKDIR/held-email.code")"
+[ "$CODE" = "401" ] || fail "an address write held open across a reset answered $CODE, want 401"
+grep -q 'value="intruder@example.com"' "$WORKDIR/held-profile.html" \
+    || fail "a request held open across the reset changed the address a reset link is mailed to"
 
 step "smoke: asking for a reset says the same thing whoever asks"
 # Three requests the server knows three different things about, and one answer.

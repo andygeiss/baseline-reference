@@ -124,13 +124,15 @@ func (f *fakeUsers) Rehash(_ context.Context, id, hash string, version int64) er
 }
 
 // reset is a password set from somewhere else, as a redeemed link makes one:
-// the hash, the counter moved, and the user's reset links gone.
+// the hash, the counter moved, and the user's reset links and machine tokens
+// gone, under one lock as the store does it in one transaction.
 func (f *fakeUsers) reset(id, hash string) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.resetPassword(id, hash)
-	f.mu.Unlock()
 	if f.resets != nil {
 		f.resets.forget(id)
+		f.resets.tokens.forget(id)
 	}
 }
 
@@ -144,12 +146,15 @@ func (f *fakeUsers) resetPassword(id, hash string) domain.User {
 	return u
 }
 
-func (f *fakeUsers) SetEmail(_ context.Context, id, email string) error {
+// SetEmail names the password counter, like the store: a fake that wrote by
+// user id alone would let an address write held open across a reset go
+// through, and still pass.
+func (f *fakeUsers) SetEmail(_ context.Context, id, email string, version int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
-	if !ok {
-		return domain.ErrNotFound
+	if !ok || u.PasswordVersion != version {
+		return domain.ErrStale
 	}
 	u.Email = email
 	f.byID[id] = u
@@ -343,8 +348,8 @@ type fakeResets struct {
 // newFakeResets ties the two fakes together, because the store ties the two
 // tables together: a redeemed link sets a password, and setting one deletes
 // the user's links.
-func newFakeResets(users *fakeUsers) *fakeResets {
-	f := &fakeResets{users: users, links: make(map[string]domain.Reset)}
+func newFakeResets(users *fakeUsers, tokens *fakeTokens) *fakeResets {
+	f := &fakeResets{users: users, tokens: tokens, links: make(map[string]domain.Reset)}
 	users.resets = f
 	return f
 }
@@ -388,9 +393,11 @@ func (f *fakeResets) Redeem(_ context.Context, hash, passwordHash string, now ti
 		return domain.User{}, domain.ErrNotFound
 	}
 
+	// One lock across the password, the links and the tokens, as the store's
+	// one transaction is: a token insert checks the counter under the same lock.
 	f.users.mu.Lock()
+	defer f.users.mu.Unlock()
 	user := f.users.resetPassword(res.UserID, passwordHash)
-	f.users.mu.Unlock()
 	f.forget(res.UserID)
 	f.tokens.forget(res.UserID)
 	return user, nil
@@ -442,9 +449,11 @@ func (f *fakeTokens) forget(userID string) {
 // by user id alone would let a token creation held open across a reset go
 // through, and still pass.
 func (f *fakeTokens) Add(_ context.Context, t *domain.Token, version int64) error {
+	// The check and the insert under one lock, as the store's one statement
+	// is: released in between, a reset could land there and leave this token.
 	f.users.mu.Lock()
+	defer f.users.mu.Unlock()
 	owner, ok := f.users.byID[t.UserID]
-	f.users.mu.Unlock()
 	if !ok || owner.PasswordVersion != version {
 		return domain.ErrStale
 	}

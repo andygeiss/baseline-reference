@@ -102,10 +102,23 @@ func (s *Users) Rehash(ctx context.Context, id, hash string, version int64) erro
 }
 
 // SetEmail stores somebody's address, or clears it when email is empty.
-func (s *Users) SetEmail(ctx context.Context, id, email string) error {
-	if _, err := s.db.Write.ExecContext(ctx,
-		`UPDATE users SET email = ? WHERE id = ?`, email, id); err != nil {
+//
+// version is the password counter as the request read it, and the UPDATE names
+// it. The address is where a reset link is mailed, so whoever writes it can
+// take the account: a request held open across a reset, by a session or a
+// token that reset has ended, must change no row. The baseline's rule 1 asks
+// this of statements a password allowed; this one a credential alone allows,
+// and it names the counter all the same. No row changed is domain.ErrStale.
+func (s *Users) SetEmail(ctx context.Context, id, email string, version int64) error {
+	res, err := s.db.Write.ExecContext(ctx,
+		`UPDATE users SET email = ? WHERE id = ? AND password_version = ?`, email, id, version)
+	if err != nil {
 		return fmt.Errorf("setting the email of user %s: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("counting the email write of user %s: %w", id, err)
+	} else if n == 0 {
+		return domain.ErrStale
 	}
 	return nil
 }

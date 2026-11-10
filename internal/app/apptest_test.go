@@ -118,8 +118,8 @@ func newTestOptions(t *testing.T, options ...func(*Options)) Options {
 	users.byID[domain.AssistantID] = domain.User{ID: domain.AssistantID, Name: "Assistant"}
 
 	files := newFakeAttachments()
-	resets, tokens := newFakeResets(users), newFakeTokens(users)
-	resets.tokens = tokens // a reset deletes the user's tokens, as the store's does
+	tokens := newFakeTokens(users)
+	resets := newFakeResets(users, tokens) // a reset deletes the user's tokens, as the store's does
 	o := Options{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Users:       users,

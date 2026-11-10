@@ -33,7 +33,9 @@ type (
 		// (patterns/go-auth-sessions.md rule 1). Rehash writes a new hash of
 		// the same password and moves nothing.
 		Rehash(ctx context.Context, id, hash string, version int64) error
-		SetEmail(ctx context.Context, id, email string) error
+		// SetEmail names the counter too, though a credential alone allows
+		// it: the address is where a reset link goes.
+		SetEmail(ctx context.Context, id, email string, version int64) error
 		Delete(ctx context.Context, id string, version int64) error
 	}
 

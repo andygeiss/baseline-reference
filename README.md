@@ -506,6 +506,15 @@ candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.
   and the reset reads its link and the counter in the transaction that writes, so its
   predicate cannot refuse by itself today — a link another reset has already deleted is
   what refuses.
+- **The address write names the password counter too** (`internal/store/users.go`).
+  No rule asks it: a session or a token alone may set the address, with no password, so
+  rule 1 does not reach the statement. But the address is where a reset link is mailed.
+  A request signed in when its headers arrived, its body held open across a reset, used
+  to re-point the address after that reset had ended its credential, and the next link
+  went to whoever the reset was meant to lock out (found by the check of baseline
+  v6.0.1, 2026-11-10). The write now changes no row and answers 401. **Still open
+  here, and in the baseline:** setting the address asks for no password, so a stolen
+  session can set it and then reset the password.
 - **Migration 0005 signs everybody out, once.** The counter replaces a time, and a
   stored session recorded the time: there is nothing to read a counter out of. The
   `sessions` table is made again with a nullable `data` column — `NULL` is the mark of a

@@ -25,7 +25,7 @@ func NewTokens(db *DB) *Tokens {
 // INSERT names it: making a token is allowed by a password checked against the
 // row that request loaded, and a reset that landed since has made that check
 // worthless — the request was held open across it, and would leave with a
-// credential no reset ends (patterns/go-auth-sessions.md rule 1). No row
+// credential made after the reset that deletes them (patterns/go-auth-sessions.md rule 1). No row
 // inserted is domain.ErrStale: a refusal, never a retry.
 func (s *Tokens) Add(ctx context.Context, t *domain.Token, version int64) error {
 	res, err := s.db.Write.ExecContext(ctx,

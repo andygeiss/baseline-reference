@@ -160,8 +160,8 @@ func (a *App) sessionHolder(ctx context.Context) (domain.User, error) {
 	// else: the middleware and the socket's re-check both call it, and a socket
 	// never passes the middleware again (patterns/go-auth-sessions.md rule 1).
 	// A session that recorded no counter has no value to compare, and that
-	// differs too. A machine token is a separate credential and is revoked
-	// separately, on the profile page.
+	// differs too. A machine token is a separate credential: a reset deletes
+	// it in its own transaction, and the profile page revokes one.
 	if v, ok := a.sessions.Get(ctx, sessionPasswordVersion).(int64); !ok || v != user.PasswordVersion {
 		return domain.User{}, errSessionEnded
 	}

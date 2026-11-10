@@ -63,6 +63,18 @@ func addUser(t *testing.T, db *store.DB, name string) domain.User {
 	return *u
 }
 
+// setEmail stores an address the way a request does: under the password
+// counter of the row as it now stands.
+func setEmail(t *testing.T, db *store.DB, id, email string) error {
+	t.Helper()
+	users := store.NewUsers(db)
+	u, err := users.ByID(t.Context(), id)
+	if err != nil {
+		return err
+	}
+	return users.SetEmail(t.Context(), id, email, u.PasswordVersion)
+}
+
 func addRoom(t *testing.T, db *store.DB, name string) domain.Room {
 	t.Helper()
 	rooms := store.NewRooms(db)
@@ -243,7 +255,7 @@ func TestATokenIsAddedOnlyAtTheCounterItsRequestLoaded(t *testing.T) {
 
 	// A request signed by that token loads the same row a session's does, the
 	// counter with it: it may go on to a statement that names the counter.
-	if err := store.NewUsers(db).SetEmail(t.Context(), ada.ID, "ada@example.com"); err != nil {
+	if err := setEmail(t, db, ada.ID, "ada@example.com"); err != nil {
 		t.Fatalf("storing Ada's address: %v", err)
 	}
 	for name, lookup := range map[string]func(context.Context, string) (domain.User, error){
@@ -265,7 +277,7 @@ func TestAnAccountIsDeletedOnlyAtTheCounterItsRequestLoaded(t *testing.T) {
 	db := newTestDB(t)
 	users := store.NewUsers(db)
 	ada := addUser(t, db, "Ada")
-	if err := users.SetEmail(t.Context(), ada.ID, "ada@example.com"); err != nil {
+	if err := setEmail(t, db, ada.ID, "ada@example.com"); err != nil {
 		t.Fatalf("storing Ada's address: %v", err)
 	}
 	// Mail queued by address alone, which the delete removes by hand before
@@ -310,6 +322,36 @@ func addReset(t *testing.T, db *store.DB, hash, userID string, lifetime time.Dur
 	mail := domain.Mail{To: "someone@example.com", Subject: "Reset", Text: "https://example.com/reset?t=x"}
 	if err := store.NewResets(db).Add(t.Context(), res, mail); err != nil {
 		t.Fatalf("adding reset %s: %v", hash, err)
+	}
+}
+
+// The address is where a reset link is mailed, so the write that sets it names
+// the password counter its request loaded. A request held open across a reset
+// arrives with the old counter and must change no row: its credential is over,
+// and the address it carries would receive the next link.
+func TestSetEmailNamesThePasswordCounter(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	users := store.NewUsers(db)
+	ada := addUser(t, db, "Ada")
+	if err := users.SetEmail(t.Context(), ada.ID, "ada@example.com", ada.PasswordVersion); err != nil {
+		t.Fatalf("storing Ada's address under the counter she has: %v", err)
+	}
+	addReset(t, db, "link", ada.ID, time.Hour)
+	if _, err := store.NewResets(db).Redeem(t.Context(), "link", "new-hash", time.Now().UTC()); err != nil {
+		t.Fatalf("Redeem: %v", err)
+	}
+
+	err := users.SetEmail(t.Context(), ada.ID, "somebody-else@example.net", ada.PasswordVersion)
+
+	if !errors.Is(err, domain.ErrStale) {
+		t.Errorf("SetEmail under the counter from before the reset = %v, want ErrStale", err)
+	}
+	if got, _ := users.ByID(t.Context(), ada.ID); got.Email != "ada@example.com" {
+		t.Errorf("the address is %q after a write the reset should have refused, want ada@example.com", got.Email)
+	}
+	if err := users.SetEmail(t.Context(), "nobody", "x@example.com", 0); !errors.Is(err, domain.ErrStale) {
+		t.Errorf("SetEmail for a user that is not there = %v, want ErrStale", err)
 	}
 }
 
@@ -1171,7 +1213,7 @@ func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 	// it goes to an address before that address is anybody's account. No
 	// cascade follows an address, so the delete has to reach it by hand — and
 	// must leave the same kind of row alone when the address is somebody else's.
-	if err := store.NewUsers(db).SetEmail(t.Context(), ada.ID, "ada@example.com"); err != nil {
+	if err := setEmail(t, db, ada.ID, "ada@example.com"); err != nil {
 		t.Fatalf("storing Ada's address: %v", err)
 	}
 	for id, to := range map[string]string{"to-ada": "ada@example.com", "to-eve": "eve@example.com"} {

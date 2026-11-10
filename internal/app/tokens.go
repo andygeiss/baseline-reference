@@ -56,7 +56,17 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 		a.renderProfile(w, r, http.StatusUnprocessableEntity, "", profilePage{EmailForm: form})
 		return
 	}
-	if err := a.users.SetEmail(r.Context(), user.ID, form.Email); err != nil {
+	// The write names the password counter of the row this request loaded.
+	// Its credential was good when the headers arrived, and the body may have
+	// been held open since: a reset in between has ended that credential, and
+	// the address is where the next reset link would go. No row changed is the
+	// answer a credential that no longer stands gets.
+	switch err := a.users.SetEmail(r.Context(), user.ID, form.Email, user.PasswordVersion); {
+	case err == nil:
+	case errors.Is(err, domain.ErrStale):
+		a.clientError(w, r, http.StatusUnauthorized)
+		return
+	default:
 		a.serverError(w, r, err)
 		return
 	}
@@ -72,7 +82,7 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 // again, and shows its secret in the answer to that same request.
 //
 // A session alone must not be enough. A token outlives the session that made
-// it — no logout ends it and no password reset does — so whoever found a
+// it — no logout ends it, only a password reset or revoking it does — so whoever found a
 // browser unlocked, or holds one leaked token, would otherwise leave with a
 // credential of their own. It is a route that checks a password, so it sits
 // behind the login's limiter, in the login's bucket

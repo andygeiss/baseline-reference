@@ -155,6 +155,6 @@ func (a *App) handleResetConfirm(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, err)
 		return
 	}
-	a.flash(r, "That is your new password. Anywhere else you were signed in has been signed out.")
+	a.flash(r, "That is your new password. Anywhere else you were signed in has been signed out, and any token you had made no longer works.")
 	a.redirect(w, r, "/rooms")
 }

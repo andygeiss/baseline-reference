@@ -2,11 +2,13 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/andygeiss/baseline-reference/v6/internal/domain"
 )
@@ -422,25 +424,63 @@ func TestATokenCreationHeldOpenAcrossAResetCreatesNothing(t *testing.T) {
 	}
 }
 
+// TestAnAddressWriteHeldOpenAcrossAResetChangesNothing: the address is where a
+// reset link is mailed. A request that was signed in when its headers arrived,
+// and whose body was held open across a reset, would otherwise point the next
+// link at whoever the reset was meant to lock out.
+func TestAnAddressWriteHeldOpenAcrossAResetChangesNothing(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	if res, _ := ta.do(t, http.MethodPost, "/profile/email",
+		url.Values{"email": {"ada@example.com"}}, nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("saving the address: status = %d, want 303", res.StatusCode)
+	}
+	// The reset lands once the credential middleware has read Ada's row, and
+	// before the handler writes: the gap a held-open body keeps open.
+	var once sync.Once
+	ta.users.afterByID = func(u domain.User) {
+		once.Do(func() { ta.users.reset(u.ID, "the-resets-hash") })
+	}
+
+	res, _ := ta.do(t, http.MethodPost, "/profile/email",
+		url.Values{"email": {"somebody-else@example.net"}}, nil)
+
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status %d, want 401: the credential that sent this is over", res.StatusCode)
+	}
+	if u, err := ta.users.ByName(t.Context(), "Ada"); err != nil || u.Email != "ada@example.com" {
+		t.Errorf("the address is %q (%v) after a write held open across a reset, want ada@example.com", u.Email, err)
+	}
+}
+
 // TestTheTokenPasswordCheckIsRateLimited: a route that checks a password is a
 // route to guess one at, so it sits behind the login's limiter.
 func TestTheTokenPasswordCheckIsRateLimited(t *testing.T) {
 	t.Parallel()
-	ta := newTestApp(t)
-	ta.signUp(t, "Ada", "correct-horse")
+	// Made outside the bubble, with a context that never cancels, and on
+	// synctest's clock so the bucket cannot refill while argon2 runs —
+	// TestLoginRateLimit says why. On the wall clock this test failed whenever
+	// the machine was busy enough for a guess to take three seconds.
+	o := newTestOptions(t, withStopping(context.Background()))
 
-	limited := 0
-	for range 8 {
-		res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
-			url.Values{"label": {"laptop"}, "password": {"a-guess"}}, nil)
-		if res.StatusCode == http.StatusTooManyRequests {
-			limited++
-			if res.Header.Get("Retry-After") == "" {
-				t.Error("a 429 with no Retry-After")
+	synctest.Test(t, func(t *testing.T) {
+		ta := newTestAppWith(t, o)
+		ta.signUp(t, "Ada", "correct-horse")
+
+		limited := 0
+		for range 8 {
+			res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
+				url.Values{"label": {"laptop"}, "password": {"a-guess"}}, nil)
+			if res.StatusCode == http.StatusTooManyRequests {
+				limited++
+				if res.Header.Get("Retry-After") == "" {
+					t.Error("a 429 with no Retry-After")
+				}
 			}
 		}
-	}
-	if limited == 0 {
-		t.Error("eight wrong passwords in a row and none was limited")
-	}
+		if limited == 0 {
+			t.Error("eight wrong passwords in a row and none was limited")
+		}
+	})
 }

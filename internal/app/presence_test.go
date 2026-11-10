@@ -601,7 +601,7 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := ta.users.SetEmail(t.Context(), user.ID, "ada@example.com"); err != nil {
+			if err := ta.users.SetEmail(t.Context(), user.ID, "ada@example.com", user.PasswordVersion); err != nil {
 				t.Fatal(err)
 			}
 			if res, _ := ta.do(t, http.MethodPost, "/reset", url.Values{"name": {"Ada"}}, nil); res.StatusCode != http.StatusSeeOther {
