@@ -193,6 +193,10 @@ func New(o Options) (*App, error) {
 		presence:    newHub(),
 		stopping:    o.Stopping,
 	}
+	// scs's default writes a store error to the standard logger, unstructured,
+	// and answers with a page of its own. serverError is the one place this app
+	// logs and words a 500 (patterns/go-auth-sessions.md).
+	a.sessions.ErrorFunc = a.serverError
 	funcs := template.FuncMap{
 		"version": func() string { return o.Version },
 	}

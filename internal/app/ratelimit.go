@@ -3,6 +3,7 @@ package app
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -55,6 +56,20 @@ func (l *limiter) allow(ip string) bool {
 		l.lastSeen = now
 	}
 	return b.Allow()
+}
+
+// limiterKey is the bucket a client address falls into: the address itself, or
+// for IPv6 its /64. One subscriber holds a whole /64 and can take a fresh
+// address out of it for every guess, so keyed on the full address the limiter
+// would never see that client twice — and its map would grow by one entry per
+// guess (patterns/go-auth-sessions.md). Anything that is not an address keys on
+// itself, which is what it did before.
+func limiterKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || addr.Unmap().Is4() {
+		return ip
+	}
+	return netip.PrefixFrom(addr.WithZone(""), 64).Masked().String()
 }
 
 // clientIP trusts X-Forwarded-For because nothing but the proxy can reach this

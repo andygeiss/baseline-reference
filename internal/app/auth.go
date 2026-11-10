@@ -184,7 +184,7 @@ func (a *App) rehashIfWeak(r *http.Request, user domain.User, password string) {
 // allow reports whether this client may make another attempt at signing in.
 // Over the limit it answers 429 and says when to come back.
 func (a *App) allow(w http.ResponseWriter, r *http.Request) bool {
-	if a.limiter.allow(clientIP(r)) {
+	if a.limiter.allow(limiterKey(clientIP(r))) {
 		return true
 	}
 	w.Header().Set("Retry-After", "3")

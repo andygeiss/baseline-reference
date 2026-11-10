@@ -1,7 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -337,4 +341,70 @@ func (ta *testApp) sessionCookie(t *testing.T) string {
 		}
 	}
 	return ""
+}
+
+// brokenStore is a session store whose database has gone away.
+type brokenStore struct{}
+
+func (brokenStore) Find(string) ([]byte, bool, error) {
+	return nil, false, errors.New("the session table is unreachable")
+}
+func (brokenStore) Commit(string, []byte, time.Time) error { return errors.New("unreachable") }
+func (brokenStore) Delete(string) error                    { return errors.New("unreachable") }
+
+// TestASessionStoreErrorIsTheAppsOwn500: scs's default ErrorFunc writes a store
+// error to the standard logger, unstructured, and answers with its own page.
+// The app's serverError is the one place a 500 is logged and worded
+// (patterns/go-auth-sessions.md).
+func TestASessionStoreErrorIsTheAppsOwn500(t *testing.T) {
+	t.Parallel()
+	var log bytes.Buffer
+	ta := newTestApp(t, func(o *Options) {
+		o.Logger = slog.New(slog.NewTextHandler(&log, nil))
+		o.Sessions.Store = brokenStore{}
+	})
+
+	res, body := ta.do(t, http.MethodGet, "/login", nil, http.Header{"Cookie": {"session=anything"}})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", res.StatusCode)
+	}
+	if !strings.Contains(body, "Sorry, something went wrong.") {
+		t.Errorf("the 500 is not the app's own: %q", body)
+	}
+	if !strings.Contains(log.String(), "the session table is unreachable") {
+		t.Errorf("the store's error never reached the app's logger:\n%s", log.String())
+	}
+}
+
+// TestTheLimiterKeysIPv6OnItsSlash64: one subscriber holds a whole /64 and can
+// take a fresh address out of it for every guess. Keyed on the full address
+// the limiter would never see that client twice.
+func TestTheLimiterKeysIPv6OnItsSlash64(t *testing.T) {
+	t.Parallel()
+	keys := map[string]string{
+		"192.0.2.10":            "192.0.2.10",
+		"::ffff:192.0.2.10":     "::ffff:192.0.2.10", // an IPv4 client, however it is written
+		"2001:db8:1:2::1":       "2001:db8:1:2::/64",
+		"2001:db8:1:2:a:b:c:d":  "2001:db8:1:2::/64",
+		"2001:db8:1:3::1":       "2001:db8:1:3::/64", // the next subscriber
+		"fe80::1%en0":           "fe80::/64",
+		"not an address at all": "not an address at all",
+		"":                      "",
+	}
+	for ip, want := range keys {
+		if got := limiterKey(ip); got != want {
+			t.Errorf("limiterKey(%q) = %q, want %q", ip, got, want)
+		}
+	}
+
+	l := newLimiter()
+	limited := 0
+	for i := range 50 {
+		if !l.allow(limiterKey(fmt.Sprintf("2001:db8:1:2::%x", i+1))) {
+			limited++
+		}
+	}
+	if limited != 45 {
+		t.Errorf("50 guesses from one /64: %d limited, want 45 (the bucket holds five)", limited)
+	}
 }
