@@ -22,17 +22,31 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`a5975cb`**: `patterns/wasm-client.md` and its CSP token,
-on branch `promote-deviations`, tagged v5.2.0 on Andy's call after sixteen review passes
-that had not converged (the last found nine).
+Built against baseline commit **`39ad142`**, on the baseline's branch `owed-fixes`:
+untagged, and not merged. It is the last commit of the 2026-11-10 backlog run that
+changes anything a project reads. That run read the baseline's oldest unread documents
+three times and did not converge: its last, narrow look found two highs and eighteen
+mediums in the fixes of the pass before it. They are fixed, and nobody has read those
+fixes.
 
-**What moved here.** A room map: a TinyGo 0.44.0 module committed beside its `.build` and
-`.sum`, with `WASM_TAGS`, fail-closed js/wasm vet, `go fix` and staticcheck lines, one
-`fmt` loop, and the size gate; a hand-written RFC 6455 server half behind `GET /ws` that
-refuses a missing or foreign `Origin`, caps each message and control frame without summing
-lengths, counts frames a second, and returns from its handler at the handshake; and a
-read-only re-check of the session or machine token every 5 s under a 2 s deadline that
-closes 1008, 1011 or 1001. `./verify.sh` exits 0 against `a5975cb`.
+**What moved here,** in three syncs on the branch `sync-owed-run`. Sessions: the store
+hashes its token, keeps a deleted row emptied, writes no emptied and no expired row, and
+its janitor runs an hour behind; the user row carries a password counter, and every
+statement a password or a reset link allows names the value its request loaded. A client
+that left is not a server error, and the 500 is a page that needs no session. An
+adapter's error carries the status code, never the URL or what the other side wrote, and
+no log line names a person. The room map's socket is counted before the hijack, reads
+the connection itself, and is closed on `pagehide`; its recipe checks the `wasm-opt` that
+`tinygo env WASMOPT` names. Every submit button inside a fragment carries an id, the
+headers test compares a literal, an owned file and a signed-in page are `no-store`, and
+`gochat` refuses a stray argument and a token with a control character.
+
+**One rule is not followed, and not waived:** the baseline now keeps a blob for what fits
+its blanket 1 MiB cap, and attachments here are blobs under a 3 MiB cap. The README
+records it under *Baseline deviations*; lowering the cap, moving the bytes to a
+directory, or a waiver is Andy's to choose.
+
+`./verify.sh` exits 0 against `39ad142` (94 steps).
 
 ## The task (give this to the builder, human or AI, verbatim)
 
