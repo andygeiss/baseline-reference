@@ -1,6 +1,7 @@
 package chatapi_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -8,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/chatapi"
@@ -79,32 +79,120 @@ func TestStatusTranslation(t *testing.T) {
 	}
 }
 
-// TestATransportErrorCarriesNoURL: Do returns a *url.Error, and its text is the
-// whole URL, query string included. The cause stays; the URL goes.
-func TestATransportErrorCarriesNoURL(t *testing.T) {
+// notHTTP is a peer that answers every connection with a line that is not
+// HTTP, and returns its address. net/http's error for it quotes what the peer
+// wrote.
+func notHTTP(t *testing.T, line string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // the listener closed: the test is over
+			}
+			conn.Read(make([]byte, 1024)) // the request, so the answer is to something
+			conn.Write([]byte(line + "\r\n\r\n"))
+			conn.Close()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestATransportErrorKeepsTheTypeAndNoText: Do returns a *url.Error. Its text
+// is the whole URL, query string included, and the error under it can quote
+// what the peer sent. The adapter keeps that error's type and none of its
+// text, beside the method and the host this client was pointed at
+// (patterns/go-http-client.md, Retries).
+func TestATransportErrorKeepsTheTypeAndNoText(t *testing.T) {
 	t.Parallel()
 	// A port nothing listens on: opened, then closed again.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	addr := ln.Addr().String()
+	refused := ln.Addr().String()
 	ln.Close()
 
-	for name, call := range map[string]func(*chatapi.Client) error{
+	calls := map[string]func(*chatapi.Client) error{
 		"a read":  func(c *chatapi.Client) error { _, _, err := c.Messages(t.Context(), "general", 42); return err },
 		"a write": func(c *chatapi.Client) error { _, err := c.Post(t.Context(), "general", "hello ada"); return err },
+	}
+	peers := map[string]struct {
+		addr string
+		want string // the type net/http's error has under its *url.Error
+	}{
+		"nothing listens there":             {refused, "(*net.OpError)"},
+		"the peer's status line is not one": {notHTTP(t, "HTTP/1.1 ada@example.com said-hello"), "no usable answer ("},
+		"the peer does not speak HTTP":      {notHTTP(t, "said-hello ada@example.com"), "no usable answer ("},
+	}
+	for peer, p := range peers {
+		for name, call := range calls {
+			t.Run(peer+", "+name, func(t *testing.T) {
+				t.Parallel()
+				err := call(chatapi.New("http://"+p.addr, "gochat_s3cr3t"))
+				if err == nil {
+					t.Fatal("a call that got no answer was treated as success")
+				}
+				if !strings.Contains(err.Error(), "no usable answer (") || !strings.Contains(err.Error(), p.want) {
+					t.Errorf("err = %v, want it to name the type of what went wrong, %s", err, p.want)
+				}
+				if !strings.Contains(err.Error(), p.addr) {
+					t.Errorf("err = %v, want it to name the host %s", err, p.addr)
+				}
+				for _, leak := range []string{
+					"since=42", "/api/rooms", "general", "http://", "gochat_s3cr3t", "hello ada", // the request
+					"connection refused", "dial tcp", // net's text
+					"ada@example.com", "said-hello", "malformed", // the peer's bytes, and net/http's words around them
+				} {
+					if strings.Contains(err.Error(), leak) {
+						t.Errorf("the error carries %q: %v", leak, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestACallTheCallerGaveUpOnReturnsTheContextsError: a context that ends while
+// the request is out — Ctrl-C, a shutdown — is the caller's doing, not the
+// server's. The call returns the context's own error, so errors.Is still tells
+// the two apart, and a read is not tried again
+// (patterns/go-http-client.md, Retries).
+func TestACallTheCallerGaveUpOnReturnsTheContextsError(t *testing.T) {
+	t.Parallel()
+	for name, call := range map[string]func(context.Context, *chatapi.Client) error{
+		"a read":  func(ctx context.Context, c *chatapi.Client) error { _, err := c.Rooms(ctx); return err },
+		"a write": func(ctx context.Context, c *chatapi.Client) error { _, err := c.Post(ctx, "general", "hi"); return err },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			err := call(chatapi.New("http://"+addr, "gochat_s3cr3t"))
-			if !errors.Is(err, syscall.ECONNREFUSED) {
-				t.Fatalf("err = %v, want it to still be a refused connection", err)
+			var calls atomic.Int32
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			held := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				cancel() // the caller gives up while the server holds the request
+				<-held   // and no answer is ever written
+			}))
+			t.Cleanup(srv.Close)
+			t.Cleanup(func() { close(held) }) // first: Close waits for the handler
+
+			err := call(ctx, chatapi.New(srv.URL, "gochat_token"))
+
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("err = %v, want context.Canceled", err)
 			}
-			for _, leak := range []string{"since=42", "/api/rooms", "general", "http://", "gochat_s3cr3t"} {
-				if strings.Contains(err.Error(), leak) {
-					t.Errorf("the error carries %q: %v", leak, err)
-				}
+			if strings.Contains(err.Error(), "no usable answer") {
+				t.Errorf("err = %v: the caller's own cancel reads as the server failing", err)
+			}
+			if got := calls.Load(); got != 1 {
+				t.Errorf("the server was called %d times, want 1: a cancelled call is not retried", got)
 			}
 		})
 	}
@@ -165,16 +253,35 @@ func TestUnknownStatusIsStillAnError(t *testing.T) {
 	}
 }
 
+// TestAnswerThatIsNotJSONIsAnError: a 200 this client cannot decode is an
+// error, and a fixed sentence. The decoder's own text quotes the answer — a
+// member's name here — so it is not wrapped
+// (patterns/go-http-client.md, One request, end to end).
 func TestAnswerThatIsNotJSONIsAnError(t *testing.T) {
 	t.Parallel()
-	client := serverSaying(t, http.StatusOK, `<html>a login page</html>`)
+	for name, body := range map[string]string{
+		// What a proxy in front of the server looks like when it is
+		// misconfigured. It must not read as an empty answer.
+		"a page of HTML": `<html>a login page for ada@example.com</html>`,
+		// The decoder names the member it met twice.
+		"a member the decoder quotes": `{"name":"Ada","ada@example.com":1,"ada@example.com":2}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := serverSaying(t, http.StatusOK, body).Me(t.Context())
 
-	_, err := client.Me(t.Context())
-
-	// This is what a proxy in front of the server looks like when it is
-	// misconfigured, and it must not read as an empty answer.
-	if err == nil {
-		t.Fatal("a page of HTML was accepted as an answer")
+			if err == nil {
+				t.Fatal("an answer that is not the JSON this client expects was accepted")
+			}
+			if !strings.Contains(err.Error(), "not the JSON this client expects") {
+				t.Errorf("err = %v, want it to say what is wrong", err)
+			}
+			for _, leak := range []string{"ada@example.com", "login page", "duplicate", "jsontext"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("the error carries %q, which the answer held or the decoder wrote: %v", leak, err)
+				}
+			}
+		})
 	}
 }
 

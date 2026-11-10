@@ -951,12 +951,16 @@ set -e
 grep -q 'status 422' "$WORKDIR/refused.err" || fail "the refusal does not name the status: $(cat "$WORKDIR/refused.err")"
 grep -q 'A message is 1 to' "$WORKDIR/refused.err" || fail "the refusal does not say what a message may be"
 grep -q 'Write something' "$WORKDIR/refused.err" && fail "the server's own words reached stderr: $(cat "$WORKDIR/refused.err")"
-# A port nothing listens on: the cause is printed, the URL and its query are not.
+# A port nothing listens on: the type of what went wrong is printed and none of
+# its text, which can quote the URL and whatever the peer sent. The host is the
+# address the person configured; the path and the query are what was sent.
 set +e
 GOCHAT_ADDR="http://127.0.0.1:1" "$WORKDIR/gochat" read -since 7 general-chat >/dev/null 2>"$WORKDIR/refused.err"; CODE=$?
 set -e
 [ "$CODE" = "1" ] || fail "an unreachable server exited $CODE, want 1"
-grep -q 'connection refused' "$WORKDIR/refused.err" || fail "the error lost its cause: $(cat "$WORKDIR/refused.err")"
+grep -qF 'GET 127.0.0.1:1: no usable answer (*net.OpError)' "$WORKDIR/refused.err" \
+    || fail "the error does not name the host and the type of what went wrong: $(cat "$WORKDIR/refused.err")"
+grep -q 'connection refused\|dial tcp' "$WORKDIR/refused.err" && fail "the transport error's text reached stderr: $(cat "$WORKDIR/refused.err")"
 grep -q 'since=\|/api/\|general-chat' "$WORKDIR/refused.err" && fail "the URL reached stderr: $(cat "$WORKDIR/refused.err")"
 # An address that does not parse, pasted with a space after it: building the
 # request fails with an error that quotes the whole URL, a password in it

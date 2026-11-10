@@ -1,13 +1,13 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -257,26 +257,119 @@ func TestAnErrorCarriesNothingTheAPIWrote(t *testing.T) {
 	}
 }
 
-// TestATransportErrorCarriesNoURL: Do returns a *url.Error, whose text is the
-// whole URL. The cause stays; the URL goes.
-func TestATransportErrorCarriesNoURL(t *testing.T) {
+// TestATransportErrorKeepsTheTypeAndNoText: Do returns a *url.Error, whose text
+// is the whole URL, and the error under it can quote what the peer sent. The
+// adapter keeps that error's type and none of its text
+// (patterns/go-http-client.md, Retries).
+func TestATransportErrorKeepsTheTypeAndNoText(t *testing.T) {
 	t.Parallel()
+	// A port nothing listens on: opened, then closed again.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := New("sk-test-key")
-	a.endpoint = "http://" + ln.Addr().String() + "/v1/messages?debug=ada@example.com"
-	ln.Close() // nothing listens there now
+	refused := ln.Addr().String()
+	ln.Close()
 
-	_, err = a.Reply(t.Context(), history())
-
-	if !errors.Is(err, syscall.ECONNREFUSED) {
-		t.Fatalf("err = %v, want it to still be a refused connection", err)
+	// And a peer that answers every connection with a line that is no HTTP
+	// status line: net/http's error for it quotes what the peer wrote.
+	peer, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, leak := range []string{"http://", "/v1/messages", "ada@example.com", "sk-test-key"} {
+	t.Cleanup(func() { peer.Close() })
+	go func() {
+		for {
+			conn, err := peer.Accept()
+			if err != nil {
+				return // the listener closed: the test is over
+			}
+			conn.Read(make([]byte, 4096)) // the request, so the answer is to something
+			conn.Write([]byte("HTTP/1.1 ada@example.com said-hello\r\n\r\n"))
+			conn.Close()
+		}
+	}()
+
+	for name, tt := range map[string]struct{ addr, want string }{
+		"nothing listens there":             {refused, "asking the model: no usable answer (*net.OpError)"},
+		"the peer's status line is not one": {peer.Addr().String(), "asking the model: no usable answer ("},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			a := New("sk-test-key")
+			a.endpoint = "http://" + tt.addr + "/v1/messages?debug=ada@example.com"
+
+			_, err := a.Reply(t.Context(), history())
+
+			if err == nil {
+				t.Fatal("Reply() = nil, want an error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want it to name the type of what went wrong: %s", err, tt.want)
+			}
+			for _, leak := range []string{
+				"http://", "/v1/messages", "ada@example.com", "sk-test-key", tt.addr, // the request
+				"connection refused", "dial tcp", // net's text
+				"said-hello", "malformed", // the peer's bytes, and net/http's words around them
+			} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("the error carries %q: %v", leak, err)
+				}
+			}
+			// Transient to the caller, like every other failure that is no refusal.
+			if errors.Is(err, domain.ErrRefused) {
+				t.Errorf("Reply() = %v, which a caller will read as a refusal", err)
+			}
+		})
+	}
+}
+
+// TestAReplyTheAppGaveUpOnReturnsTheContextsError: a context that ends while
+// the request is out — the budget, or shutdown — is this app's doing, not the
+// API's. The error is still the context's, so errors.Is tells a reply that was
+// cancelled from a model that is down (patterns/go-http-client.md, Retries).
+func TestAReplyTheAppGaveUpOnReturnsTheContextsError(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	held := make(chan struct{})
+	a := serving(t, func(http.ResponseWriter, *http.Request) {
+		cancel() // the app gives up while the API holds the request
+		<-held   // and no answer is ever written
+	})
+	t.Cleanup(func() { close(held) }) // before serving's Close, which waits for the handler
+
+	_, err := a.Reply(ctx, history())
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Reply() = %v, want context.Canceled", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "no usable answer") {
+		t.Errorf("Reply() = %v: the app's own cancel reads as the API failing", err)
+	}
+}
+
+// TestAReplyThatDoesNotDecodeStaysOutOfTheError: the decoder's text quotes the
+// answer — the name of a member it met twice, here — and the answer is the
+// model's words about the room. The error is a fixed sentence
+// (patterns/go-http-client.md, One request, end to end).
+func TestAReplyThatDoesNotDecodeStaysOutOfTheError(t *testing.T) {
+	t.Parallel()
+	a := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, `{"stop_reason":"end_turn","Ada said ada@example.com":1,"Ada said ada@example.com":2}`)
+	})
+
+	_, err := a.Reply(t.Context(), history())
+
+	if err == nil {
+		t.Fatal("Reply() = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "decoding the reply") {
+		t.Errorf("err = %v, want it to say what was being done", err)
+	}
+	for _, leak := range []string{"ada@example.com", "Ada said", "duplicate", "jsontext"} {
 		if strings.Contains(err.Error(), leak) {
-			t.Errorf("the error carries %q: %v", leak, err)
+			t.Errorf("the error carries %q, which the answer held or the decoder wrote: %v", leak, err)
 		}
 	}
 }

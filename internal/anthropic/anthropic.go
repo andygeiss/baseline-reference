@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -148,10 +147,13 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 
 	res, err := a.http.Do(req)
 	if err != nil {
-		if ue, ok := errors.AsType[*url.Error](err); ok {
-			err = ue.Err // drop the URL: an error ends up in a log
+		if cerr := ctx.Err(); cerr != nil {
+			return "", fmt.Errorf("asking the model: %w", cerr) // the context died, not the API
 		}
-		return "", fmt.Errorf("asking the model: %w", err)
+		// The type, never the text: net/http's text can quote the URL and
+		// the peer's bytes, and an error ends up in a log
+		// (patterns/go-http-client.md, Retries).
+		return "", fmt.Errorf("asking the model: no usable answer (%T)", errors.Unwrap(err))
 	}
 	defer res.Body.Close()
 
@@ -164,7 +166,9 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 
 	var out response
 	if err := json.UnmarshalRead(io.LimitReader(res.Body, maxBody), &out); err != nil {
-		return "", fmt.Errorf("decoding the reply: %w", err)
+		// No %w: the decoder's text quotes the answer, and the answer is the
+		// model's words about the room's conversation.
+		return "", errors.New("decoding the reply")
 	}
 
 	// The refusal check comes before reading the text: a declined request is a

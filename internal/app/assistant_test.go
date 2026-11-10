@@ -244,7 +244,7 @@ func TestAssistantDegrades(t *testing.T) {
 	}{
 		{
 			name: "the model is unreachable",
-			err:  errors.New("dial tcp: connection refused"),
+			err:  errors.New("asking the model: no usable answer (*net.OpError)"),
 		},
 		{
 			name: "the model answers with nothing",

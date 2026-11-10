@@ -217,12 +217,14 @@ func (c *Client) do(req *http.Request, out any, retry bool) error {
 		}
 		res, err := c.http.Do(req)
 		if err != nil {
-			if ue, ok := errors.AsType[*url.Error](err); ok {
-				err = ue.Err // drop the URL: its query string would reach stderr
+			if cerr := req.Context().Err(); cerr != nil {
+				return cerr // the context died, not the server
 			}
-			// The host, which the person running the tool configured, and
-			// never the path: the path is what was sent.
-			lastErr = fmt.Errorf("chatapi: %s %s: %w", req.Method, req.URL.Host, err)
+			// The type, never the text: net/http's text can quote the URL
+			// and the peer's bytes, and this error reaches stderr. The host,
+			// which the person running the tool configured, and never the
+			// path: the path is what was sent.
+			lastErr = fmt.Errorf("chatapi: %s %s: no usable answer (%T)", req.Method, req.URL.Host, errors.Unwrap(err))
 			continue // a connection that failed may succeed on the next try
 		}
 		err = decode(res, out)
@@ -257,9 +259,9 @@ func decode(res *http.Response, out any) error {
 			return nil
 		}
 		// Capped: a server that answers forever would otherwise fill this
-		// process.
+		// process. No %w: the decoder's text quotes the answer.
 		if err := json.UnmarshalRead(io.LimitReader(res.Body, maxBody), out); err != nil {
-			return fmt.Errorf("chatapi: the answer is not the JSON this client expects: %w", err)
+			return errors.New("chatapi: the answer is not the JSON this client expects")
 		}
 		return nil
 
