@@ -23,13 +23,12 @@ import (
 	_ "time/tzdata"
 )
 
-// Secret is a value that must never reach a log line. The four methods are the
-// four ways a value gets printed: slog, fmt, %#v, and anything writing text.
-// Config.LogValue leaves these fields out, but that only holds when the Config
-// *is* the value logged — nested, in a slice, in a map, or under %v, the
-// field's own type is what holds (patterns/go-config.md). Under %v, not under
-// every verb: %d prints the value, and so do %s and %q below a pointer, which
-// is why go vet refusing those lines is part of the defence.
+// Secret is a value that must never reach a log line. Config.LogValue leaves
+// these fields out, but that only holds when the Config *is* the value logged
+// — nested, in a slice, in a map, or under %v, the field's own type is what
+// holds (patterns/go-config.md). Under %v, not under every verb: %d prints the
+// value, and so do %s and %q below a pointer, which is why go vet refusing
+// those lines is part of the defence.
 type Secret string
 
 func (Secret) LogValue() slog.Value         { return slog.StringValue("REDACTED") }
@@ -113,6 +112,10 @@ func parseConfig(args []string, stderr io.Writer) (Config, error) {
 			return Config{}, err // -h: usage printed, exit 0
 		}
 		return Config{}, errUsage // fs already printed the message and the usage
+	}
+	if fs.NArg() != 0 { // flag stops at the first argument: every flag after it was ignored
+		fmt.Fprintf(stderr, "unexpected argument %q\n", fs.Arg(0))
+		return Config{}, errUsage
 	}
 
 	c.Env = cmp.Or(os.Getenv("ENV"), "dev") // not a flag: the deployment sets it, never a command line
@@ -242,7 +245,7 @@ func (c Config) checkMailer() error {
 
 // readCredential returns the credential file of that name, or "" when the
 // deployment passes none — which is the normal case in dev. The caller decides
-// whether an empty secret is fatal; that depends on the feature, not on config.
+// whether an empty secret is fatal.
 //
 // $CREDENTIALS_DIRECTORY is set by the deployment and points somewhere only the
 // service user can read. It is the one environment variable read for a secret,

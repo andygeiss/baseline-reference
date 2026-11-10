@@ -106,8 +106,8 @@ func (c *common) client() (*chatapi.Client, error) {
 	return chatapi.New(c.addr, string(token)), nil // the conversion is the only way past Secret
 }
 
-// Secret is a value that must never reach a line this tool prints: the four
-// methods are the four ways a value gets printed (patterns/go-config.md).
+// Secret is a value that must never reach a line this tool prints
+// (patterns/go-config.md).
 type Secret string
 
 func (Secret) LogValue() slog.Value         { return slog.StringValue("REDACTED") }

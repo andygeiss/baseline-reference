@@ -357,6 +357,19 @@ set -e
 grep -q "want a number from 0 to 65535" "$WORKDIR/badcfg.log" || fail "invalid port: no usable message"
 [ ! -e "$WORKDIR/never.db" ] || fail "database created despite invalid config"
 
+step "config: a stray argument is refused, and the flags after it are not ignored"
+# go-config.md: flag stops at the first argument that is not a flag, so in
+# "server prod -port 9000" the -port was never parsed. Started anyway, the
+# server listens on the default port and says nothing.
+set +e
+"$WORKDIR/server" prod -port 9000 -database-url "$WORKDIR/never-stray.db" >"$WORKDIR/stray.log" 2>&1
+CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "a stray argument: exit $CODE, want 2"
+grep -q 'unexpected argument "prod"' "$WORKDIR/stray.log" || fail "a stray argument: no usable message: $(cat "$WORKDIR/stray.log")"
+[ "$(wc -l < "$WORKDIR/stray.log" | tr -d ' ')" = "1" ] || fail "a stray argument is reported more than once: $(cat "$WORKDIR/stray.log")"
+[ ! -e "$WORKDIR/never-stray.db" ] || fail "database created despite a stray argument"
+
 step "config: -h names the environment and the credentials, not only the flags"
 # go-config.md rule 5: -h is the whole contract, so a variable that appears in
 # no flag's help text still has to be listed.

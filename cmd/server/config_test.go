@@ -100,6 +100,33 @@ func TestParseConfig_UsageErrorsAreNotPrintedTwice(t *testing.T) {
 	}
 }
 
+// TestParseConfig_RefusesAStrayArgument: flag stops at the first argument that
+// is not a flag, so every flag after it was never parsed. Started anyway,
+// "server prod -port 9000" listens on the default port and says nothing
+// (patterns/go-config.md).
+func TestParseConfig_RefusesAStrayArgument(t *testing.T) {
+	for _, tt := range []struct {
+		args  []string
+		stray string
+	}{
+		{[]string{"prod"}, "prod"},
+		{[]string{"prod", "-port", "9000"}, "prod"},
+		{[]string{"-port", "9000", "extra", "-host", "0.0.0.0"}, "extra"},
+	} {
+		var stderr bytes.Buffer
+
+		got, err := parseConfig(tt.args, &stderr)
+
+		if !errors.Is(err, errUsage) {
+			t.Errorf("parseConfig(%q) = %+v, %v; want errUsage", tt.args, got, err)
+		}
+		// errUsage means the message is already on stderr: main prints nothing.
+		if want := fmt.Sprintf("unexpected argument %q", tt.stray); !strings.Contains(stderr.String(), want) {
+			t.Errorf("parseConfig(%q) wrote %q, want it to say %s", tt.args, stderr.String(), want)
+		}
+	}
+}
+
 // TestConfig_LogValue proves the allowlist is wired: slog renders the group,
 // not the struct's fields by reflection.
 func TestConfig_LogValue(t *testing.T) {
