@@ -43,8 +43,10 @@
 
 <form class="card-form" method="post" action="/profile/tokens">
   <label for="label">What is it for?</label>
+  {{/* autocomplete off: beside a password field a browser takes the nearest
+       text box for a user name, and offers to save "laptop" as one. */}}
   <input id="label" name="label" value="{{.Form.Label}}" required
-         maxlength="40" placeholder="laptop"
+         maxlength="40" placeholder="laptop" autocomplete="off"
          {{with .Form.FieldErrors.label}}aria-invalid="true" aria-describedby="label-error"{{end}}>
   {{with .Form.FieldErrors.label}}<p class="field-error" id="label-error">{{.}}</p>{{end}}
 
