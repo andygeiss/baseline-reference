@@ -267,15 +267,9 @@ func (a *App) apiInvalid(w http.ResponseWriter, r *http.Request, field, message 
 	})
 }
 
-// apiServerError logs the cause and tells the caller nothing about it.
-//
-// It makes serverError's one exception too: an error that is the cancellation
-// of the request's own context is a debug line, and the caller that went away
-// is sent nothing.
+// apiServerError is serverError on this surface: it logs the cause at error
+// level and tells the caller nothing about it, whoever is still listening.
 func (a *App) apiServerError(w http.ResponseWriter, r *http.Request, err error) {
-	if a.clientLeft(r, err) {
-		return
-	}
 	a.logger.Error("server error", "method", r.Method, "path", r.URL.Path, "err", err)
 	a.apiJSON(w, r, http.StatusInternalServerError, apiFailure{Error: "Sorry, something went wrong."})
 }

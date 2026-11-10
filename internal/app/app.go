@@ -4,7 +4,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -305,38 +304,15 @@ func (a *App) redirect(w http.ResponseWriter, r *http.Request, to string) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-// serverError logs the cause and answers with the 500 page, which says nothing
-// about it.
+// serverError logs the cause at error level and answers with the 500 page,
+// which says nothing about it (patterns/go-errors-logging.md rule 4).
 //
-// An error that is the cancellation of the request's own context is the
-// exception: the client left, and a store call under that context then fails
-// with it. That is nobody's fault to look into and there is nobody to answer,
-// so it is a debug line and nothing is written
-// (patterns/go-errors-logging.md rule 4).
+// It makes no exception for a request whose client has gone. Answered with
+// nothing, such a request is logged as a 200, and an outage that makes
+// clients give up reads as traffic.
 func (a *App) serverError(w http.ResponseWriter, r *http.Request, err error) {
-	if a.clientLeft(r, err) {
-		return
-	}
 	a.logger.Error("server error", "method", r.Method, "path", r.URL.Path, "err", err)
 	a.write500(w)
-}
-
-// clientLeft reports whether err is the cancellation of the request's own
-// context, and logs it at debug when it is. Every 500 this app writes asks it
-// first.
-//
-// It asks both halves. The request's context alone is not the test: any
-// failure after the reader left would pass as their leaving, a missing table
-// among them. The error's kind alone is not the test either: a cancellation
-// under a reader who is still waiting is some other context's, and a fault
-// like any other — as is a budget that ran out, which is a deadline and no
-// cancellation at all.
-func (a *App) clientLeft(r *http.Request, err error) bool {
-	if r.Context().Err() == nil || !errors.Is(err, context.Canceled) {
-		return false
-	}
-	a.logger.Debug("client left", "method", r.Method, "path", r.URL.Path, "err", err)
-	return true
 }
 
 // errorPage is the 500 page's data. Its base is the zero value, never
