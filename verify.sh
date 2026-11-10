@@ -858,15 +858,31 @@ done
 curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" | grep -q 'action="/profile/tokens/' \
     && fail "a token was made without the password"
 
-step "smoke: a machine token signs a program in"
-CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/profile/tokens" \
+step "smoke: a machine token's secret is in the answer that made it, and nowhere after"
+# patterns/go-auth-sessions.md, Machine tokens rule 3. A redirect would have to
+# carry the secret to the next page in the session, and the session is a row in
+# the database. So the POST answers 200 with the page, the secret on it.
+CODE="$(curl -s -c "$JAR" -b "$JAR" -D "$WORKDIR/token.head" -o "$WORKDIR/token.html" -w '%{http_code}' \
+    -X POST "localhost:$PORT/profile/tokens" \
     -H 'X-Forwarded-For: 198.51.100.20' -d "label=verify.sh&password=correct-horse")"
-[ "$CODE" = "303" ] || fail "making a token with the password: got $CODE, want 303"
-SECRET="$(curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" | grep -o 'gochat_[A-Za-z0-9_-]*' | head -1)"
-[ -n "$SECRET" ] || fail "the profile page showed no token secret"
-# Shown once: the server kept only the hash, so there is nothing left to show.
+[ "$CODE" = "200" ] || fail "making a token with the password: got $CODE, want 200"
+SECRET="$(grep -o 'gochat_[A-Za-z0-9_-]*' "$WORKDIR/token.html" | head -1)"
+[ -n "$SECRET" ] || fail "the answer to making a token showed no secret"
+# The browser never stores that answer, or Back would show the secret again
+# with no request made.
+grep -qi '^cache-control: *no-store' "$WORKDIR/token.head" \
+    || fail "the answer that carries the secret may be stored by the browser"
+# Shown once: nothing carried it to the next page, and the server kept only its
+# hash — neither the database nor its write-ahead log holds the secret.
 curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" | grep -q "$SECRET" \
-    && fail "the token secret came back on a second visit"
+    && fail "the token secret is on the page after the answer: something stored it"
+for F in "$WORKDIR/app.db" "$WORKDIR/app.db-wal"; do
+    if [ -e "$F" ] && grep -aq "$SECRET" "$F"; then
+        fail "$(basename "$F") holds the token's secret"
+    fi
+done
+
+step "smoke: a machine token signs a program in"
 # No cookie at all: the token is the only credential.
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SECRET" "localhost:$PORT/rooms")"
 [ "$CODE" = "200" ] || fail "a machine token: got $CODE, want 200"

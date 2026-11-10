@@ -474,6 +474,13 @@
     & button { min-block-size: 3rem; }
   }
 
+  /* The region the token form swaps — the secret, the form, the table —
+     spaced as main spaces the children these were. */
+  .token-region {
+    display: grid;
+    gap: var(--space);
+  }
+
   .secret {
     padding: var(--space-sm);
     border: 1px solid var(--color-accent);

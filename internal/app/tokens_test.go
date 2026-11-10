@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,38 +29,150 @@ func findSecret(body string) string {
 	return "gochat_" + rest[:n]
 }
 
-// makeToken creates a machine token and returns the secret, which the profile
-// page shows exactly once.
+// makeToken creates a machine token and returns the secret, which the answer
+// to that request shows, and nothing after it.
 func (ta *testApp) makeToken(t *testing.T, label, password string) string {
 	t.Helper()
-	res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
+	res, body := ta.do(t, http.MethodPost, "/profile/tokens",
 		url.Values{"label": {label}, "password": {password}}, nil)
-	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("creating token %s: status %d, want 303", label, res.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("creating token %s: status %d, want 200", label, res.StatusCode)
 	}
-	_, body := ta.do(t, http.MethodGet, "/profile", nil, nil)
 	secret := findSecret(body)
 	if secret == "" {
-		t.Fatalf("the profile page showed no secret after creating a token:\n%s", body)
+		t.Fatalf("the answer to creating a token showed no secret:\n%s", body)
 	}
 	return secret
 }
 
-func TestTokenIsShownOnceAndOnlyOnce(t *testing.T) {
+// TestTheSecretIsInTheAnswerThatMadeItAndNowhereAfter: creating a token shows
+// its secret once, in the answer to that request. A redirect would have to
+// carry it to the next page in the session, and the session is a row in the
+// database: the plaintext of a credential, stored until somebody loads that
+// page (patterns/go-auth-sessions.md, Machine tokens rule 3).
+func TestTheSecretIsInTheAnswerThatMadeItAndNowhereAfter(t *testing.T) {
 	t.Parallel()
-	ta := newTestApp(t)
-	ta.signUp(t, "Ada", "correct-horse")
 
-	secret := ta.makeToken(t, "laptop", "correct-horse")
+	// The secret a page shows, where it shows it: inside the secret box.
+	shown := func(body string) string {
+		_, box, ok := strings.Cut(body, `<div class="secret">`)
+		if !ok {
+			return ""
+		}
+		return findSecret(box)
+	}
 
-	// The server kept only the hash, so there is nothing left to show.
-	_, again := ta.do(t, http.MethodGet, "/profile", nil, nil)
-	if strings.Contains(again, secret) {
-		t.Error("the secret came back on a second visit")
-	}
-	if !strings.Contains(again, "laptop") {
-		t.Error("the token is not listed by its label")
-	}
+	t.Run("a plain form gets the whole page back, with the secret on it", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.signUp(t, "Ada", "correct-horse")
+		ta.do(t, http.MethodGet, "/rooms", nil, nil) // spends the welcome flash
+
+		res, body := ta.do(t, http.MethodPost, "/profile/tokens",
+			url.Values{"label": {"laptop"}, "password": {"correct-horse"}}, nil)
+
+		if res.StatusCode != http.StatusOK || !strings.Contains(body, "<!doctype html>") {
+			t.Fatalf("status %d, and a whole page: %v; want 200 and the page", res.StatusCode, strings.Contains(body, "<!doctype html>"))
+		}
+		secret := shown(body)
+		if secret == "" {
+			t.Fatalf("the answer shows no secret:\n%s", body)
+		}
+		if !strings.Contains(body, `<th scope="row">laptop</th>`) {
+			t.Error("the answer does not list the new token")
+		}
+		// The page is behind the sign-in, so the browser never stores it: Back
+		// would otherwise show the secret again with no request made.
+		if cc := res.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want no-store on the answer that carries the secret", cc)
+		}
+
+		// The session's row in the store does not hold it: that row is where
+		// a redirect would have had to leave it.
+		row, found, err := ta.sessions.Store.Find(sessionToken(t, ta))
+		if err != nil || !found {
+			t.Fatalf("finding the session's row: found %v, %v", found, err)
+		}
+		if bytes.Contains(row, []byte(secret)) {
+			t.Error("the session's row in the store holds the secret")
+		}
+		// So nothing carried it anywhere: the very next page has no secret,
+		// and no flash about one either.
+		_, next := ta.do(t, http.MethodGet, "/profile", nil, nil)
+		if strings.Contains(next, secret) || shown(next) != "" {
+			t.Error("the page after the answer shows the secret: something stored it")
+		}
+		if strings.Contains(next, `class="flash"`) {
+			t.Errorf("a flash followed an answer that was no redirect:\n%s", next)
+		}
+		if !strings.Contains(next, `<th scope="row">laptop</th>`) {
+			t.Error("the token is not listed by its label")
+		}
+	})
+
+	t.Run("htmx gets the tokens region back, with the secret in it", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.signUp(t, "Ada", "correct-horse")
+
+		res, body := ta.do(t, http.MethodPost, "/profile/tokens",
+			url.Values{"label": {"laptop"}, "password": {"correct-horse"}}, htmx())
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status %d, want 200", res.StatusCode)
+		}
+		if strings.Contains(body, "<html") || !strings.HasPrefix(strings.TrimSpace(body), `<div id="token-region"`) {
+			t.Fatalf("the answer is not the region the form swaps:\n%s", body)
+		}
+		if res.Header.Get("HX-Redirect") != "" || res.Header.Get("Location") != "" {
+			t.Error("the answer sends the browser on, to a page that could only show the secret from storage")
+		}
+		if shown(body) == "" {
+			t.Errorf("the region shows no secret:\n%s", body)
+		}
+		if !strings.Contains(body, `<th scope="row">laptop</th>`) {
+			t.Error("the region does not list the new token")
+		}
+		// The form comes back empty, ready for the next one — and above all
+		// without the password.
+		if strings.Contains(body, "correct-horse") {
+			t.Error("the answer carries the password that was typed")
+		}
+		if cc := res.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want no-store", cc)
+		}
+		if _, next := ta.do(t, http.MethodGet, "/profile", nil, nil); shown(next) != "" {
+			t.Error("the page after the answer shows the secret: something stored it")
+		}
+	})
+
+	// The form is what makes the 200 safe to send: with hx-post it is a
+	// fragment form, never a boosted one, and a boosted POST answered 200
+	// pushes the POST's address into the history.
+	t.Run("the form is a fragment form, and plain underneath", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.signUp(t, "Ada", "correct-horse")
+
+		_, page := ta.do(t, http.MethodGet, "/profile", nil, nil)
+
+		_, form, ok := strings.Cut(page, `<form class="card-form" method="post" action="/profile/tokens"`)
+		if !ok {
+			t.Fatalf("the profile page has no plain token form:\n%s", page)
+		}
+		form, _, _ = strings.Cut(form, ">")
+		for _, want := range []string{`hx-post="/profile/tokens"`, `hx-target="#token-region"`, `hx-swap="outerHTML"`} {
+			if !strings.Contains(form, want) {
+				t.Errorf("the token form lacks %s: %s", want, form)
+			}
+		}
+		if !strings.Contains(page, `<div id="token-region"`) {
+			t.Error("the page has no region for the form to swap")
+		}
+		if shown(page) != "" {
+			t.Error("a page nobody made a token on shows a secret")
+		}
+	})
 }
 
 func TestTokenSignsAProgramIn(t *testing.T) {
@@ -212,11 +325,46 @@ func TestCreatingATokenAsksForThePassword(t *testing.T) {
 
 	res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
 		url.Values{"label": {"laptop"}, "password": {"correct-horse"}}, nil)
-	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("with the password: status %d, want 303", res.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("with the password: status %d, want 200", res.StatusCode)
 	}
 	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 1 {
 		t.Errorf("%d token(s) after the one good request, want 1", len(tokens))
+	}
+}
+
+// TestARefusedTokenFormComesBackAsWhatWasAsked: the token form is a fragment
+// form, so its 422 is the region for htmx — a whole page there would land
+// inside the region — and the page for a plain form
+// (patterns/htmx-server-rendering.md).
+func TestARefusedTokenFormComesBackAsWhatWasAsked(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	form := url.Values{"label": {"laptop"}, "password": {"not-the-password"}}
+
+	res, fragment := ta.do(t, http.MethodPost, "/profile/tokens", form, htmx())
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("htmx: status %d, want 422", res.StatusCode)
+	}
+	if strings.Contains(fragment, "<html") || !strings.HasPrefix(strings.TrimSpace(fragment), `<div id="token-region"`) {
+		t.Errorf("htmx: the 422 is not the region the form swaps:\n%s", fragment)
+	}
+	for _, want := range []string{"That is not your password.", `value="laptop"`, `aria-describedby="token-password-error"`} {
+		if !strings.Contains(fragment, want) {
+			t.Errorf("htmx: the 422 lacks %s", want)
+		}
+	}
+
+	res, page := ta.do(t, http.MethodPost, "/profile/tokens", form, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("plain: status %d, want 422", res.StatusCode)
+	}
+	if !strings.Contains(page, "<!doctype html>") || !strings.Contains(page, "That is not your password.") {
+		t.Errorf("plain: the 422 is not the page with its error:\n%s", page)
+	}
+	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 0 {
+		t.Errorf("%d token(s) were created by refused forms", len(tokens))
 	}
 }
 

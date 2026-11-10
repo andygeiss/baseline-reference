@@ -371,6 +371,19 @@ is.
   the box — and the bytes already stored moved by Go code at boot, which no `.sql`
   migration can do. Where the bytes live is tier 2 in that document, so a waiver is the
   third way out.
+- **Making a token answers its POST with the page, not a redirect**
+  (`patterns/htmx-server-rendering.md`, *Standard flows*, against
+  `patterns/go-auth-sessions.md`, *Machine tokens* rule 3) — two rules that do not
+  compose on this one request, recorded here and not waived. The first answers every
+  plain and boosted form with a 303 back to the page. The second, tier 1, shows the
+  secret "once, in the answer to that request: a flash would store it", and a 303 has
+  no body to show it in. So the token form is a fragment form: htmx swaps the tokens
+  region from a 200, which is the first rule's own fragment case, and never boosts it,
+  so no POST address reaches the history. A browser without htmx gets the whole page
+  as the 200 answer to its POST, where the first rule asks for the 303: a reload there
+  asks to send the form again, and sent again it makes a second token. Before baseline
+  `26f8f08` the secret rode the session to the page after a redirect; measured on that
+  binary, it was still in the database's write-ahead log after the page had shown it.
 - **The library project type is unexercised** (`project-types/library.md`,
   `patterns/go-library.md`, `checklists/library.md`) — and for the reason that
   document itself gives. Libraries are *extracted when a second project needs the

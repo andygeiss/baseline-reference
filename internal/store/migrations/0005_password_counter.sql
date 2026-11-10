@@ -1,5 +1,5 @@
 -- A counter in place of a time (patterns/go-auth-sessions.md rule 1). A session
--- records the value it signed in under, and every statement that sets a
+-- records the value it signed in under, and every statement that sets a new
 -- password moves it, so a reset ends the sessions opened before it. The time
 -- it replaces was stored in whole seconds: two writes inside one second left
 -- the stamp where it was, and the session it should have ended signed in.

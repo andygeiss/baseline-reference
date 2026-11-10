@@ -183,7 +183,10 @@ Every component composes the roles above, and every interactive state
   invoker commands.
 - **Token table** — the machine tokens, one row each: label, when it was last
   used, and a revoke button. The new token's secret appears once above it, in
-  `mono` inside an `accent` boundary, selectable in one tap.
+  `mono` inside an `accent` boundary, selectable in one tap. The secret, the
+  form that made it and the table are one region, spaced as the page spaces
+  its sections: the form swaps all of it, because the secret is in the answer
+  to that form and in no page after it.
 - **Icon** — a CSS mask, `1em` square, painted with the surrounding text
   color, so it needs no color and no size of its own. Five shapes ship on
   Lucide's 24-unit grid with a 2-unit round-capped stroke: plus (new room, new

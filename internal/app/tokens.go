@@ -26,13 +26,13 @@ type profilePage struct {
 	Form      tokenForm
 	EmailForm emailForm
 
-	// NewSecret is the token just created. It is shown here once and never
-	// again — the server kept only its hash.
+	// NewSecret is the token just created, on the answer to the request that
+	// created it and on no other: the server kept only its hash.
 	NewSecret string
 }
 
 func (a *App) handleProfile(w http.ResponseWriter, r *http.Request) {
-	a.renderProfile(w, r, http.StatusOK, tokenForm{}, emailForm{})
+	a.renderProfile(w, r, http.StatusOK, "", profilePage{})
 }
 
 // handleEmailSet stores the address a password-reset link would go to, or
@@ -53,7 +53,7 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 			"Write an address like you@example.com.")
 	}
 	if !form.Valid() {
-		a.renderProfile(w, r, http.StatusUnprocessableEntity, tokenForm{}, form)
+		a.renderProfile(w, r, http.StatusUnprocessableEntity, "", profilePage{EmailForm: form})
 		return
 	}
 	if err := a.users.SetEmail(r.Context(), user.ID, form.Email); err != nil {
@@ -69,7 +69,7 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleTokenCreate makes a machine token, once the password has been typed
-// again.
+// again, and shows its secret in the answer to that same request.
 //
 // A session alone must not be enough. A token outlives the session that made
 // it — no logout ends it and no password reset does — so whoever found a
@@ -77,6 +77,10 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 // credential of their own. It is a route that checks a password, so it sits
 // behind the login's limiter, in the login's bucket
 // (patterns/go-auth-sessions.md, Machine tokens rule 3).
+//
+// Every answer here is the tokens region for htmx and the whole page for a
+// plain form: the form is a fragment form, because its good answer cannot be
+// a redirect.
 func (a *App) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	if !a.parseForm(w, r) || !a.allow(w, r) {
 		return
@@ -94,7 +98,7 @@ func (a *App) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("Give it a name of 1 to %d characters.", domain.MaxLabelLen))
 	form.Check(ok, "password", "That is not your password.")
 	if !form.Valid() {
-		a.renderProfile(w, r, http.StatusUnprocessableEntity, form, emailForm{})
+		a.renderProfile(w, r, http.StatusUnprocessableEntity, "tokens", profilePage{Form: form})
 		return
 	}
 
@@ -114,21 +118,22 @@ func (a *App) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 	case errors.Is(err, domain.ErrStale):
 		form.Check(false, "password", "That is not your password.")
-		a.renderProfile(w, r, http.StatusUnprocessableEntity, form, emailForm{})
+		a.renderProfile(w, r, http.StatusUnprocessableEntity, "tokens", profilePage{Form: form})
 		return
 	default:
 		a.serverError(w, r, err)
 		return
 	}
 
-	// The secret rides the session to the page after the redirect, and is
-	// popped there. Answering the POST with it directly would show it once and
-	// then mint a second token on every refresh; putting it here costs one
-	// request's worth of storage in the same session row that could have
-	// created the token anyway.
-	a.sessions.Put(r.Context(), "newToken", secret)
-	a.flash(r, "Token created. Copy it now — it is not shown again.")
-	a.redirect(w, r, "/profile")
+	// The secret is written into the answer to this request and nowhere else.
+	// A redirect would have to carry it to the next page in the session, and
+	// the session is a row in the database: the plaintext of a credential,
+	// stored until somebody loads that page. No flash either — the region
+	// htmx swaps, or the page a plain form gets back, is the feedback.
+	//
+	// What a 200 costs a browser without htmx: a reload of this answer asks
+	// to send the form again, and sent again it makes a second token.
+	a.renderProfile(w, r, http.StatusOK, "tokens", profilePage{NewSecret: secret})
 }
 
 func (a *App) handleTokenDelete(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +153,10 @@ func (a *App) handleTokenDelete(w http.ResponseWriter, r *http.Request) {
 	a.redirect(w, r, "/profile")
 }
 
-func (a *App) renderProfile(w http.ResponseWriter, r *http.Request, status int, form tokenForm, email emailForm) {
+// renderProfile answers with the profile page, or with block when the request
+// is a fragment's. The caller sets what it has to show — a form that came
+// back, the secret just made — and this fills in the rest.
+func (a *App) renderProfile(w http.ResponseWriter, r *http.Request, status int, block string, page profilePage) {
 	user := userFrom(r.Context())
 	tokens, err := a.tokens.ByUser(r.Context(), user.ID)
 	if err != nil {
@@ -157,8 +165,8 @@ func (a *App) renderProfile(w http.ResponseWriter, r *http.Request, status int, 
 	}
 	// The form shows what is stored unless the reader is looking at something
 	// they just typed and got back.
-	if email.Email == "" && email.Valid() {
-		email.Email = user.Email
+	if page.EmailForm.Email == "" && page.EmailForm.Valid() {
+		page.EmailForm.Email = user.Email
 	}
 	now := time.Now()
 	views := make([]tokenView, len(tokens))
@@ -177,16 +185,9 @@ func (a *App) renderProfile(w http.ResponseWriter, r *http.Request, status int, 
 		// (patterns/time-and-dates.md).
 		views[i].Used, views[i].LastUsed = true, newStamp(used, a.location, now)
 	}
-	page := profilePage{
-		base:      a.newBase(r, "profile"),
-		Tokens:    views,
-		Form:      form,
-		EmailForm: email,
-		NewSecret: a.sessions.PopString(r.Context(), "newToken"),
-	}
-	if status == http.StatusUnprocessableEntity {
-		a.renderInvalid(w, r, "profile.html", page)
-		return
-	}
-	a.render(w, r, status, "profile.html", "", page)
+	page.base = a.newBase(r, "profile")
+	page.Tokens = views
+	// render writes the block only for a fragment request, so a 422 or the new
+	// secret reaches a plain form as the whole page.
+	a.render(w, r, status, "profile.html", block, page)
 }

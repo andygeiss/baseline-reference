@@ -154,12 +154,12 @@ func (a *App) sessionHolder(ctx context.Context) (domain.User, error) {
 		return domain.User{}, err
 	}
 	// The session records what the password counter was when it started. Every
-	// statement that sets a password moves it, so every session opened before
-	// one stops here — which is the point of resetting a password somebody else
-	// may know. The comparison sits in this function and nowhere else: the
-	// middleware and the socket's re-check both call it, and a socket never
-	// passes the middleware again (patterns/go-auth-sessions.md rule 1). A
-	// session that recorded no counter has no value to compare, and that
+	// statement that sets a new password moves it, so every session opened
+	// before one stops here — which is the point of resetting a password
+	// somebody else may know. The comparison sits in this function and nowhere
+	// else: the middleware and the socket's re-check both call it, and a socket
+	// never passes the middleware again (patterns/go-auth-sessions.md rule 1).
+	// A session that recorded no counter has no value to compare, and that
 	// differs too. A machine token is a separate credential and is revoked
 	// separately, on the profile page.
 	if v, ok := a.sessions.Get(ctx, sessionPasswordVersion).(int64); !ok || v != user.PasswordVersion {

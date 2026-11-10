@@ -34,62 +34,88 @@
 <p>A token lets the <code>chat</code> command sign in as you. Send it as
   <code>Authorization: Bearer &lt;token&gt;</code>.</p>
 
-{{with .NewSecret}}
-  <div class="secret">
-    <p><strong>Copy this now.</strong> It is not shown again.</p>
-    <p><code>{{.}}</code></p>
-  </div>
+{{template "tokens" .}}
 {{end}}
 
-<form class="card-form" method="post" action="/profile/tokens">
-  <label for="label">What is it for?</label>
-  {{/* autocomplete off: beside a password field a browser takes the nearest
-       text box for a user name, and offers to save "laptop" as one. */}}
-  <input id="label" name="label" value="{{.Form.Label}}" required
-         maxlength="40" placeholder="laptop" autocomplete="off"
-         {{with .Form.FieldErrors.label}}aria-invalid="true" aria-describedby="label-error"{{end}}>
-  {{with .Form.FieldErrors.label}}<p class="field-error" id="label-error">{{.}}</p>{{end}}
+{{/* tokens is the region the token form swaps: the secret just made, the
+     form, and the table the new token joins.
 
-  {{/* A token outlives the session that made it, so making one takes the
-       password, not only the session (patterns/go-auth-sessions.md). */}}
-  <label for="token-password">Your password</label>
-  <input id="token-password" name="password" type="password" required
-         autocomplete="current-password"
-         {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="token-password-error"{{end}}>
-  {{with .Form.FieldErrors.password}}<p class="field-error" id="token-password-error">{{.}}</p>{{end}}
+     The secret is written into the answer to the POST that made it, and
+     nowhere else. Carried over a redirect to the next page it would have to
+     wait in the session, and the session is a row in the database
+     (patterns/go-auth-sessions.md, Machine tokens rule 3). So this form is a
+     fragment form: htmx swaps this region from a 200, and a browser without
+     htmx gets the whole page as the answer to its POST. */}}
+{{define "tokens"}}
+<div id="token-region" class="token-region">
+  {{with .NewSecret}}
+    {{/* The notice is an alert and the secret beside it is not. The swap
+         inserts this already filled, which only the alert role announces
+         (patterns/go-forms-validation.md) — and a secret is not for reading
+         out loud. */}}
+    <div class="secret">
+      <p role="alert"><strong>Copy this now.</strong> It is not shown again.</p>
+      <p><code>{{.}}</code></p>
+    </div>
+  {{end}}
 
-  <button id="token-submit" class="button-primary" type="submit">
-    <span class="icon icon-plus" aria-hidden="true"></span>Make a token
-  </button>
-</form>
+  <form class="card-form" method="post" action="/profile/tokens"
+        hx-post="/profile/tokens"
+        hx-target="#token-region" hx-swap="outerHTML"
+        hx-indicator="#token-making">
+    <label for="label">What is it for?</label>
+    {{/* autocomplete off: beside a password field a browser takes the nearest
+         text box for a user name, and offers to save "laptop" as one. */}}
+    <input id="label" name="label" value="{{.Form.Label}}" required
+           maxlength="40" placeholder="laptop" autocomplete="off"
+           {{with .Form.FieldErrors.label}}aria-invalid="true" aria-describedby="label-error"{{end}}>
+    {{with .Form.FieldErrors.label}}<p class="field-error" id="label-error">{{.}}</p>{{end}}
 
-{{if .Tokens}}
-  <table class="tokens">
-    <caption class="visually-hidden">Your tokens</caption>
-    <thead>
-      <tr><th scope="col">Name</th><th scope="col">Last used</th><th scope="col">Revoke</th></tr>
-    </thead>
-    <tbody>
-      {{range .Tokens}}
-        <tr>
-          <th scope="row">{{.Label}}</th>
-          {{/* Absolute, not relative: this page does not refresh itself, so
-               "3 minutes ago" would still say that an hour later. */}}
-          <td><small>{{if .Used}}<time datetime="{{.LastUsed.ISO}}">{{.LastUsed.Absolute}}</time>{{else}}never{{end}}</small></td>
-          <td>
-            <form method="post" action="/profile/tokens/{{.ID}}/delete"
-                  hx-confirm="Revoke this token? Anything using it stops working.">
-              <button id="token-revoke-{{.ID}}" type="submit" class="token-revoke">
-                <span class="icon icon-trash" aria-hidden="true"></span>
-                <span class="visually-hidden">Revoke {{.Label}}</span>
-              </button>
-            </form>
-          </td>
-        </tr>
-      {{end}}
-    </tbody>
-  </table>
-{{else}}
-  <p class="empty">No tokens yet.</p>
-{{end}}
+    {{/* A token outlives the session that made it, so making one takes the
+         password, not only the session (patterns/go-auth-sessions.md). */}}
+    <label for="token-password">Your password</label>
+    <input id="token-password" name="password" type="password" required
+           autocomplete="current-password"
+           {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="token-password-error"{{end}}>
+    {{with .Form.FieldErrors.password}}<p class="field-error" id="token-password-error">{{.}}</p>{{end}}
+
+    {{/* An id, because this button is inside the region its form replaces:
+         htmx puts focus back only on an element it finds by id
+         (patterns/htmx-server-rendering.md). */}}
+    <button id="token-submit" class="button-primary" type="submit">
+      <span class="icon icon-plus" aria-hidden="true"></span>Make a token
+      <span id="token-making" class="htmx-indicator visually-hidden">Making…</span>
+    </button>
+  </form>
+
+  {{if .Tokens}}
+    <table class="tokens">
+      <caption class="visually-hidden">Your tokens</caption>
+      <thead>
+        <tr><th scope="col">Name</th><th scope="col">Last used</th><th scope="col">Revoke</th></tr>
+      </thead>
+      <tbody>
+        {{range .Tokens}}
+          <tr>
+            <th scope="row">{{.Label}}</th>
+            {{/* Absolute, not relative: this page does not refresh itself, so
+                 "3 minutes ago" would still say that an hour later. */}}
+            <td><small>{{if .Used}}<time datetime="{{.LastUsed.ISO}}">{{.LastUsed.Absolute}}</time>{{else}}never{{end}}</small></td>
+            <td>
+              <form method="post" action="/profile/tokens/{{.ID}}/delete"
+                    hx-confirm="Revoke this token? Anything using it stops working.">
+                <button id="token-revoke-{{.ID}}" type="submit" class="token-revoke">
+                  <span class="icon icon-trash" aria-hidden="true"></span>
+                  <span class="visually-hidden">Revoke {{.Label}}</span>
+                </button>
+              </form>
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <p class="empty">No tokens yet.</p>
+  {{end}}
+</div>
 {{end}}

@@ -427,9 +427,9 @@ func weakHash(password string) string {
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
 }
 
-// TestARehashAtSignInSetsNoPassword: every statement that sets a password moves
-// the counter, and the re-hash a sign-in makes sets none — the password is the
-// one it was (patterns/go-auth-sessions.md rule 1). Moved by a re-hash, the
+// TestARehashAtSignInSetsNoPassword: every statement that sets a new password
+// moves the counter, and the re-hash a sign-in makes sets none — the password is
+// the one it was (patterns/go-auth-sessions.md rule 1). Moved by a re-hash, the
 // counter signed every other session of that user out at their first sign-in
 // after the argon2id settings were raised.
 func TestARehashAtSignInSetsNoPassword(t *testing.T) {
