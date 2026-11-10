@@ -29,10 +29,13 @@ func nameKey(name string) string { return strings.ToLower(name) }
 // The check and the insert share one transaction on the single-writer pool.
 // Reading the driver's error string would be the other way to spot the clash,
 // and that string is not part of any contract.
+//
+// Its own errors name the user by id, never by name: an error's text is logged
+// by whoever handles it (patterns/go-errors-logging.md, Never log).
 func (s *Users) Add(ctx context.Context, u *domain.User) error {
 	tx, err := s.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning add of user %s: %w", u.Name, err)
+		return fmt.Errorf("beginning add of user %s: %w", u.ID, err)
 	}
 	defer tx.Rollback()
 
@@ -40,7 +43,7 @@ func (s *Users) Add(ctx context.Context, u *domain.User) error {
 	err = tx.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM users WHERE name_key = ?)`, nameKey(u.Name)).Scan(&taken)
 	if err != nil {
-		return fmt.Errorf("checking the name of user %s: %w", u.Name, err)
+		return fmt.Errorf("checking the name of user %s: %w", u.ID, err)
 	}
 	if taken {
 		return domain.ErrNameTaken
@@ -49,10 +52,10 @@ func (s *Users) Add(ctx context.Context, u *domain.User) error {
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO users (id, name, name_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
 		u.ID, u.Name, nameKey(u.Name), u.PasswordHash, now()); err != nil {
-		return fmt.Errorf("inserting user %s: %w", u.Name, err)
+		return fmt.Errorf("inserting user %s: %w", u.ID, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing user %s: %w", u.Name, err)
+		return fmt.Errorf("committing user %s: %w", u.ID, err)
 	}
 	return nil
 }

@@ -8,7 +8,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/andygeiss/baseline-reference/v5/internal/ws"
 )
 
 // debugLog is a logger that keeps every level, so a test can tell an error
@@ -171,5 +174,55 @@ func TestAFragmentLeavesTheFlashForThePage(t *testing.T) {
 	}
 	if _, again := ta.do(t, http.MethodGet, "/rooms/"+slug, nil, nil); strings.Contains(again, "Room created.") {
 		t.Error("the flash showed twice")
+	}
+}
+
+// lockedBuffer is a log sink goroutines may write to while a test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestTheSocketsLogLinesNameNobody: a log is a copy no account deletion
+// reaches, so it names people by id (patterns/go-errors-logging.md, Never log).
+func TestTheSocketsLogLinesNameNobody(t *testing.T) {
+	t.Parallel()
+	var log lockedBuffer
+	ta := newTestApp(t, func(o *Options) {
+		o.Logger = slog.New(slog.NewTextHandler(&log, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	})
+	ta.signUp(t, "Ada Lovelace", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+
+	c, err := openSocket(t, ta, ta.client, slug, "")
+	if err != nil {
+		t.Fatalf("opening the socket: %v", err)
+	}
+	c.Close(ws.CloseNormal, "")
+	ta.Wait() // the socket's goroutine logs its close before it ends
+
+	got := log.String()
+	for _, line := range []string{`msg="socket opened"`, `msg="socket closed"`} {
+		if !strings.Contains(got, line) {
+			t.Fatalf("no %s line in the log:\n%s", line, got)
+		}
+	}
+	if strings.Contains(got, "Ada") || strings.Contains(got, "Lovelace") {
+		t.Errorf("a log line names the person:\n%s", got)
+	}
+	if id := ta.onlyUserID(t); !strings.Contains(got, "user="+id) {
+		t.Errorf("the socket's lines do not carry the user's id %s:\n%s", id, got)
 	}
 }

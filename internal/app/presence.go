@@ -127,13 +127,15 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(ws.CloseTryAgain, "this room's map is full")
 		return
 	}
-	a.logger.Info("socket opened", "room", room.Slug, "user", s.name)
+	// The id, never the name: a log is a copy no account deletion reaches
+	// (patterns/go-errors-logging.md, Never log).
+	a.logger.Info("socket opened", "room", room.Slug, "user", s.userID)
 
 	// srv.Shutdown does not track a hijacked connection, so this work is the
 	// app's to count: main's a.Wait joins it after the listeners are down.
 	a.running.Go(func() {
 		code := a.serveSeat(room.ID, s)
-		a.logger.Info("socket closed", "room", room.Slug, "user", s.name, "code", code)
+		a.logger.Info("socket closed", "room", room.Slug, "user", s.userID, "code", code)
 	})
 }
 
@@ -224,7 +226,7 @@ func (a *App) writeSeat(roomID string, s *seat, done <-chan struct{}) uint16 {
 			}
 			if err != nil {
 				// Fail closed: a socket nobody can vouch for stops acting.
-				a.logger.Error("socket recheck", "user", s.name, "err", err)
+				a.logger.Error("socket recheck", "user", s.userID, "err", err)
 				s.conn.Close(ws.CloseInternalError, "")
 				return ws.CloseInternalError
 			}

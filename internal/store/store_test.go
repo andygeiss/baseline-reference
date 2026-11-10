@@ -110,6 +110,27 @@ func TestUsers(t *testing.T) {
 	})
 }
 
+// An error's text is logged by whoever handles it, so it names a person by id
+// and never by name (patterns/go-errors-logging.md, Never log).
+func TestAddingAUserNamesNobodyInItsError(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	gone, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := store.NewUsers(db).Add(gone, &domain.User{ID: "user-1", Name: "Ada Lovelace", PasswordHash: "hash"})
+
+	if err == nil {
+		t.Fatal("Add under a cancelled context = nil, want the failure")
+	}
+	if strings.Contains(err.Error(), "Ada") || strings.Contains(err.Error(), "Lovelace") {
+		t.Errorf("the error names the person: %v", err)
+	}
+	if !strings.Contains(err.Error(), "user-1") {
+		t.Errorf("the error does not say which user, by id: %v", err)
+	}
+}
+
 // Every statement that writes a hash moves the counter, and the write names the
 // value its request loaded (patterns/go-auth-sessions.md rule 1).
 func TestSetPassword(t *testing.T) {
