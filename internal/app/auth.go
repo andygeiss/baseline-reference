@@ -59,7 +59,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ok, err := auth.VerifyPassword(hash, password)
 	if err != nil {
-		a.serverError(w, r, fmt.Errorf("verifying the password of %q: %w", form.Name, err))
+		a.serverError(w, r, fmt.Errorf("verifying a password at sign-in: %w", err)) // no name: a log names people by id
 		return
 	}
 

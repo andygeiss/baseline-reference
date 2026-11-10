@@ -264,6 +264,8 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, page, b
 		a.serverError(w, r, err)
 		return
 	}
+	// Set here, or a fragment rooted at <li> is sniffed as text/plain.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Add("Vary", "HX-Request-Type")
 	w.WriteHeader(status)
 	buf.WriteTo(w)

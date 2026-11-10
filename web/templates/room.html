@@ -15,7 +15,7 @@
      position (patterns/htmx-live-updates.md). */}}
 {{define "chat"}}
 <div id="chat" class="chat">
-  <ul id="messages" class="messages" role="list">
+  <ul id="messages" class="messages" role="list" aria-live="polite">
     {{if .HasOlder}}{{template "more" .}}{{end}}
     {{range .Messages}}{{template "message" .}}{{end}}
     {{template "poller" .}}

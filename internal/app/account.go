@@ -48,7 +48,7 @@ func (a *App) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := auth.VerifyPassword(user.PasswordHash, r.PostFormValue("password"))
 	if err != nil {
-		a.serverError(w, r, fmt.Errorf("verifying the password of %q: %w", user.Name, err))
+		a.serverError(w, r, fmt.Errorf("verifying the password of user %s: %w", user.ID, err))
 		return
 	}
 

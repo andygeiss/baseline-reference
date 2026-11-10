@@ -32,6 +32,7 @@ type Secret string
 
 func (Secret) LogValue() slog.Value         { return slog.StringValue("REDACTED") }
 func (Secret) String() string               { return "REDACTED" }
+func (Secret) GoString() string             { return "REDACTED" }
 func (Secret) MarshalText() ([]byte, error) { return []byte("REDACTED"), nil }
 
 // Config is every knob this binary has. After parseConfig returns, nothing
@@ -190,7 +191,7 @@ func parseBaseURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("base-url %q: %v", raw, err)
 	case u.Scheme != "http" && u.Scheme != "https":
 		return nil, fmt.Errorf("base-url %q: want an http:// or https:// address", raw)
-	case u.Host == "":
+	case u.Hostname() == "": // not Host: "http://:8080" has a Host and nowhere to send anybody
 		return nil, fmt.Errorf("base-url %q: no host — write it as https://chat.example.com", raw)
 	}
 	// No TrimSuffix on the path: JoinPath does not double a trailing slash.

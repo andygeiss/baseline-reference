@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -98,21 +99,30 @@ func (c *common) client() (*chatapi.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return chatapi.New(c.addr, token), nil
+	return chatapi.New(c.addr, string(token)), nil // the conversion is the only way past Secret
 }
+
+// Secret is a value that must never reach a line this tool prints: the four
+// methods are the four ways a value gets printed (patterns/go-config.md).
+type Secret string
+
+func (Secret) LogValue() slog.Value         { return slog.StringValue("REDACTED") }
+func (Secret) String() string               { return "REDACTED" }
+func (Secret) GoString() string             { return "REDACTED" }
+func (Secret) MarshalText() ([]byte, error) { return []byte("REDACTED"), nil }
 
 // readToken prefers the file, because $GOCHAT_TOKEN leaks into every child
 // process and into anything that dumps the environment. A flag is worse still —
 // its value shows up in ps and in shell history — so there is no -token flag.
-func readToken(path string) (string, error) {
+func readToken(path string) (Secret, error) {
 	if path == "" {
-		return os.Getenv("GOCHAT_TOKEN"), nil
+		return Secret(os.Getenv("GOCHAT_TOKEN")), nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
-	return strings.TrimSpace(string(b)), nil // the file usually ends in a newline
+	return Secret(strings.TrimSpace(string(b))), nil // the file usually ends in a newline
 }
 
 // parse binds the common flags, parses args, and turns the flag package's own

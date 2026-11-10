@@ -338,17 +338,22 @@ func every(ctx context.Context, d time.Duration, do func()) error {
 
 // serve runs srv until ctx is canceled, then shuts it down gracefully so
 // in-flight requests finish.
+//
+// It returns when Shutdown has, never when ListenAndServe does: that returns the
+// moment Shutdown is called, with requests still in flight
+// (patterns/go-http-server.md).
 func serve(ctx context.Context, srv *http.Server) error {
-	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	select {
-	case <-ctx.Done():
+	drained := make(chan error, 1)
+	stop := context.AfterFunc(ctx, func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
-	case err := <-errc:
+		drained <- srv.Shutdown(shutdownCtx)
+	})
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		stop()
 		return fmt.Errorf("serving %s: %w", srv.Addr, err)
 	}
+	return <-drained
 }
 
 // version names this build for three jobs at once: the boot log line, the

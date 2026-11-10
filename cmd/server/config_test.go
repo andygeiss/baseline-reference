@@ -133,6 +133,7 @@ func TestConfig_SecretsNeverLogged(t *testing.T) {
 		"through a fmt verb":     func(l *slog.Logger) { l.Info(fmt.Sprintf("started %+v", cfg)) },
 		"a field on its own":     func(l *slog.Logger) { l.Info("started", "key", cfg.AnthropicKey) },
 		"a field through a verb": func(l *slog.Logger) { l.Info(fmt.Sprintf("key %v", cfg.SMTPPassword)) },
+		"through %#v":            func(l *slog.Logger) { l.Info(fmt.Sprintf("started %#v", cfg)) },
 	}
 	for name, log := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -143,5 +144,19 @@ func TestConfig_SecretsNeverLogged(t *testing.T) {
 				t.Errorf("the secret reached the log line: %s", buf.String())
 			}
 		})
+	}
+}
+
+// TestParseBaseURL_NeedsAHostName: url.Parse gives "http://:8080" a Host and no
+// name, and a link built from it sends nobody anywhere (patterns/go-config.md).
+func TestParseBaseURL_NeedsAHostName(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{"http://:8080", "https://", "http:///reset"} {
+		if u, err := parseBaseURL(raw); err == nil {
+			t.Errorf("parseBaseURL(%q) = %v, want it refused", raw, u)
+		}
+	}
+	if _, err := parseBaseURL("https://chat.example.com"); err != nil {
+		t.Errorf("parseBaseURL refused a good address: %v", err)
 	}
 }
