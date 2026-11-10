@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -443,7 +444,7 @@ func TestResetsAndOutbox(t *testing.T) {
 func TestSessions(t *testing.T) {
 	t.Parallel()
 	db := newTestDB(t)
-	sessions := store.NewSessions(db)
+	sessions := store.NewSessions(db, 12*time.Hour)
 
 	t.Run("what is committed is found", func(t *testing.T) {
 		if err := sessions.CommitCtx(t.Context(), "token-1", []byte("data"), time.Now().Add(time.Hour)); err != nil {
@@ -487,16 +488,74 @@ func TestSessions(t *testing.T) {
 		}
 	})
 
-	t.Run("the janitor reclaims expired rows", func(t *testing.T) {
+	// The one a logout depends on. A request that loaded the session before the
+	// logout landed commits it when its handler returns — scs commits every
+	// loaded session under IdleTimeout — and a store that simply deleted the
+	// row would take that commit as a new session: the logged-out cookie is
+	// signed in again (patterns/go-auth-sessions.md).
+	t.Run("a deleted token cannot be committed back", func(t *testing.T) {
+		if err := sessions.CommitCtx(t.Context(), "token-1", []byte("revived"), time.Now().Add(time.Hour)); err != nil {
+			t.Fatalf("CommitCtx: %v", err)
+		}
+		if got, found, _ := sessions.FindCtx(t.Context(), "token-1"); found {
+			t.Errorf("a commit after the delete brought the session back: %q", got)
+		}
+	})
+
+	t.Run("nor can one that was deleted before it was ever stored", func(t *testing.T) {
+		if err := sessions.DeleteCtx(t.Context(), "never-stored"); err != nil {
+			t.Fatalf("DeleteCtx: %v", err)
+		}
+		if err := sessions.CommitCtx(t.Context(), "never-stored", []byte("data"), time.Now().Add(time.Hour)); err != nil {
+			t.Fatalf("CommitCtx: %v", err)
+		}
+		if _, found, _ := sessions.FindCtx(t.Context(), "never-stored"); found {
+			t.Error("a commit after the delete made a session of a deleted token")
+		}
+	})
+
+	t.Run("the janitor reclaims expired rows, and keeps what a delete left", func(t *testing.T) {
 		if err := sessions.DeleteExpired(t.Context()); err != nil {
 			t.Fatalf("DeleteExpired: %v", err)
 		}
+		var tokens []string
+		rows, err := db.Read.QueryContext(t.Context(), "SELECT token FROM sessions ORDER BY token")
+		if err != nil {
+			t.Fatalf("listing sessions: %v", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var token string
+			if err := rows.Scan(&token); err != nil {
+				t.Fatalf("scanning a session: %v", err)
+			}
+			tokens = append(tokens, token)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("reading sessions: %v", err)
+		}
+		// "old" expired and is gone. The two deleted tokens are remembered until
+		// their lifetime ends: that memory is what refuses the late commit.
+		if want := []string{"never-stored", "token-1"}; !slices.Equal(tokens, want) {
+			t.Errorf("rows left = %v, want %v", tokens, want)
+		}
+	})
+
+	t.Run("a deleted token is forgotten once its lifetime has passed", func(t *testing.T) {
+		brief := store.NewSessions(db, 0) // a lifetime that is already over
+		if err := brief.DeleteCtx(t.Context(), "gone"); err != nil {
+			t.Fatalf("DeleteCtx: %v", err)
+		}
+		if err := brief.DeleteExpired(t.Context()); err != nil {
+			t.Fatalf("DeleteExpired: %v", err)
+		}
 		var n int
-		if err := db.Read.QueryRowContext(t.Context(), "SELECT count(*) FROM sessions").Scan(&n); err != nil {
+		if err := db.Read.QueryRowContext(t.Context(),
+			"SELECT count(*) FROM sessions WHERE token = 'gone'").Scan(&n); err != nil {
 			t.Fatalf("counting sessions: %v", err)
 		}
 		if n != 0 {
-			t.Errorf("%d session rows left, want 0", n)
+			t.Errorf("%d row(s) left for a token whose lifetime is over, want 0", n)
 		}
 	})
 }

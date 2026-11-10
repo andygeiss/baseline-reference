@@ -101,7 +101,11 @@ func run(cfg Config) error {
 	// cannot be exercised over the HTTP it actually serves. ENV is set by the
 	// deployment, which is the thing that knows whether TLS is in front.
 	sessions.Cookie.Secure = cfg.Env == "prod"
-	sessionStore := store.NewSessions(db)
+	// Only the token's SHA-256 reaches the store, like every other credential
+	// this app keeps: a copy of the database, or of a snapshot, then holds no
+	// session anybody can use.
+	sessions.HashTokenInStore = true
+	sessionStore := store.NewSessions(db, sessions.Lifetime)
 	sessions.Store = sessionStore
 
 	// Built once: it costs a real argon2id run, and the login path needs it on

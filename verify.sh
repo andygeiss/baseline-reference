@@ -530,6 +530,31 @@ AFTER="$(awk '/session/ {print $7}' "$JAR" | tail -1)"
 [ -n "$BEFORE" ] && [ -n "$AFTER" ] || fail "no session token to compare"
 [ "$BEFORE" != "$AFTER" ] || fail "the session token survived the login"
 
+step "smoke: a request in flight across a logout does not bring the session back"
+# patterns/go-auth-sessions.md: scs commits every session a request loaded when
+# its handler returns. A request that is still reading its body when the logout
+# lands would write the logged-out session back, and whoever held the cookie —
+# its owner or a thief — would be signed in again. The store refuses that
+# commit. A person of her own, from an address of her own, so the buckets and
+# the jar above are left alone.
+SLOWJAR="$WORKDIR/cookies-slow"
+curl -s -c "$SLOWJAR" -b "$SLOWJAR" -o /dev/null -X POST "localhost:$PORT/register" \
+    -H 'X-Forwarded-For: 198.51.100.15' -d "name=Slowpoke&password=correct-horse&invite=$INVITE"
+SLOWTOKEN="$(awk '/session/ {print $7}' "$SLOWJAR" | tail -1)"
+[ -n "$SLOWTOKEN" ] || fail "no session to test a logout with"
+# -T - streams the body as it arrives: the handler is inside ParseForm for a second.
+( printf 'name='; sleep 1; printf 'Slow Room' ) | curl -s -o /dev/null -T - -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' -H "Cookie: session=$SLOWTOKEN" \
+    "localhost:$PORT/rooms" &
+SLOWPID=$!
+sleep 0.4
+curl -s -o /dev/null -H "Cookie: session=$SLOWTOKEN" -X POST "localhost:$PORT/logout"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: session=$SLOWTOKEN" "localhost:$PORT/rooms")"
+[ "$CODE" = "303" ] || fail "the logout did not sign the cookie out: got $CODE"
+wait "$SLOWPID"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: session=$SLOWTOKEN" "localhost:$PORT/rooms")"
+[ "$CODE" = "303" ] || fail "the slow request saved the logged-out session again: the old cookie got $CODE, want 303"
+
 step "smoke: a wrong password and an unknown name answer the same way"
 curl -s -o "$WORKDIR/wrongpw.html" -X POST "localhost:$PORT/login" \
     -d "name=Ada&password=wrong-horse"
