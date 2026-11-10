@@ -166,6 +166,15 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 		return "", domain.ErrRefused
 	}
 
+	// An answer the model was cut off in is a failure, not a shorter answer:
+	// posted to the room, half a sentence reads as the whole reply
+	// (patterns/go-llm-adapter.md rule 8). The two values are the claude-api
+	// skill's, read on 2026-11-10 — the token ceiling above, and the context
+	// window.
+	if out.StopReason == "max_tokens" || out.StopReason == "model_context_window_exceeded" {
+		return "", fmt.Errorf("the model's answer was cut short: %s", out.StopReason)
+	}
+
 	for _, c := range out.Content {
 		if c.Type == "text" && c.Text != "" {
 			return c.Text, nil

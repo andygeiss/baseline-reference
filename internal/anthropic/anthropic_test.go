@@ -141,6 +141,18 @@ func TestResponseTranslation(t *testing.T) {
 			},
 		},
 		{
+			name: "an answer cut by the token ceiling is an error",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, `{"stop_reason":"max_tokens","content":[{"type":"text","text":"The answer is"}]}`)
+			},
+		},
+		{
+			name: "an answer cut by the context window is an error",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, `{"stop_reason":"model_context_window_exceeded","content":[{"type":"text","text":"The answer is"}]}`)
+			},
+		},
+		{
 			name: "503 fails without a domain sentinel",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusServiceUnavailable)
