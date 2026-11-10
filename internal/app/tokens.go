@@ -68,15 +68,31 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 	a.redirect(w, r, "/profile")
 }
 
+// handleTokenCreate makes a machine token, once the password has been typed
+// again.
+//
+// A session alone must not be enough. A token outlives the session that made
+// it — no logout ends it and no password reset does — so whoever found a
+// browser unlocked, or holds one leaked token, would otherwise leave with a
+// credential of their own. It is a route that checks a password, so it sits
+// behind the login's limiter, in the login's bucket
+// (patterns/go-auth-sessions.md, Machine tokens rule 3).
 func (a *App) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
-	if !a.parseForm(w, r) {
+	if !a.parseForm(w, r) || !a.allow(w, r) {
 		return
 	}
 	user := userFrom(r.Context())
 
+	ok, err := auth.VerifyPassword(user.PasswordHash, r.PostFormValue("password"))
+	if err != nil {
+		a.serverError(w, r, fmt.Errorf("verifying the password of user %s: %w", user.ID, err))
+		return
+	}
+
 	form := tokenForm{Label: domain.NormalizeLabel(r.PostFormValue("label"))}
 	form.Check(domain.ValidateLabel(form.Label) == nil, "label",
 		fmt.Sprintf("Give it a name of 1 to %d characters.", domain.MaxLabelLen))
+	form.Check(ok, "password", "That is not your password.")
 	if !form.Valid() {
 		a.renderProfile(w, r, http.StatusUnprocessableEntity, form, emailForm{})
 		return

@@ -148,7 +148,7 @@ missing predicate and a forgotten one look identical in a diff.
 | `rooms` | **nobody — shared on purpose** | This is a group chat: every signed-in member sees every room and may post in any of them. `All` and `BySlug` take no actor because there is no owner to match, not because one was forgotten. |
 | `messages` | **nobody — shared on purpose** | A message belongs to its room, and rooms are shared. Nobody edits a message and no route deletes one, so the only write from a request is an append that stamps its author from the credential rather than from the request. The one delete is the cascade when its author's account goes — see *What a delete means, table by table* below. |
 | `attachments` | **shared to read, owned to delete** | Reading follows the message it hangs on, so `Open` takes no actor: everyone who can read the room can open the file. Deleting does not. `Delete` carries `uploader_id` in the `WHERE` clause and checks how many rows it hit, so somebody else's file answers exactly like one that was never there. `TestOnlyTheUploaderRemovesAFile` is that check. |
-| `resets` | whoever asked for it | Never listed and never rendered. The row is found by the SHA-256 of the token in the emailed link and spent in the transaction that reads it, so a link works once. |
+| `resets` | whoever asked for it | Never listed and never rendered. The row is found by the SHA-256 of the token in the emailed link and spent in the transaction that writes the new password hash, with every other link that user has: a link works once, and none issued before a password write works after it. |
 | `outbox` | **nobody — machinery** | One background sender drains it. No route reads it and no page renders it. |
 
 ### What a delete means, table by table
@@ -209,8 +209,8 @@ where people are, and this shows who is.
   made gets 404. An up message is four bytes — a position — and never a name: who is
   pointing is whoever the cookie says — re-resolved, not remembered: every 5 seconds,
   under a 2-second deadline, the socket loads its session from the store by token and checks the user row and
-  password stamp the way every request does, so signing out, a password reset, a
-  deleted account, or — for a socket opened with a machine token — revoking the
+  its password counter in the one lookup every request makes, so signing out, a password reset, a
+  re-hash at somebody's next sign-in, a deleted account, or — for a socket opened with a machine token — revoking the
   token closes it with 1008 within 5 seconds (1011 if the store cannot answer in
   time). From the moment a check falls due until it answers, moves are dropped. The
   handler returns right after the handshake and the socket runs on a goroutine the
@@ -451,6 +451,22 @@ candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.
 - **A name may be two characters** (`internal/domain/user.go`). A three-character
   floor is an English-nickname number, and it refuses 李雷 — a whole name in plenty
   of scripts.
+- **A sign-in that re-hashes names the password counter too** (`internal/app/auth.go`).
+  `patterns/go-auth-sessions.md` rule 1 prints the guarded statement for a password
+  change. This app has no password change — a password is set by registering or by a
+  reset link — and the one request here that loads a row, checks a password against it
+  and then writes a hash by id is the sign-in that re-hashes a password stored under
+  weaker argon2id settings. It has the same hole: a reset that lands while the sign-in
+  is open would be written over with the old password. So `Users.SetPassword` carries
+  `AND password_version = ?`, and a sign-in whose write changes no row is refused like
+  a wrong password. Two things follow from the rule's "every statement that writes a
+  hash moves the counter" and are worth knowing before the settings are next raised:
+  each person's first sign-in afterwards ends their other sessions and closes their
+  open room maps, once; and it deletes their outstanding reset links.
+- **Migration 0005 signs everybody out, once.** The counter replaces a time, and a
+  stored session recorded the time: there is nothing to read a counter out of. The
+  `sessions` table is made again with a nullable `data` column — `NULL` is the mark of a
+  deleted session, as the rule's statement has it — and its rows are not copied.
 - **Flags before positionals, said out loud** (`cmd/gochat/run.go`). Go's `flag` stops
   at the first plain argument, so `gochat read general -json` silently treats the flag
   as an extra argument. The tool spots that shape and says which order to use

@@ -37,7 +37,7 @@ func NewSessions(db *DB, lifetime time.Duration) *Sessions {
 func (s *Sessions) FindCtx(ctx context.Context, token string) ([]byte, bool, error) {
 	var b []byte
 	err := s.db.Read.QueryRowContext(ctx,
-		`SELECT data FROM sessions WHERE token = ? AND expiry > ? AND length(data) > 0`,
+		`SELECT data FROM sessions WHERE token = ? AND expiry > ? AND data IS NOT NULL`,
 		token, time.Now().Unix()).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
@@ -49,14 +49,23 @@ func (s *Sessions) FindCtx(ctx context.Context, token string) ([]byte, bool, err
 }
 
 // CommitCtx stores a session, replacing whatever that token held before —
-// unless the token was deleted, in which case it stores nothing. DeleteCtx
-// says why.
+// unless the token was deleted or its row has expired, in which case it stores
+// nothing. DeleteCtx says why for the first.
+//
+// The second is the logout that came too late: once the idle window has closed
+// FindCtx finds no session, so the logout has no token to delete and empties
+// nothing. A request that loaded the session before the window closed would
+// then commit it back to life.
+//
+// Both conditions sit in the statement that writes. Checked in a statement of
+// their own they lose the race they are there for: the logout lands between the
+// check and the write (patterns/go-auth-sessions.md).
 func (s *Sessions) CommitCtx(ctx context.Context, token string, b []byte, expiry time.Time) error {
 	_, err := s.db.Write.ExecContext(ctx,
 		`INSERT INTO sessions (token, data, expiry) VALUES (?, ?, ?)
 		 ON CONFLICT (token) DO UPDATE SET data = excluded.data, expiry = excluded.expiry
-		 WHERE length(sessions.data) > 0`,
-		token, b, expiry.Unix())
+		 WHERE sessions.data IS NOT NULL AND sessions.expiry > ?`,
+		token, b, expiry.Unix(), time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("committing session: %w", err)
 	}
@@ -74,11 +83,11 @@ func (s *Sessions) CommitCtx(ctx context.Context, token string, b []byte, expiry
 // token is over — CommitCtx changes nothing on it, FindCtx does not find it —
 // until the session's whole lifetime has passed, after which nothing loaded
 // under it can still be valid. The janitor then removes it like any expired
-// row. scs never commits an empty session, so empty is the mark.
+// row an hour later. NULL is the mark: scs never commits one.
 func (s *Sessions) DeleteCtx(ctx context.Context, token string) error {
 	if _, err := s.db.Write.ExecContext(ctx,
-		`INSERT INTO sessions (token, data, expiry) VALUES (?, x'', ?)
-		 ON CONFLICT (token) DO UPDATE SET data = x'', expiry = excluded.expiry`,
+		`INSERT INTO sessions (token, data, expiry) VALUES (?, NULL, ?)
+		 ON CONFLICT (token) DO UPDATE SET data = NULL, expiry = excluded.expiry`,
 		token, time.Now().Add(s.lifetime).Unix()); err != nil {
 		return fmt.Errorf("deleting session: %w", err)
 	}
@@ -98,12 +107,19 @@ func (s *Sessions) Commit(token string, b []byte, expiry time.Time) error {
 
 func (s *Sessions) Delete(token string) error { return s.DeleteCtx(context.Background(), token) }
 
-// DeleteExpired reclaims the disk of sessions nobody can use any more. It is
-// housekeeping, not enforcement — FindCtx above is what makes an expired
-// session stop working, the moment it expires.
+// janitorLag is how long an expired row is left where it is. A request that
+// loaded the session just before it expired may still commit it, and against a
+// row that is gone that commit is an insert: the expired session, alive again.
+// An hour is longer than any request this server lets run
+// (patterns/go-auth-sessions.md).
+const janitorLag = time.Hour
+
+// DeleteExpired reclaims the disk of sessions nobody can use any more, an hour
+// after they expired. It is housekeeping, not enforcement — FindCtx above is
+// what makes an expired session stop working, the moment it expires.
 func (s *Sessions) DeleteExpired(ctx context.Context) error {
 	if _, err := s.db.Write.ExecContext(ctx,
-		`DELETE FROM sessions WHERE expiry <= ?`, time.Now().Unix()); err != nil {
+		`DELETE FROM sessions WHERE expiry <= ?`, time.Now().Add(-janitorLag).Unix()); err != nil {
 		return fmt.Errorf("deleting expired sessions: %w", err)
 	}
 	return nil

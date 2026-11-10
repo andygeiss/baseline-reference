@@ -124,7 +124,7 @@ func newTestOptions(t *testing.T, options ...func(*Options)) Options {
 		Rooms:       newFakeRooms(),
 		Messages:    newFakeMessages(users, files),
 		Attachments: files,
-		Resets:      newFakeResets(),
+		Resets:      newFakeResets(users),
 		Tokens:      newFakeTokens(users),
 		Sessions:    scs.New(), // the default in-memory store is right for a test
 		TemplatesFS: os.DirFS("../../web/templates"),

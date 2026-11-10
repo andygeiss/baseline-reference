@@ -57,52 +57,79 @@ func (s *Resets) Add(ctx context.Context, res *domain.Reset, mail domain.Mail) e
 	return nil
 }
 
-// Take spends a reset link: it returns whose account it belongs to and deletes
-// it in the same transaction, so a link works exactly once.
+// Redeem spends a reset link and sets the password it was issued for, in one
+// transaction: the link is read, the hash is written and the counter moved, and
+// every reset link the user has is deleted, this one among them. It returns the
+// user as the row now stands, for the session the reset signs in.
 //
-// An expired row answers ErrNotFound and is deleted anyway. "Expired" and
-// "never existed" are the same sentence to whoever is holding a dead link, and
-// keeping them apart would tell somebody guessing that they had guessed right.
-func (s *Resets) Take(ctx context.Context, hash string, now time.Time) (domain.Reset, error) {
+// One transaction because the pieces are one fact. A link deleted in a
+// transaction of its own and a hash written in the next leaves, between them, a
+// spent link and an unchanged password; and a second link issued before this
+// reset would still set the password after it (patterns/go-auth-sessions.md).
+//
+// The hash is made before this is called, so a link that turns out to be dead
+// has cost as much as a live one, and holds the one write connection for no
+// longer than three statements.
+//
+// An unknown, a used and an expired link all answer ErrNotFound, and the
+// expired one is deleted anyway. They are the same sentence to whoever is
+// holding a dead link, and keeping them apart would tell somebody guessing that
+// they had guessed right.
+func (s *Resets) Redeem(ctx context.Context, hash, passwordHash string, now time.Time) (domain.User, error) {
 	tx, err := s.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.Reset{}, fmt.Errorf("beginning to take a reset: %w", err)
+		return domain.User{}, fmt.Errorf("beginning to redeem a reset: %w", err)
 	}
 	defer tx.Rollback()
 
-	var (
-		res       domain.Reset
-		expiresAt string
-	)
-	res.Hash = hash
+	var userID, expiresAt string
 	err = tx.QueryRowContext(ctx,
 		`SELECT user_id, expires_at FROM resets WHERE hash = ?`, hash,
-	).Scan(&res.UserID, &expiresAt)
+	).Scan(&userID, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Reset{}, domain.ErrNotFound
+		return domain.User{}, domain.ErrNotFound
 	}
 	if err != nil {
-		return domain.Reset{}, fmt.Errorf("selecting a reset: %w", err)
+		return domain.User{}, fmt.Errorf("selecting a reset: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE hash = ?`, hash); err != nil {
-		return domain.Reset{}, fmt.Errorf("deleting a spent reset: %w", err)
+	expires, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("parsing the expiry of a reset: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return domain.Reset{}, fmt.Errorf("committing a spent reset: %w", err)
+	if (domain.Reset{ExpiresAt: expires}).Expired(now) {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE hash = ?`, hash); err != nil {
+			return domain.User{}, fmt.Errorf("deleting an expired reset: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return domain.User{}, fmt.Errorf("committing the delete of an expired reset: %w", err)
+		}
+		return domain.User{}, domain.ErrNotFound
 	}
 
-	res.ExpiresAt, err = time.Parse(time.RFC3339, expiresAt)
-	if err != nil {
-		return domain.Reset{}, fmt.Errorf("parsing the expiry of a reset: %w", err)
+	// No version named here, unlike Users.SetPassword: the link is the
+	// authority, and it is read in this transaction, on the one write
+	// connection. Nothing this statement relies on was loaded earlier.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, password_version = password_version + 1 WHERE id = ?`,
+		passwordHash, userID); err != nil {
+		return domain.User{}, fmt.Errorf("setting the password of user %s: %w", userID, err)
 	}
-	if res.Expired(now) {
-		return domain.Reset{}, domain.ErrNotFound
+	if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE user_id = ?`, userID); err != nil {
+		return domain.User{}, fmt.Errorf("deleting the reset links of user %s: %w", userID, err)
 	}
-	return res, nil
+	var u domain.User
+	if err := tx.QueryRowContext(ctx, userColumns+` WHERE id = ?`, userID).
+		Scan(&u.ID, &u.Name, &u.PasswordHash, &u.Email, &u.PasswordVersion); err != nil {
+		return domain.User{}, fmt.Errorf("reading user %s after the reset: %w", userID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.User{}, fmt.Errorf("committing the reset of user %s: %w", userID, err)
+	}
+	return u, nil
 }
 
 // DeleteExpired clears reset rows nobody can spend any more. This only reclaims
-// disk: Take already refuses an expired row.
+// disk: Redeem already refuses an expired row.
 func (s *Resets) DeleteExpired(ctx context.Context) error {
 	if _, err := s.db.Write.ExecContext(ctx,
 		`DELETE FROM resets WHERE expires_at < ?`, now()); err != nil {

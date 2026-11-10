@@ -67,31 +67,50 @@ func (s *Users) ByID(ctx context.Context, id string) (domain.User, error) {
 	return s.one(ctx, userColumns+` WHERE id = ?`, id)
 }
 
-// UpdatePasswordHash replaces somebody's stored hash. Login calls it when the
-// stored hash was written under weaker argon2id settings than today's.
+// SetPassword writes a new hash over the one a request loaded, and moves the
+// counter that ends every session opened under the old one.
 //
-// It leaves password_changed_at alone, and that is the difference from
-// SetPassword below: the password did not change, only the cost it was hashed
-// at, so nobody's other sessions should end because they signed in.
-func (s *Users) UpdatePasswordHash(ctx context.Context, id, hash string) error {
-	if _, err := s.db.Write.ExecContext(ctx,
-		`UPDATE users SET password_hash = ? WHERE id = ?`, hash, id); err != nil {
-		return fmt.Errorf("updating the password hash of user %s: %w", id, err)
+// version is the counter as that request read it, and the statement names it.
+// A request loads the row when its headers arrive and may write minutes later,
+// its body held open the whole time: written by id alone, that late write would
+// put its password over a reset that landed in between — the reset somebody
+// made because the old password was known. No row changed means exactly that
+// happened, and the answer is domain.ErrStale: a refusal, never a retry
+// (patterns/go-auth-sessions.md rule 1).
+//
+// The user's reset links go in the same transaction. A link issued before this
+// write would otherwise still set the password after it.
+//
+// Login calls this to re-hash a password stored under weaker argon2id settings.
+// That write moves the counter like any other: every statement that writes a
+// hash does, so there is no second kind of write to get wrong.
+func (s *Users) SetPassword(ctx context.Context, id, hash string, version int64) (int64, error) {
+	tx, err := s.db.Write.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("beginning to set the password of user %s: %w", id, err)
 	}
-	return nil
-}
+	defer tx.Rollback()
 
-// SetPassword replaces somebody's password and stamps when it happened. A reset
-// calls it, and the stamp is what ends every session opened before this moment
-// — including whichever one the reset was needed for.
-func (s *Users) SetPassword(ctx context.Context, id, hash string) (string, error) {
-	changedAt := now()
-	if _, err := s.db.Write.ExecContext(ctx,
-		`UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?`,
-		hash, changedAt, id); err != nil {
-		return "", fmt.Errorf("setting the password of user %s: %w", id, err)
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, password_version = password_version + 1
+		  WHERE id = ? AND password_version = ?`, hash, id, version)
+	if err != nil {
+		return 0, fmt.Errorf("setting the password of user %s: %w", id, err)
 	}
-	return changedAt, nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting the password write of user %s: %w", id, err)
+	}
+	if n == 0 {
+		return 0, domain.ErrStale
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE user_id = ?`, id); err != nil {
+		return 0, fmt.Errorf("deleting the reset links of user %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing the password of user %s: %w", id, err)
+	}
+	return version + 1, nil
 }
 
 // SetEmail stores somebody's address, or clears it when email is empty.
@@ -150,12 +169,12 @@ func (s *Users) Delete(ctx context.Context, id string) error {
 
 // userColumns is the one shape every user read returns, so a column added to
 // the table is added in one place.
-const userColumns = `SELECT id, name, password_hash, email, password_changed_at FROM users`
+const userColumns = `SELECT id, name, password_hash, email, password_version FROM users`
 
 func (s *Users) one(ctx context.Context, query string, arg any) (domain.User, error) {
 	var u domain.User
 	err := s.db.Read.QueryRowContext(ctx, query, arg).
-		Scan(&u.ID, &u.Name, &u.PasswordHash, &u.Email, &u.PasswordChangedAt)
+		Scan(&u.ID, &u.Name, &u.PasswordHash, &u.Email, &u.PasswordVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, domain.ErrNotFound
 	}

@@ -577,15 +577,41 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 				t.Fatalf("deleting the account: %d", res.StatusCode)
 			}
 		}},
-		// A reset moves the password stamp, which ends every older session
-		// (go-auth-sessions.md) — this socket's included.
-		"a password reset": {end: func(t *testing.T, ta *testApp) {
+		// A password write moves the counter, which ends every older session
+		// (go-auth-sessions.md rule 1) — this socket's included. The socket
+		// never passes the middleware again, so this case is what holds the
+		// comparison in the lookup both of them call.
+		"a password write elsewhere": {end: func(t *testing.T, ta *testApp) {
 			user, err := ta.users.ByName(t.Context(), "Ada")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ta.users.SetPassword(t.Context(), user.ID, "new-hash"); err != nil {
+			if _, err := ta.users.SetPassword(t.Context(), user.ID, "new-hash", user.PasswordVersion); err != nil {
 				t.Fatal(err)
+			}
+		}},
+		// The same through the front door: a link asked for and redeemed from
+		// another browser.
+		"a password reset": {end: func(t *testing.T, ta *testApp) {
+			mine := ta.client
+			elsewhere := *mine
+			elsewhere.Jar = emptyJar(t)
+			ta.client = &elsewhere
+			defer func() { ta.client = mine }()
+			user, err := ta.users.ByName(t.Context(), "Ada")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ta.users.SetEmail(t.Context(), user.ID, "ada@example.com"); err != nil {
+				t.Fatal(err)
+			}
+			if res, _ := ta.do(t, http.MethodPost, "/reset", url.Values{"name": {"Ada"}}, nil); res.StatusCode != http.StatusSeeOther {
+				t.Fatalf("asking for a link: %d", res.StatusCode)
+			}
+			if res, _ := ta.do(t, http.MethodPost, "/reset/confirm", url.Values{
+				"token": {tokenFromMail(t, ta)}, "password": {"a whole new password"},
+			}, nil); res.StatusCode != http.StatusSeeOther {
+				t.Fatalf("using the link: %d", res.StatusCode)
 			}
 		}},
 	}
@@ -596,8 +622,9 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 				ta.signUp(t, "Ada", "correct-horse")
 				slug := ta.makeRoom(t, "General")
 				c := quietSocket(t, ta, ta.client, slug)
-				// The stamp is a clock reading, and the bubble's clock has
-				// not moved since sign-up.
+				// The bubble's clock has not moved since the handshake. Moved
+				// on a little, the socket's recheck falls due before the wait
+				// below runs out, not in the same instant.
 				time.Sleep(time.Millisecond)
 
 				session := sessionToken(t, ta)
@@ -753,7 +780,7 @@ func TestARevokedTokenClosesTheSocket(t *testing.T) {
 	socketBubble(t, func(t *testing.T, ta *testApp) {
 		ta.signUp(t, "Ada", "correct-horse")
 		slug := ta.makeRoom(t, "General")
-		secret := ta.makeToken(t, "map")
+		secret := ta.makeToken(t, "map", "correct-horse")
 		c := tokenSocket(t, ta, secret, slug)
 
 		tokens, err := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t))
@@ -804,7 +831,7 @@ func TestTheRecheckDoesNotMarkTheToken(t *testing.T) {
 	socketBubble(t, func(t *testing.T, ta *testApp) {
 		ta.signUp(t, "Ada", "correct-horse")
 		slug := ta.makeRoom(t, "General")
-		secret := ta.makeToken(t, "map")
+		secret := ta.makeToken(t, "map", "correct-horse")
 		c := tokenSocket(t, ta, secret, slug)
 		lastUsed := func() string {
 			tokens, err := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t))
@@ -838,7 +865,7 @@ func TestAStoreErrorClosesTheSocketWith1011(t *testing.T) {
 	socketBubble(t, func(t *testing.T, ta *testApp) {
 		ta.signUp(t, "Ada", "correct-horse")
 		slug := ta.makeRoom(t, "General")
-		secret := ta.makeToken(t, "map")
+		secret := ta.makeToken(t, "map", "correct-horse")
 		c := tokenSocket(t, ta, secret, slug)
 
 		ta.tokens.goDown(errors.New("the store is down"))
@@ -859,7 +886,7 @@ func TestAnUnansweredRecheckActsOnNothing(t *testing.T) {
 	socketBubble(t, func(t *testing.T, ta *testApp) {
 		ta.signUp(t, "Ada", "correct-horse")
 		slug := ta.makeRoom(t, "General")
-		ada := tokenSocket(t, ta, ta.makeToken(t, "map"), slug)
+		ada := tokenSocket(t, ta, ta.makeToken(t, "map", "correct-horse"), slug)
 		grace := quietSocket(t, ta, secondPerson(t, ta, "Grace"), slug)
 
 		adaClosed := make(chan uint16, 1)
@@ -955,7 +982,7 @@ func TestShutdownDuringARecheckClosesWith1001(t *testing.T) {
 		ta := newTestAppWith(t, o)
 		ta.signUp(t, "Ada", "correct-horse")
 		slug := ta.makeRoom(t, "General")
-		ada := tokenSocket(t, ta, ta.makeToken(t, "map"), slug)
+		ada := tokenSocket(t, ta, ta.makeToken(t, "map", "correct-horse"), slug)
 
 		ta.tokens.hang()
 		time.Sleep(socketRecheck) // the check is due, and waiting on the store

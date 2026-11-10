@@ -119,7 +119,7 @@ func credentialUser(user domain.User, err error) (domain.User, error) {
 }
 
 // errSessionEnded means the session names somebody it no longer may: the
-// account is gone, or a reset moved the password stamp. sessionHolder reports
+// account is gone, or a password write moved the counter. sessionHolder reports
 // it and leaves the session alone; only a request clears it (sessionUser).
 var errSessionEnded = errors.New("session ended")
 
@@ -153,11 +153,15 @@ func (a *App) sessionHolder(ctx context.Context) (domain.User, error) {
 	if err != nil {
 		return domain.User{}, err
 	}
-	// The session records what the password stamp was when it started. A reset
-	// moves that stamp, so every session opened before it stops here — which is
-	// the point of resetting a password somebody else may know. A machine token
+	// The session records what the password counter was when it started. Every
+	// write of a hash moves it, so every session opened before one stops here —
+	// which is the point of resetting a password somebody else may know. The
+	// comparison sits in this function and nowhere else: the middleware and the
+	// socket's re-check both call it, and a socket never passes the middleware
+	// again (patterns/go-auth-sessions.md rule 1). A session that recorded no
+	// counter has no value to compare, and that differs too. A machine token
 	// is a separate credential and is revoked separately, on the profile page.
-	if a.sessions.GetString(ctx, "pwAt") != user.PasswordChangedAt {
+	if v, ok := a.sessions.Get(ctx, sessionPasswordVersion).(int64); !ok || v != user.PasswordVersion {
 		return domain.User{}, errSessionEnded
 	}
 	return user, nil

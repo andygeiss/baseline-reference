@@ -3,15 +3,22 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"golang.org/x/crypto/argon2"
+
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 func TestRegister(t *testing.T) {
@@ -383,7 +390,9 @@ func TestTheLimiterKeysIPv6OnItsSlash64(t *testing.T) {
 	t.Parallel()
 	keys := map[string]string{
 		"192.0.2.10":            "192.0.2.10",
-		"::ffff:192.0.2.10":     "::ffff:192.0.2.10", // an IPv4 client, however it is written
+		"::ffff:192.0.2.10":     "192.0.2.10",   // an IPv4 client, however it is written: Unmap first
+		"::ffff:c000:20a":       "192.0.2.10",   // the same client, spelled in hex
+		"::ffff:198.51.100.7":   "198.51.100.7", // and never one bucket for every mapped address
 		"2001:db8:1:2::1":       "2001:db8:1:2::/64",
 		"2001:db8:1:2:a:b:c:d":  "2001:db8:1:2::/64",
 		"2001:db8:1:3::1":       "2001:db8:1:3::/64", // the next subscriber
@@ -406,5 +415,106 @@ func TestTheLimiterKeysIPv6OnItsSlash64(t *testing.T) {
 	}
 	if limited != 45 {
 		t.Errorf("50 guesses from one /64: %d limited, want 45 (the bucket holds five)", limited)
+	}
+}
+
+// weakHash is password hashed the way an older release of this app would have:
+// argon2id under settings below today's, which is what makes a sign-in re-hash.
+func weakHash(password string) string {
+	salt := []byte("sixteen byte salt")[:16]
+	key := argon2.IDKey([]byte(password), salt, 1, 8*1024, 1, 32)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=1,p=1$%s$%s", argon2.Version, 8*1024,
+		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
+}
+
+// TestARehashAtSignInIsAPasswordWrite: every statement that writes a hash moves
+// the counter (patterns/go-auth-sessions.md rule 1), and the re-hash a sign-in
+// makes is one. The session that sign-in starts records the new value; a
+// session opened before it ends.
+func TestARehashAtSignInIsAPasswordWrite(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	const password = "correct horse battery"
+	ta.users.byID["u1"] = domain.User{ID: "u1", Name: "Ada", PasswordHash: weakHash(password)}
+	signIn := func() {
+		t.Helper()
+		if res, _ := ta.do(t, http.MethodPost, "/login", url.Values{
+			"name": {"Ada"}, "password": {password},
+		}, nil); res.StatusCode != http.StatusSeeOther {
+			t.Fatalf("signing in: status %d, want 303", res.StatusCode)
+		}
+	}
+
+	signIn()
+	first, err := ta.users.ByID(t.Context(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if weak, err := auth.NeedsRehash(first.PasswordHash); err != nil || weak {
+		t.Fatalf("the hash was not rewritten at sign-in (weak %v, %v)", weak, err)
+	}
+	if first.PasswordVersion != 1 {
+		t.Errorf("counter = %d after the re-hash, want 1", first.PasswordVersion)
+	}
+	// The session the re-hashing sign-in started carries the new value.
+	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("the session that re-hashed is signed out: status %d", res.StatusCode)
+	}
+	firstBrowser := ta.client.Jar
+
+	// The settings are raised again, and Ada signs in on another machine.
+	first.PasswordHash = weakHash(password)
+	ta.users.mu.Lock()
+	ta.users.byID["u1"] = first
+	ta.users.mu.Unlock()
+	ta.client.Jar = emptyJar(t)
+	signIn()
+	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("the second sign-in is signed out: status %d", res.StatusCode)
+	}
+
+	ta.client.Jar = firstBrowser
+	res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login" {
+		t.Errorf("the session opened before the second re-hash answered %d %q, want 303 to /login",
+			res.StatusCode, res.Header.Get("Location"))
+	}
+}
+
+// TestASignInDoesNotWriteOverAReset: the attack the counter in the WHERE closes.
+// A sign-in verifies the password against the row it loaded, a reset lands, and
+// the sign-in then re-hashes what it verified. Written by id, that puts the old
+// password — the one the reset was made to lock out — back over the new one.
+func TestASignInDoesNotWriteOverAReset(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	const password = "the password a thief knows"
+	ta.users.byID["u1"] = domain.User{ID: "u1", Name: "Ada", PasswordHash: weakHash(password)}
+	// The reset lands after the sign-in has read the row, and once.
+	var once sync.Once
+	ta.users.afterByName = func(u domain.User) {
+		once.Do(func() {
+			if _, err := ta.users.SetPassword(t.Context(), u.ID, "the-resets-hash", u.PasswordVersion); err != nil {
+				t.Errorf("the reset: %v", err)
+			}
+		})
+	}
+
+	res, body := ta.do(t, http.MethodPost, "/login", url.Values{"name": {"Ada"}, "password": {password}}, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("the sign-in that lost the race answered %d, want 422", res.StatusCode)
+	}
+	if !strings.Contains(body, "We do not know that name and password.") {
+		t.Error("the refusal is not worded like any other failed sign-in")
+	}
+	got, err := ta.users.ByID(t.Context(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PasswordHash != "the-resets-hash" || got.PasswordVersion != 1 {
+		t.Errorf("row = %q at %d, want the reset's hash at 1", got.PasswordHash, got.PasswordVersion)
+	}
+	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("the refused sign-in is signed in: status %d", res.StatusCode)
 	}
 }

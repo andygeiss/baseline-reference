@@ -12,6 +12,12 @@ var (
 	// find out which names exist.
 	ErrCredentials = errors.New("wrong name or password")
 
+	// ErrStale means a write named a value its request read earlier, and the
+	// row no longer holds it: something else wrote in between. The write did
+	// not happen, and must not be retried against the new value — what the
+	// request checked before writing is no longer true.
+	ErrStale = errors.New("changed in the meantime")
+
 	ErrNameTaken = errors.New("name is taken")
 	ErrSlugTaken = errors.New("room already exists")
 

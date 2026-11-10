@@ -24,6 +24,14 @@ import (
 type fakeUsers struct {
 	mu   sync.Mutex
 	byID map[string]domain.User
+
+	// resets is where a password write deletes the user's reset links, as the
+	// store does in the same transaction. Set by newFakeResets.
+	resets *fakeResets
+
+	// afterByName, when set, runs once a ByName has read its row and before
+	// it returns: the gap in which another request's write lands.
+	afterByName func(domain.User)
 }
 
 func newFakeUsers() *fakeUsers {
@@ -46,13 +54,22 @@ func (f *fakeUsers) Add(_ context.Context, u *domain.User) error {
 
 func (f *fakeUsers) ByName(_ context.Context, name string) (domain.User, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	var found *domain.User
 	for _, u := range f.byID {
 		if strings.EqualFold(u.Name, name) {
-			return u, nil
+			found = &u
+			break
 		}
 	}
-	return domain.User{}, domain.ErrNotFound
+	after := f.afterByName
+	f.mu.Unlock()
+	if found == nil {
+		return domain.User{}, domain.ErrNotFound
+	}
+	if after != nil {
+		after(*found)
+	}
+	return *found, nil
 }
 
 func (f *fakeUsers) ByID(_ context.Context, id string) (domain.User, error) {
@@ -74,35 +91,32 @@ func (f *fakeUsers) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeUsers) UpdatePasswordHash(_ context.Context, id, hash string) error {
+// SetPassword moves the counter as well as storing the hash, and refuses a
+// write that names a counter the row no longer holds, like the store — a fake
+// that skipped either would let a session survive a reset, or a late write land
+// over one, and still pass.
+func (f *fakeUsers) SetPassword(_ context.Context, id, hash string, version int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
-	if !ok {
-		return domain.ErrNotFound
+	if !ok || u.PasswordVersion != version {
+		return 0, domain.ErrStale
 	}
-	u.PasswordHash = hash
-	f.byID[id] = u
-	return nil
+	f.resetPassword(id, hash)
+	if f.resets != nil {
+		f.resets.forget(id)
+	}
+	return version + 1, nil
 }
 
-// SetPassword stamps the change as well as storing the hash, like the store —
-// a fake that skipped the stamp would let every session survive a reset and
-// still pass.
-func (f *fakeUsers) SetPassword(_ context.Context, id, hash string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	u, ok := f.byID[id]
-	if !ok {
-		return "", domain.ErrNotFound
-	}
-	// Nanoseconds, not RFC 3339 seconds: a test resets a password within a
-	// second of creating the account, and a stamp that did not move would not
-	// end the old session.
-	changedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	u.PasswordHash, u.PasswordChangedAt = hash, changedAt
+// resetPassword is the write itself, with f.mu held: the hash, and the counter
+// moved by one.
+func (f *fakeUsers) resetPassword(id, hash string) domain.User {
+	u := f.byID[id]
+	u.PasswordHash = hash
+	u.PasswordVersion++
 	f.byID[id] = u
-	return changedAt, nil
+	return u
 }
 
 func (f *fakeUsers) SetEmail(_ context.Context, id, email string) error {
@@ -292,13 +306,30 @@ func (nopCloser) Close() error { return nil }
 // place, because the store writes both in one transaction.
 type fakeResets struct {
 	mu     sync.Mutex
+	users  *fakeUsers
 	links  map[string]domain.Reset
 	sent   []domain.Mail
 	addErr error
 }
 
-func newFakeResets() *fakeResets {
-	return &fakeResets{links: make(map[string]domain.Reset)}
+// newFakeResets ties the two fakes together, because the store ties the two
+// tables together: a redeemed link writes a password, and a password write
+// deletes links.
+func newFakeResets(users *fakeUsers) *fakeResets {
+	f := &fakeResets{users: users, links: make(map[string]domain.Reset)}
+	users.resets = f
+	return f
+}
+
+// forget deletes every link a user has, as any password write does.
+func (f *fakeResets) forget(userID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for hash, res := range f.links {
+		if res.UserID == userID {
+			delete(f.links, hash)
+		}
+	}
 }
 
 func (f *fakeResets) Add(_ context.Context, res *domain.Reset, mail domain.Mail) error {
@@ -315,18 +346,25 @@ func (f *fakeResets) Add(_ context.Context, res *domain.Reset, mail domain.Mail)
 	return nil
 }
 
-func (f *fakeResets) Take(_ context.Context, hash string, now time.Time) (domain.Reset, error) {
+// Redeem spends a link, sets the password and moves the counter, and deletes
+// the user's other links, as the store does in one transaction.
+func (f *fakeResets) Redeem(_ context.Context, hash, passwordHash string, now time.Time) (domain.User, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	res, ok := f.links[hash]
+	if ok && res.Expired(now) {
+		delete(f.links, hash) // spent, and refused like one that never was
+		ok = false
+	}
+	f.mu.Unlock()
 	if !ok {
-		return domain.Reset{}, domain.ErrNotFound
+		return domain.User{}, domain.ErrNotFound
 	}
-	delete(f.links, hash) // single use, spent whether or not it had expired
-	if res.Expired(now) {
-		return domain.Reset{}, domain.ErrNotFound
-	}
-	return res, nil
+
+	f.users.mu.Lock()
+	user := f.users.resetPassword(res.UserID, passwordHash)
+	f.users.mu.Unlock()
+	f.forget(res.UserID)
+	return user, nil
 }
 
 // mails returns a copy of everything queued so far.

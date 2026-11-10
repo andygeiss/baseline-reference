@@ -62,12 +62,20 @@ func (l *limiter) allow(ip string) bool {
 // for IPv6 its /64. One subscriber holds a whole /64 and can take a fresh
 // address out of it for every guess, so keyed on the full address the limiter
 // would never see that client twice — and its map would grow by one entry per
-// guess (patterns/go-auth-sessions.md). Anything that is not an address keys on
-// itself, which is what it did before.
+// guess (patterns/go-auth-sessions.md).
+//
+// Unmap comes first. An IPv4 client that arrives written as IPv6,
+// ::ffff:192.0.2.10, is that IPv4 client: cut to a /64 as it stands, every such
+// address would land in the one bucket ::/64, and left as text it would have a
+// bucket beside its own for each way of spelling it. Anything that is not an
+// address keys on itself.
 func limiterKey(ip string) string {
 	addr, err := netip.ParseAddr(ip)
-	if err != nil || addr.Unmap().Is4() {
+	if err != nil {
 		return ip
+	}
+	if addr = addr.Unmap(); addr.Is4() {
+		return addr.String()
 	}
 	return netip.PrefixFrom(addr.WithZone(""), 64).Masked().String()
 }

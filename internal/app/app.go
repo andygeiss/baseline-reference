@@ -27,10 +27,11 @@ type (
 		Add(ctx context.Context, u *domain.User) error
 		ByName(ctx context.Context, name string) (domain.User, error)
 		ByID(ctx context.Context, id string) (domain.User, error)
-		UpdatePasswordHash(ctx context.Context, id, hash string) error
-		// SetPassword returns the moment it stamped, which is what a fresh
-		// session records so older ones stop working.
-		SetPassword(ctx context.Context, id, hash string) (string, error)
+		// SetPassword writes a hash over the one the request loaded at
+		// version, and answers domain.ErrStale when the row has moved on
+		// since. It returns the new version, which is what a fresh session
+		// records so older ones stop working.
+		SetPassword(ctx context.Context, id, hash string, version int64) (int64, error)
 		SetEmail(ctx context.Context, id, email string) error
 		Delete(ctx context.Context, id string) error
 	}
@@ -61,9 +62,12 @@ type (
 
 	// ResetStore holds outstanding password-reset links. Add takes the mail
 	// with them: the link and the message that carries it are one write.
+	// Redeem is one write too: the link is spent, the hash set, and the
+	// user's other links deleted together, and it returns the user as the row
+	// then stands.
 	ResetStore interface {
 		Add(ctx context.Context, res *domain.Reset, mail domain.Mail) error
-		Take(ctx context.Context, hash string, now time.Time) (domain.Reset, error)
+		Redeem(ctx context.Context, hash, passwordHash string, now time.Time) (domain.User, error)
 	}
 
 	TokenStore interface {

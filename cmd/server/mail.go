@@ -94,7 +94,7 @@ func drainOutbox(ctx context.Context, logger *slog.Logger, outbox *store.Outbox,
 }
 
 // sweepResets deletes spent and expired reset rows. This only reclaims disk: an
-// expired link stops working the moment it expires, because Take refuses it.
+// expired link stops working the moment it expires, because Redeem refuses it.
 func sweepResets(ctx context.Context, logger *slog.Logger, resets *store.Resets) error {
 	return every(ctx, time.Hour, func() {
 		switch err := resets.DeleteExpired(ctx); {

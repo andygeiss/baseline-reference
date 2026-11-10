@@ -102,13 +102,191 @@ func TestUsers(t *testing.T) {
 		}
 	})
 
-	t.Run("the password hash can be replaced", func(t *testing.T) {
-		if err := users.UpdatePasswordHash(t.Context(), ada.ID, "stronger"); err != nil {
-			t.Fatalf("UpdatePasswordHash: %v", err)
+	t.Run("a new account starts its password counter at zero", func(t *testing.T) {
+		got, err := users.ByID(t.Context(), ada.ID)
+		if err != nil || got.PasswordVersion != 0 {
+			t.Errorf("PasswordVersion = %d (%v), want 0", got.PasswordVersion, err)
+		}
+	})
+}
+
+// Every statement that writes a hash moves the counter, and the write names the
+// value its request loaded (patterns/go-auth-sessions.md rule 1).
+func TestSetPassword(t *testing.T) {
+	t.Parallel()
+
+	t.Run("it writes the hash and moves the counter by one", func(t *testing.T) {
+		db := newTestDB(t)
+		users := store.NewUsers(db)
+		ada := addUser(t, db, "Ada")
+
+		version, err := users.SetPassword(t.Context(), ada.ID, "stronger", ada.PasswordVersion)
+		if err != nil || version != 1 {
+			t.Fatalf("SetPassword = %d, %v; want 1, nil", version, err)
 		}
 		got, err := users.ByID(t.Context(), ada.ID)
-		if err != nil || got.PasswordHash != "stronger" {
-			t.Errorf("hash = %q (%v), want stronger", got.PasswordHash, err)
+		if err != nil || got.PasswordHash != "stronger" || got.PasswordVersion != 1 {
+			t.Errorf("row = %q at %d (%v), want stronger at 1", got.PasswordHash, got.PasswordVersion, err)
+		}
+	})
+
+	// The request that loaded version 0 writes after something else moved the
+	// counter: a reset, in the attack this closes. Its hash must not land.
+	t.Run("a write that names a value the row no longer holds changes nothing", func(t *testing.T) {
+		db := newTestDB(t)
+		users := store.NewUsers(db)
+		ada := addUser(t, db, "Ada")
+
+		if _, err := users.SetPassword(t.Context(), ada.ID, "the-reset", 0); err != nil {
+			t.Fatalf("the write that got there first: %v", err)
+		}
+		version, err := users.SetPassword(t.Context(), ada.ID, "the-thief", 0)
+		if !errors.Is(err, domain.ErrStale) {
+			t.Fatalf("the late write = %d, %v; want ErrStale", version, err)
+		}
+		got, err := users.ByID(t.Context(), ada.ID)
+		if err != nil || got.PasswordHash != "the-reset" || got.PasswordVersion != 1 {
+			t.Errorf("row = %q at %d (%v), want the-reset at 1", got.PasswordHash, got.PasswordVersion, err)
+		}
+	})
+
+	t.Run("it deletes the reset links issued before it, and nobody else's", func(t *testing.T) {
+		db := newTestDB(t)
+		users, resets := store.NewUsers(db), store.NewResets(db)
+		ada, bob := addUser(t, db, "Ada"), addUser(t, db, "Bob")
+		addReset(t, db, "adas-link", ada.ID, time.Hour)
+		addReset(t, db, "bobs-link", bob.ID, time.Hour)
+
+		if _, err := users.SetPassword(t.Context(), ada.ID, "changed", 0); err != nil {
+			t.Fatalf("SetPassword: %v", err)
+		}
+		if _, err := resets.Redeem(t.Context(), "adas-link", "from-the-old-link", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("a link from before the password write still redeems: %v", err)
+		}
+		if got, _ := users.ByID(t.Context(), ada.ID); got.PasswordHash != "changed" {
+			t.Errorf("hash = %q, want the one the write set", got.PasswordHash)
+		}
+		if _, err := resets.Redeem(t.Context(), "bobs-link", "bobs-new", time.Now().UTC()); err != nil {
+			t.Errorf("somebody else's link went with it: %v", err)
+		}
+	})
+
+	t.Run("a stale write leaves the reset links alone", func(t *testing.T) {
+		db := newTestDB(t)
+		users, resets := store.NewUsers(db), store.NewResets(db)
+		ada := addUser(t, db, "Ada")
+		addReset(t, db, "adas-link", ada.ID, time.Hour)
+
+		if _, err := users.SetPassword(t.Context(), ada.ID, "late", 7); !errors.Is(err, domain.ErrStale) {
+			t.Fatalf("SetPassword at a version the row never had = %v, want ErrStale", err)
+		}
+		if _, err := resets.Redeem(t.Context(), "adas-link", "reset", time.Now().UTC()); err != nil {
+			t.Errorf("a refused write deleted the link: %v", err)
+		}
+	})
+}
+
+// addReset stores one reset link for a user, with the mail that carries it.
+func addReset(t *testing.T, db *store.DB, hash, userID string, lifetime time.Duration) {
+	t.Helper()
+	res := &domain.Reset{Hash: hash, UserID: userID, ExpiresAt: time.Now().UTC().Add(lifetime)}
+	mail := domain.Mail{To: "someone@example.com", Subject: "Reset", Text: "https://example.com/reset?t=x"}
+	if err := store.NewResets(db).Add(t.Context(), res, mail); err != nil {
+		t.Fatalf("adding reset %s: %v", hash, err)
+	}
+}
+
+// A reset link is spent in the transaction that writes the new hash, with every
+// other link the user has (patterns/go-auth-sessions.md, Password reset).
+func TestRedeem(t *testing.T) {
+	t.Parallel()
+
+	t.Run("it sets the password, moves the counter, and returns the row as it now stands", func(t *testing.T) {
+		db := newTestDB(t)
+		ada := addUser(t, db, "Ada")
+		addReset(t, db, "link", ada.ID, time.Hour)
+
+		got, err := store.NewResets(db).Redeem(t.Context(), "link", "new-hash", time.Now().UTC())
+		if err != nil {
+			t.Fatalf("Redeem: %v", err)
+		}
+		if got.ID != ada.ID || got.PasswordHash != "new-hash" || got.PasswordVersion != 1 {
+			t.Errorf("Redeem returned %q, %q at %d; want Ada's row, new-hash at 1", got.ID, got.PasswordHash, got.PasswordVersion)
+		}
+		stored, err := store.NewUsers(db).ByID(t.Context(), ada.ID)
+		if err != nil || stored.PasswordHash != "new-hash" || stored.PasswordVersion != 1 {
+			t.Errorf("stored row = %q at %d (%v), want new-hash at 1", stored.PasswordHash, stored.PasswordVersion, err)
+		}
+	})
+
+	t.Run("a link works once", func(t *testing.T) {
+		db := newTestDB(t)
+		ada := addUser(t, db, "Ada")
+		addReset(t, db, "link", ada.ID, time.Hour)
+		resets := store.NewResets(db)
+
+		if _, err := resets.Redeem(t.Context(), "link", "first", time.Now().UTC()); err != nil {
+			t.Fatalf("Redeem: %v", err)
+		}
+		if _, err := resets.Redeem(t.Context(), "link", "second", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("second Redeem = %v, want ErrNotFound", err)
+		}
+		if got, _ := store.NewUsers(db).ByID(t.Context(), ada.ID); got.PasswordHash != "first" || got.PasswordVersion != 1 {
+			t.Errorf("row = %q at %d, want first at 1", got.PasswordHash, got.PasswordVersion)
+		}
+	})
+
+	// Two links asked for, one used: the other was issued before this reset
+	// and must not set the password after it.
+	t.Run("it takes the user's other links with it", func(t *testing.T) {
+		db := newTestDB(t)
+		ada, bob := addUser(t, db, "Ada"), addUser(t, db, "Bob")
+		addReset(t, db, "first-link", ada.ID, time.Hour)
+		addReset(t, db, "second-link", ada.ID, time.Hour)
+		addReset(t, db, "bobs-link", bob.ID, time.Hour)
+		resets := store.NewResets(db)
+
+		if _, err := resets.Redeem(t.Context(), "second-link", "mine", time.Now().UTC()); err != nil {
+			t.Fatalf("Redeem: %v", err)
+		}
+		if _, err := resets.Redeem(t.Context(), "first-link", "the-older-link", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("the link issued before the reset still redeems: %v", err)
+		}
+		if got, _ := store.NewUsers(db).ByID(t.Context(), ada.ID); got.PasswordHash != "mine" {
+			t.Errorf("hash = %q, want the one the reset set", got.PasswordHash)
+		}
+		if _, err := resets.Redeem(t.Context(), "bobs-link", "bobs", time.Now().UTC()); err != nil {
+			t.Errorf("somebody else's link went with it: %v", err)
+		}
+	})
+
+	t.Run("an expired link is spent and refused, and changes no password", func(t *testing.T) {
+		db := newTestDB(t)
+		ada := addUser(t, db, "Ada")
+		addReset(t, db, "old", ada.ID, -time.Minute)
+		resets := store.NewResets(db)
+
+		if _, err := resets.Redeem(t.Context(), "old", "too-late", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("Redeem of an expired link = %v, want ErrNotFound", err)
+		}
+		if got, _ := store.NewUsers(db).ByID(t.Context(), ada.ID); got.PasswordHash != "hash" || got.PasswordVersion != 0 {
+			t.Errorf("row = %q at %d, want it untouched", got.PasswordHash, got.PasswordVersion)
+		}
+		var n int
+		if err := db.Read.QueryRowContext(t.Context(), "SELECT count(*) FROM resets").Scan(&n); err != nil || n != 0 {
+			t.Errorf("%d reset row(s) left (%v), want the expired one deleted", n, err)
+		}
+	})
+
+	t.Run("a link nobody was sent is refused, and changes no password", func(t *testing.T) {
+		db := newTestDB(t)
+		ada := addUser(t, db, "Ada")
+
+		if _, err := store.NewResets(db).Redeem(t.Context(), "guessed", "x", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("Redeem of an unknown link = %v, want ErrNotFound", err)
+		}
+		if got, _ := store.NewUsers(db).ByID(t.Context(), ada.ID); got.PasswordHash != "hash" || got.PasswordVersion != 0 {
+			t.Errorf("row = %q at %d, want it untouched", got.PasswordHash, got.PasswordVersion)
 		}
 	})
 }
@@ -412,31 +590,8 @@ func TestResetsAndOutbox(t *testing.T) {
 		if !errors.Is(err, domain.ErrBadHeader) {
 			t.Fatalf("Add with a line break in To = %v, want ErrBadHeader", err)
 		}
-		if _, err := resets.Take(t.Context(), "hash-2", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+		if _, err := resets.Redeem(t.Context(), "hash-2", "x", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("the reset was stored anyway: %v", err)
-		}
-	})
-
-	t.Run("a link works once", func(t *testing.T) {
-		got, err := resets.Take(t.Context(), "hash-1", time.Now().UTC())
-		if err != nil {
-			t.Fatalf("Take: %v", err)
-		}
-		if got.UserID != ada.ID {
-			t.Errorf("UserID = %q, want %q", got.UserID, ada.ID)
-		}
-		if _, err := resets.Take(t.Context(), "hash-1", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
-			t.Errorf("second Take = %v, want ErrNotFound", err)
-		}
-	})
-
-	t.Run("an expired link is spent and refused", func(t *testing.T) {
-		old := &domain.Reset{Hash: "hash-3", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(-time.Minute)}
-		if err := resets.Add(t.Context(), old, mail); err != nil {
-			t.Fatalf("Add: %v", err)
-		}
-		if _, err := resets.Take(t.Context(), "hash-3", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
-			t.Errorf("Take of an expired link = %v, want ErrNotFound", err)
 		}
 	})
 }
@@ -514,7 +669,7 @@ func TestSessions(t *testing.T) {
 		}
 	})
 
-	t.Run("the janitor reclaims expired rows, and keeps what a delete left", func(t *testing.T) {
+	t.Run("the janitor keeps what a delete left", func(t *testing.T) {
 		if err := sessions.DeleteExpired(t.Context()); err != nil {
 			t.Fatalf("DeleteExpired: %v", err)
 		}
@@ -534,28 +689,36 @@ func TestSessions(t *testing.T) {
 		if err := rows.Err(); err != nil {
 			t.Fatalf("reading sessions: %v", err)
 		}
-		// "old" expired and is gone. The two deleted tokens are remembered until
-		// their lifetime ends: that memory is what refuses the late commit.
-		if want := []string{"never-stored", "token-1"}; !slices.Equal(tokens, want) {
+		// "old" expired a second ago and stays an hour: the janitor's lag has a
+		// test of its own. The two deleted tokens are remembered until their
+		// lifetime ends: that memory is what refuses the late commit.
+		if want := []string{"never-stored", "old", "token-1"}; !slices.Equal(tokens, want) {
 			t.Errorf("rows left = %v, want %v", tokens, want)
 		}
 	})
 
-	t.Run("a deleted token is forgotten once its lifetime has passed", func(t *testing.T) {
-		brief := store.NewSessions(db, 0) // a lifetime that is already over
+	t.Run("a deleted token is forgotten an hour after its lifetime has passed", func(t *testing.T) {
+		brief := store.NewSessions(db, -2*time.Hour) // a lifetime that ended two hours ago
 		if err := brief.DeleteCtx(t.Context(), "gone"); err != nil {
 			t.Fatalf("DeleteCtx: %v", err)
 		}
 		if err := brief.DeleteExpired(t.Context()); err != nil {
 			t.Fatalf("DeleteExpired: %v", err)
 		}
-		var n int
-		if err := db.Read.QueryRowContext(t.Context(),
-			"SELECT count(*) FROM sessions WHERE token = 'gone'").Scan(&n); err != nil {
-			t.Fatalf("counting sessions: %v", err)
+		if _, ok := sessionExpiry(t, db, "gone"); ok {
+			t.Error("a row is left for a token whose lifetime ended two hours ago")
 		}
-		if n != 0 {
-			t.Errorf("%d row(s) left for a token whose lifetime is over, want 0", n)
+	})
+
+	// The mark the rule names: an emptied row is one whose data is NULL.
+	t.Run("a deleted token's row holds no data", func(t *testing.T) {
+		var emptied int
+		if err := db.Read.QueryRowContext(t.Context(),
+			"SELECT count(*) FROM sessions WHERE token = 'token-1' AND data IS NULL").Scan(&emptied); err != nil {
+			t.Fatalf("counting: %v", err)
+		}
+		if emptied != 1 {
+			t.Errorf("%d emptied row(s) for the deleted token, want 1", emptied)
 		}
 	})
 }
@@ -927,4 +1090,79 @@ func textColumns(t *testing.T, db *store.DB, table string) []string {
 		t.Fatalf("reading the columns of %s: %v", table, err)
 	}
 	return cols
+}
+
+// sessionExpiry reads one session row's expiry, or reports that there is none.
+func sessionExpiry(t *testing.T, db *store.DB, token string) (int64, bool) {
+	t.Helper()
+	var expiry int64
+	err := db.Read.QueryRowContext(t.Context(), "SELECT expiry FROM sessions WHERE token = ?", token).Scan(&expiry)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false
+	}
+	if err != nil {
+		t.Fatalf("reading the expiry of %s: %v", token, err)
+	}
+	return expiry, true
+}
+
+// A logout that arrives after the idle window finds no session, so it empties
+// nothing: scs has no token to delete. A request that loaded the session before
+// the window closed then commits it, and a store that took that commit would
+// sign the cookie in again (patterns/go-auth-sessions.md).
+func TestSessionsACommitDoesNotReviveAnExpiredRow(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	sessions := store.NewSessions(db, 12*time.Hour)
+
+	past := time.Now().Add(-time.Minute)
+	if err := sessions.CommitCtx(t.Context(), "idle", []byte("data"), past); err != nil {
+		t.Fatalf("CommitCtx: %v", err)
+	}
+	if err := sessions.CommitCtx(t.Context(), "idle", []byte("late"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("the late CommitCtx: %v", err)
+	}
+	if got, found, err := sessions.FindCtx(t.Context(), "idle"); err != nil || found {
+		t.Errorf("a late commit brought an expired session back: %q, %v", got, err)
+	}
+	if expiry, ok := sessionExpiry(t, db, "idle"); !ok || expiry != past.Unix() {
+		t.Errorf("expiry = %d (row there: %v), want the %d it expired at", expiry, ok, past.Unix())
+	}
+}
+
+// The janitor only reclaims disk, and it stays an hour behind: a row deleted
+// the moment it expires turns the late commit above into an insert.
+func TestSessionsTheJanitorLeavesARowAnHourPastItsExpiry(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	sessions := store.NewSessions(db, 12*time.Hour)
+
+	now := time.Now()
+	for token, expiry := range map[string]time.Time{
+		"live":           now.Add(time.Hour),
+		"just-expired":   now.Add(-time.Second),
+		"an-hour-almost": now.Add(-59 * time.Minute),
+		"an-hour-past":   now.Add(-61 * time.Minute),
+	} {
+		if err := sessions.CommitCtx(t.Context(), token, []byte("data"), expiry); err != nil {
+			t.Fatalf("CommitCtx %s: %v", token, err)
+		}
+	}
+	if err := sessions.DeleteExpired(t.Context()); err != nil {
+		t.Fatalf("DeleteExpired: %v", err)
+	}
+	for token, want := range map[string]bool{
+		"live": true, "just-expired": true, "an-hour-almost": true, "an-hour-past": false,
+	} {
+		if _, ok := sessionExpiry(t, db, token); ok != want {
+			t.Errorf("row %s there = %v, want %v", token, ok, want)
+		}
+	}
+	// And the row the janitor kept still refuses the commit it was kept for.
+	if err := sessions.CommitCtx(t.Context(), "just-expired", []byte("late"), now.Add(time.Hour)); err != nil {
+		t.Fatalf("the late CommitCtx: %v", err)
+	}
+	if _, found, _ := sessions.FindCtx(t.Context(), "just-expired"); found {
+		t.Error("a late commit brought an expired session back after the janitor ran")
+	}
 }

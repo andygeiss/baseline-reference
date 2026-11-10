@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andygeiss/baseline-reference/v5/internal/auth"
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
@@ -231,4 +232,69 @@ func TestProfileStoresAnAddress(t *testing.T) {
 			t.Errorf("Email = %q, want it cleared", u.Email)
 		}
 	})
+}
+
+// tokensFromMail pulls the plaintext token out of every queued message, oldest
+// first.
+func tokensFromMail(t *testing.T, ta *testApp) []string {
+	t.Helper()
+	var tokens []string
+	for _, m := range ta.resets.mails() {
+		_, after, ok := strings.Cut(m.Text, "?t=")
+		if !ok {
+			t.Fatalf("no link in the message:\n%s", m.Text)
+		}
+		tokens = append(tokens, strings.TrimSpace(strings.SplitN(after, "\n", 2)[0]))
+	}
+	return tokens
+}
+
+// TestAResetEndsTheLinksIssuedBeforeIt: two links were asked for and one was
+// used. The other is still in somebody's inbox — or in a thief's — and it must
+// not set the password after the reset that was meant to lock them out
+// (patterns/go-auth-sessions.md, Password reset).
+func TestAResetEndsTheLinksIssuedBeforeIt(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct horse battery")
+	if res, _ := ta.do(t, http.MethodPost, "/profile/email",
+		url.Values{"email": {"ada@example.com"}}, nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("saving the address: status = %d, want 303", res.StatusCode)
+	}
+	ta.client.Jar = emptyJar(t)
+	for range 2 {
+		if res, _ := ta.do(t, http.MethodPost, "/reset", url.Values{"name": {"Ada"}}, nil); res.StatusCode != http.StatusSeeOther {
+			t.Fatalf("asking for a link: status = %d, want 303", res.StatusCode)
+		}
+	}
+	links := tokensFromMail(t, ta)
+	if len(links) != 2 {
+		t.Fatalf("%d links queued, want 2", len(links))
+	}
+
+	if res, _ := ta.do(t, http.MethodPost, "/reset/confirm", url.Values{
+		"token": {links[1]}, "password": {"the password ada chose"},
+	}, nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("using the second link: status = %d, want 303", res.StatusCode)
+	}
+
+	ta.client.Jar = emptyJar(t)
+	res, body := ta.do(t, http.MethodPost, "/reset/confirm", url.Values{
+		"token": {links[0]}, "password": {"the password a thief chose"},
+	}, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("the link issued before the reset answered %d, want 422", res.StatusCode)
+	}
+	if !strings.Contains(body, "expired or has already been used") {
+		t.Errorf("the dead link is not answered like any other dead link:\n%s", body)
+	}
+	// And the password is still the one the reset set. Read from the store:
+	// the limiter's burst is spent, as it would be for whoever tried this.
+	user, err := ta.users.ByName(t.Context(), "Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := auth.VerifyPassword(user.PasswordHash, "the password ada chose"); err != nil || !ok {
+		t.Errorf("the stored password is not the reset's own (%v)", err)
+	}
 }

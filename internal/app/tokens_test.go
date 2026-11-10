@@ -29,9 +29,10 @@ func findSecret(body string) string {
 
 // makeToken creates a machine token and returns the secret, which the profile
 // page shows exactly once.
-func (ta *testApp) makeToken(t *testing.T, label string) string {
+func (ta *testApp) makeToken(t *testing.T, label, password string) string {
 	t.Helper()
-	res, _ := ta.do(t, http.MethodPost, "/profile/tokens", url.Values{"label": {label}}, nil)
+	res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
+		url.Values{"label": {label}, "password": {password}}, nil)
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("creating token %s: status %d, want 303", label, res.StatusCode)
 	}
@@ -48,7 +49,7 @@ func TestTokenIsShownOnceAndOnlyOnce(t *testing.T) {
 	ta := newTestApp(t)
 	ta.signUp(t, "Ada", "correct-horse")
 
-	secret := ta.makeToken(t, "laptop")
+	secret := ta.makeToken(t, "laptop", "correct-horse")
 
 	// The server kept only the hash, so there is nothing left to show.
 	_, again := ta.do(t, http.MethodGet, "/profile", nil, nil)
@@ -64,7 +65,7 @@ func TestTokenSignsAProgramIn(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.signUp(t, "Ada", "correct-horse")
-	secret := ta.makeToken(t, "laptop")
+	secret := ta.makeToken(t, "laptop", "correct-horse")
 	slug := ta.makeRoom(t, "General")
 
 	// A fresh client with no cookies: the token is the only credential.
@@ -114,7 +115,7 @@ func TestRevokingATokenStopsIt(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.signUp(t, "Ada", "correct-horse")
-	secret := ta.makeToken(t, "laptop")
+	secret := ta.makeToken(t, "laptop", "correct-horse")
 
 	tokens, err := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t))
 	if err != nil || len(tokens) != 1 {
@@ -140,7 +141,7 @@ func TestRevokingSomebodyElsesTokenDoesNothing(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.signUp(t, "Ada", "correct-horse")
-	secret := ta.makeToken(t, "ada's laptop")
+	secret := ta.makeToken(t, "ada's laptop", "correct-horse")
 	tokens, err := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t))
 	if err != nil || len(tokens) != 1 {
 		t.Fatalf("listing tokens: %v (%d tokens)", err, len(tokens))
@@ -178,4 +179,84 @@ func (ta *testApp) onlyUserID(t *testing.T) string {
 	}
 	t.Fatal("no user is registered")
 	return ""
+}
+
+// TestCreatingATokenAsksForThePassword: a session alone must not mint a
+// credential that outlives it. Whoever finds a browser unlocked would otherwise
+// leave with a token no logout and no password reset ends
+// (patterns/go-auth-sessions.md, Machine tokens rule 3).
+func TestCreatingATokenAsksForThePassword(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+
+	for name, form := range map[string]url.Values{
+		"no password":    {"label": {"laptop"}},
+		"wrong password": {"label": {"laptop"}, "password": {"not-the-password"}},
+	} {
+		res, body := ta.do(t, http.MethodPost, "/profile/tokens", form, nil)
+		if res.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status %d, want 422", name, res.StatusCode)
+		}
+		if !strings.Contains(body, "That is not your password.") {
+			t.Errorf("%s: the page does not say why", name)
+		}
+		if findSecret(body) != "" {
+			t.Errorf("%s: a secret was shown", name)
+		}
+	}
+	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 0 {
+		t.Fatalf("%d token(s) were created without the password", len(tokens))
+	}
+
+	res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
+		url.Values{"label": {"laptop"}, "password": {"correct-horse"}}, nil)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("with the password: status %d, want 303", res.StatusCode)
+	}
+	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 1 {
+		t.Errorf("%d token(s) after the one good request, want 1", len(tokens))
+	}
+}
+
+// TestATokenCannotMintATokenByItself: /profile takes either credential, so the
+// password is also what stops one leaked token from making itself a spare.
+func TestATokenCannotMintATokenByItself(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	secret := ta.makeToken(t, "laptop", "correct-horse")
+	ta.client.Jar = emptyJar(t)
+
+	res, _ := ta.do(t, http.MethodPost, "/profile/tokens", url.Values{"label": {"spare"}},
+		http.Header{"Authorization": {"Bearer " + secret}})
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("status %d, want 422", res.StatusCode)
+	}
+	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 1 {
+		t.Errorf("%d token(s), want the one made with the password", len(tokens))
+	}
+}
+
+// TestTheTokenPasswordCheckIsRateLimited: a route that checks a password is a
+// route to guess one at, so it sits behind the login's limiter.
+func TestTheTokenPasswordCheckIsRateLimited(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+
+	limited := 0
+	for range 8 {
+		res, _ := ta.do(t, http.MethodPost, "/profile/tokens",
+			url.Values{"label": {"laptop"}, "password": {"a-guess"}}, nil)
+		if res.StatusCode == http.StatusTooManyRequests {
+			limited++
+			if res.Header.Get("Retry-After") == "" {
+				t.Error("a 429 with no Retry-After")
+			}
+		}
+	}
+	if limited == 0 {
+		t.Error("eight wrong passwords in a row and none was limited")
+	}
 }

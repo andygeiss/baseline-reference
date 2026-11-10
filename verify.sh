@@ -815,8 +815,23 @@ grep -q "Assistant" "$WORKDIR/mention.html" || fail "the reply is not attributed
 # whatever the model did.
 grep -q "are you there" "$WORKDIR/mention.html" || fail "the mention itself is missing from the room"
 
+step "smoke: making a machine token takes the password, not only the session"
+# patterns/go-auth-sessions.md, Machine tokens rule 3: a token outlives the
+# session that made it, so a browser found unlocked must not be enough to leave
+# with one. Its own client IP: the route checks a password, so it is limited
+# like the login.
+for FORM in "label=verify.sh" "label=verify.sh&password=not-the-password"; do
+    CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/profile/tokens" \
+        -H 'X-Forwarded-For: 198.51.100.20' -d "$FORM")"
+    [ "$CODE" = "422" ] || fail "a token asked for with '$FORM': got $CODE, want 422"
+done
+curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" | grep -q 'action="/profile/tokens/' \
+    && fail "a token was made without the password"
+
 step "smoke: a machine token signs a program in"
-curl -s -c "$JAR" -b "$JAR" -o /dev/null -X POST "localhost:$PORT/profile/tokens" -d "label=verify.sh"
+CODE="$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/profile/tokens" \
+    -H 'X-Forwarded-For: 198.51.100.20' -d "label=verify.sh&password=correct-horse")"
+[ "$CODE" = "303" ] || fail "making a token with the password: got $CODE, want 303"
 SECRET="$(curl -fsS -c "$JAR" -b "$JAR" "localhost:$PORT/profile" | grep -o 'gochat_[A-Za-z0-9_-]*' | head -1)"
 [ -n "$SECRET" ] || fail "the profile page showed no token secret"
 # Shown once: the server kept only the hash, so there is nothing left to show.
@@ -911,19 +926,26 @@ curl -fsS -c "$JAR2" -b "$JAR2" -o /dev/null -X POST "localhost:$PORT/profile/em
 JAR3="$WORKDIR/cookies-reset"
 # Host is whatever the client sent. A link built from it mails a working token
 # to whoever asked for one — the tier-1 rule this gate exists for.
-CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/reset" \
-    -H 'Host: evil.example' -H 'X-Forwarded-For: 198.51.100.8' -d "name=Intruder")"
-[ "$CODE" = "303" ] || fail "asking for a reset link: got $CODE, want 303"
+# Asked for twice: the second link is the one used below, and the first is the
+# link that was issued before that reset and must be dead after it.
+for _ in 1 2; do
+    CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/reset" \
+        -H 'Host: evil.example' -H 'X-Forwarded-For: 198.51.100.8' -d "name=Intruder")"
+    [ "$CODE" = "303" ] || fail "asking for a reset link: got $CODE, want 303"
+done
 
 # The ticker drains the outbox every five seconds.
 LINK=""
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-    LINK="$(sed -n 's|.*\(http://[^ "\\]*reset/confirm?t=[A-Za-z0-9_-]*\).*|\1|p' \
-        "$WORKDIR/server.log" | head -1)"
-    [ -n "$LINK" ] && break
+    sed -n 's|.*\(http://[^ "\\]*reset/confirm?t=[A-Za-z0-9_-]*\).*|\1|p' \
+        "$WORKDIR/server.log" > "$WORKDIR/reset-links"
+    [ "$(wc -l < "$WORKDIR/reset-links")" -ge 2 ] && break
     sleep 1
 done
-[ -n "$LINK" ] || fail "no reset link was delivered within ten seconds"
+[ "$(wc -l < "$WORKDIR/reset-links")" -eq 2 ] || fail "two reset links were asked for, and $(wc -l < "$WORKDIR/reset-links") arrived within ten seconds"
+OLDER_LINK="$(sed -n 1p "$WORKDIR/reset-links")"
+LINK="$(sed -n 2p "$WORKDIR/reset-links")"
+[ "$OLDER_LINK" != "$LINK" ] || fail "the two reset links are the same link"
 echo "$LINK" | grep -q "evil.example" && fail "the link was built from the Host header"
 echo "$LINK" | grep -q "127.0.0.1:$PORT" || fail "the link was not built from the configured base URL"
 
@@ -942,11 +964,21 @@ CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:
 CODE="$(curl -s -c "$JAR2" -b "$JAR2" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
 [ "$CODE" = "303" ] || fail "the session on the other machine survived the reset: got $CODE"
 
-# Single use, and Take spends the row in the transaction that reads it.
+# Single use: the link is spent in the transaction that writes the new hash.
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST \
     "localhost:$PORT/reset/confirm" -H 'X-Forwarded-For: 198.51.100.8' \
     -d "token=$TOKEN" --data-urlencode "password=another new one")"
 [ "$CODE" = "422" ] || fail "the link worked a second time: got $CODE, want 422"
+
+# And so is every other link that user had (patterns/go-auth-sessions.md,
+# Password reset). The older one is still in an inbox somewhere; used now, it
+# would set the password after the reset that was meant to lock its holder out.
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    "localhost:$PORT/reset/confirm" -H 'X-Forwarded-For: 198.51.100.8' \
+    -d "token=${OLDER_LINK##*t=}" --data-urlencode "password=the older link's password")"
+[ "$CODE" = "422" ] || fail "a link issued before the reset still set the password: got $CODE, want 422"
+CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
+[ "$CODE" = "200" ] || fail "the older link ended the session the reset started: got $CODE, want 200"
 
 step "smoke: asking for a reset says the same thing whoever asks"
 # Three requests the server knows three different things about, and one answer.

@@ -206,9 +206,11 @@ func run(cfg Config) error {
 	return err // the deferred db.Close() runs after this line, not before
 }
 
-// sweepSessions deletes expired session rows every few minutes. This only
-// reclaims disk: an expired session stops working the moment it expires,
-// because the store's Find refuses to return it.
+// sweepSessions deletes session rows an hour past their expiry, every few
+// minutes. This only reclaims disk: an expired session stops working the moment
+// it expires, because the store's Find refuses to return it and its Commit
+// refuses to write it. The hour is the store's, and it says why
+// (patterns/go-auth-sessions.md).
 func sweepSessions(ctx context.Context, logger *slog.Logger, sessions *store.Sessions) error {
 	return every(ctx, 5*time.Minute, func() {
 		switch err := sessions.DeleteExpired(ctx); {

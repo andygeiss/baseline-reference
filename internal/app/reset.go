@@ -129,9 +129,18 @@ func (a *App) handleResetConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Take deletes the row in the same transaction that reads it, so a link
-	// works exactly once even if two requests arrive together.
-	res, err := a.resets.Take(r.Context(), auth.HashToken(form.Token), time.Now().UTC())
+	// Hashed before the link is looked at: the store then spends the link,
+	// writes this hash and deletes the user's other links in one transaction,
+	// and a dead link has cost exactly what a live one does.
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		a.serverError(w, r, err)
+		return
+	}
+	// Redeem moves the password counter with the hash. The row it returns
+	// carries the new value, which is what ends every session opened before
+	// now, including whichever one made the reset necessary.
+	user, err := a.resets.Redeem(r.Context(), auth.HashToken(form.Token), hash, time.Now().UTC())
 	switch {
 	case err == nil:
 	case errors.Is(err, domain.ErrNotFound):
@@ -142,25 +151,6 @@ func (a *App) handleResetConfirm(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, err)
 		return
 	}
-
-	user, err := a.users.ByID(r.Context(), res.UserID)
-	if err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-	// The stamp this returns is what ends every session opened before now,
-	// including whichever one made the reset necessary.
-	changedAt, err := a.users.SetPassword(r.Context(), user.ID, hash)
-	if err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-	user.PasswordChangedAt = changedAt
 	if err := a.signIn(r, user); err != nil {
 		a.serverError(w, r, err)
 		return

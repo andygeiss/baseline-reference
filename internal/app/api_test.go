@@ -53,7 +53,7 @@ func signedUpWithToken(t *testing.T) (*testApp, string) {
 	t.Helper()
 	ta := newTestApp(t)
 	ta.signUp(t, "Ada", "correct-horse")
-	return ta, ta.makeToken(t, "cli")
+	return ta, ta.makeToken(t, "cli", "correct-horse")
 }
 
 func TestAPIAnswersJSONNotHTML(t *testing.T) {

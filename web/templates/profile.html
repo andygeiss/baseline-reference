@@ -48,6 +48,14 @@
          {{with .Form.FieldErrors.label}}aria-invalid="true" aria-describedby="label-error"{{end}}>
   {{with .Form.FieldErrors.label}}<p class="field-error" id="label-error">{{.}}</p>{{end}}
 
+  {{/* A token outlives the session that made it, so making one takes the
+       password, not only the session (patterns/go-auth-sessions.md). */}}
+  <label for="token-password">Your password</label>
+  <input id="token-password" name="password" type="password" required
+         autocomplete="current-password"
+         {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="token-password-error"{{end}}>
+  {{with .Form.FieldErrors.password}}<p class="field-error" id="token-password-error">{{.}}</p>{{end}}
+
   <button class="button-primary" type="submit">
     <span class="icon icon-plus" aria-hidden="true"></span>Make a token
   </button>

@@ -69,7 +69,15 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.rehashIfWeak(r, user, password)
+	user, ok = a.rehashIfWeak(r, user, password)
+	if !ok {
+		// The password was right for the row this request loaded, and that
+		// row's hash has been replaced since: a reset landed while this
+		// sign-in was open. What was typed is no longer the password.
+		form.CheckForm(false, "We do not know that name and password.")
+		a.renderInvalid(w, r, "login.html", loginPage{base: a.newBase(r, ""), Form: form})
+		return
+	}
 	if err := a.signIn(r, user); err != nil {
 		a.serverError(w, r, err)
 		return
@@ -151,34 +159,57 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 // signIn starts the session. RenewToken first, always: without it, a token an
 // attacker planted in the browser before the login is still valid after it.
 //
-// The session also records when the password last changed. authenticate
-// compares that against the account on every request, so resetting a password
-// ends every session opened before the reset — the whole point of resetting one
-// you think somebody else has.
+// The session also records the account's password counter. sessionHolder
+// compares that against the row on every request and on every socket re-check,
+// so resetting a password ends every session opened before the reset — the
+// whole point of resetting one you think somebody else has.
 func (a *App) signIn(r *http.Request, user domain.User) error {
 	if err := a.sessions.RenewToken(r.Context()); err != nil {
 		return fmt.Errorf("renewing the session token: %w", err)
 	}
 	a.sessions.Put(r.Context(), "userID", user.ID)
-	a.sessions.Put(r.Context(), "pwAt", user.PasswordChangedAt)
+	a.sessions.Put(r.Context(), sessionPasswordVersion, user.PasswordVersion)
 	return nil
 }
 
+// sessionPasswordVersion is the session key holding the password counter the
+// session signed in under.
+const sessionPasswordVersion = "passwordVersion"
+
 // rehashIfWeak upgrades a stored password hash that was written under weaker
-// argon2id settings than today's. A failure here is logged and swallowed: the
-// password was right, so the login proceeds either way.
-func (a *App) rehashIfWeak(r *http.Request, user domain.User, password string) {
+// argon2id settings than today's, and returns the user as the row then stands.
+//
+// It is a statement that writes a hash, so it moves the password counter like
+// every other one, and it names the counter this request loaded
+// (patterns/go-auth-sessions.md rule 1). Two things follow. The session about
+// to start records the new value, and the user's other sessions end: the rule
+// has one kind of password write, not two. And a write that finds the counter
+// moved changed nothing — a reset landed while this sign-in was open — so it
+// reports false, and the sign-in is refused: written by id alone, this would
+// have put the old password back over the reset.
+//
+// Any other failure is logged and swallowed: the password was right, so the
+// sign-in proceeds on the hash that is there.
+func (a *App) rehashIfWeak(r *http.Request, user domain.User, password string) (domain.User, bool) {
 	weak, err := auth.NeedsRehash(user.PasswordHash)
 	if err != nil || !weak {
-		return
+		return user, true
 	}
 	hash, err := auth.HashPassword(password)
-	if err == nil {
-		err = a.users.UpdatePasswordHash(r.Context(), user.ID, hash)
-	}
 	if err != nil {
 		a.logger.Error("rehashing password", "user", user.ID, "err", err)
+		return user, true
 	}
+	version, err := a.users.SetPassword(r.Context(), user.ID, hash, user.PasswordVersion)
+	switch {
+	case err == nil:
+		user.PasswordHash, user.PasswordVersion = hash, version
+	case errors.Is(err, domain.ErrStale):
+		return user, false
+	default:
+		a.logger.Error("rehashing password", "user", user.ID, "err", err)
+	}
+	return user, true
 }
 
 // allow reports whether this client may make another attempt at signing in.
