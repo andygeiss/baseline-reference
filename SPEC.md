@@ -22,14 +22,17 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`b2f040a`**, tagged v6.0.0 on Andy's call. It is the
-last commit of the 2026-11-10 backlog run that changes anything a project reads. That
-run read the baseline's oldest unread documents four times and did not converge. Its
-owner then took two areas out of the baseline, a CLI that listens and a program a tool
-keeps running, and changed what a tag needs: no known high, and every known medium
-listed. **One high was known at the tag, and the tag shipped on his decision:** a
-password reset leaves the user's machine tokens. This repository follows the rule as it
-is written, so its reset leaves them too.
+Built against baseline commit **`c18771c`**, tagged v6.0.1. It carries one rule over
+v6.0.0: a password reset deletes the user's machine tokens, in the transaction that
+writes the new hash (`patterns/go-auth-sessions.md`, *Machine tokens* rule 5). v6.0.0
+shipped without it, as a known high, on Andy's decision. `Resets.Redeem` deletes them
+here, and `verify.sh` makes a token under the old password and reads 401 from it after
+the reset.
+
+v6.0.0 was the baseline's 2026-11-10 backlog run. It read the baseline's oldest unread
+documents four times and did not converge. Its owner then took two areas out of the
+baseline, a CLI that listens and a program a tool keeps running, and changed what a tag
+needs: no known high, and every known medium listed.
 
 **What moved here,** in three syncs. Sessions: the store
 hashes its token, keeps a deleted row emptied, writes no emptied and no expired row, and
@@ -55,6 +58,10 @@ REPLACE`. And from `b2f040a`, which answers what this sync found: a cancel that 
 while an answer is being read comes back as the context's error, not as an answer that
 does not decode.
 
+**Beside v6.0.1's rule,** found by the check of it and fixed here: the write that sets
+the address a reset link is mailed to names the password counter, so one held open
+across a reset changes no row. No baseline rule asks for that yet.
+
 **One rule is not followed, and not waived:** the baseline now keeps a blob for what fits
 its blanket 1 MiB cap, and attachments here are blobs under a 3 MiB cap. **And two rules
 do not compose on one request:** making a token answers its POST with the page, where
@@ -63,7 +70,7 @@ after it. The README records both under *Baseline deviations*; lowering the cap,
 the bytes to a directory, or a waiver is Andy's to choose, and so is which of the two
 rules gives way.
 
-`./verify.sh` exits 0 against `b2f040a` (96 steps).
+`./verify.sh` exits 0 against `c18771c` (97 steps).
 
 ## The task (give this to the builder, human or AI, verbatim)
 
