@@ -127,6 +127,32 @@ func TestSendRefusesAHeaderWithALineBreak(t *testing.T) {
 // this machine that plays one refusal — a script, not a relay.
 func TestSendKeepsTheRelaysWordsOutOfTheError(t *testing.T) {
 	t.Parallel()
+	for name, tt := range map[string]struct{ refusal, want string }{
+		"a refusal with a code":       {"550 5.1.1 <ada@example.com>: no such user here", "550"},
+		"a reply that is not a reply": {"5xx <ada@example.com> no such user here", "could not be read"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := sendToARelayThatSays(t, tt.refusal)
+			if err == nil {
+				t.Fatal("Send = nil, want the refusal")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("the error lost %q: %v", tt.want, err)
+			}
+			for _, leak := range []string{"ada@example.com", "no such user"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("the error carries %q: %v", leak, err)
+				}
+			}
+		})
+	}
+}
+
+// sendToARelayThatSays sends one message to a listener that answers RCPT TO
+// with refusal, and returns what Send made of it.
+func sendToARelayThatSays(t *testing.T, refusal string) error {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +178,7 @@ func TestSendKeepsTheRelaysWordsOutOfTheError(t *testing.T) {
 			case strings.HasPrefix(verb, "MAIL FROM"):
 				say("250 2.1.0 ok")
 			case strings.HasPrefix(verb, "RCPT TO"):
-				say("550 5.1.1 <ada@example.com>: no such user here")
+				say(refusal)
 			default:
 				say("221 2.0.0 bye")
 				return
@@ -161,16 +187,5 @@ func TestSendKeepsTheRelaysWordsOutOfTheError(t *testing.T) {
 	}()
 
 	s := New(ln.Addr().String(), "chat@example.com", "", "", "chat.example.com")
-	err = s.Send(t.Context(), domain.Mail{To: "ada@example.com", Subject: "Reset", Text: "link"})
-	if err == nil {
-		t.Fatal("Send = nil, want the refusal")
-	}
-	if !strings.Contains(err.Error(), "550") {
-		t.Errorf("the error lost the reply's code: %v", err)
-	}
-	for _, leak := range []string{"ada@example.com", "no such user"} {
-		if strings.Contains(err.Error(), leak) {
-			t.Errorf("the error carries %q: %v", leak, err)
-		}
-	}
+	return s.Send(t.Context(), domain.Mail{To: "ada@example.com", Subject: "Reset", Text: "link"})
 }

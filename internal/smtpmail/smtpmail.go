@@ -123,6 +123,10 @@ func said(doing string, err error) error {
 	if reply, ok := errors.AsType[*textproto.Error](err); ok {
 		return fmt.Errorf("%s: the relay answered %d", doing, reply.Code)
 	}
+	// A reply with no code net/smtp can parse comes back quoted whole.
+	if _, ok := errors.AsType[textproto.ProtocolError](err); ok {
+		return fmt.Errorf("%s: the relay's reply could not be read", doing)
+	}
 	return fmt.Errorf("%s: %w", doing, err)
 }
 
