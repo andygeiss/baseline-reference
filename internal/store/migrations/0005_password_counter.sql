@@ -7,7 +7,7 @@
 -- Five tables' foreign keys name users, so it is changed in place and never
 -- rebuilt: a migration that dropped it would take every message, token and
 -- reset with it, at a green boot (patterns/go-data-deletion.md rule 6). ALTER
--- TABLE loses no row and fires no foreign key action.
+-- TABLE loses no row.
 ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users DROP COLUMN password_changed_at;
 

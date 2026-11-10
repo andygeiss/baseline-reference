@@ -94,8 +94,9 @@ func referencedTables(t *testing.T, db *sql.DB) []string {
 // takenAway is every table a migration script drops, renames away, or writes
 // with REPLACE, lower case. All three take a table's references with them:
 // DROP TABLE runs an implicit DELETE that fires every foreign key action below
-// it, INSERT OR REPLACE and REPLACE INTO do the same to each row they replace,
-// and a table renamed away leaves its children pointing at the new name
+// it, any OR REPLACE — INSERT OR REPLACE, its short form REPLACE INTO, and
+// UPDATE OR REPLACE — does the same to each row it replaces, and a table
+// renamed away leaves its children pointing at the new name
 // (patterns/go-data-deletion.md rule 6).
 func takenAway(script string) []string {
 	var words []string
@@ -115,6 +116,12 @@ func takenAway(script string) []string {
 		if words[i] == "replace" && name(i+1) == "into" {
 			table, _, _ := strings.Cut(name(i+2), "(") // "t(a, b)" is written without a space too
 			tables = append(tables, table)
+			continue
+		}
+		// "update or replace t set …": the row the new value collides with is
+		// deleted, and its children with it.
+		if words[i] == "replace" && i >= 2 && words[i-1] == "or" && words[i-2] == "update" {
+			tables = append(tables, name(i+1))
 			continue
 		}
 		if i+1 >= len(words) || words[i+1] != "table" {
@@ -152,6 +159,9 @@ func TestTakenAwayReadsAMigration(t *testing.T) {
 		{"INSERT OR REPLACE INTO users (id, name) VALUES ('a', 'Ada');", []string{"users"}},
 		{"replace into Users(id, name) values ('a', 'Ada');", []string{"users"}},
 		{"INSERT INTO users (id) VALUES ('a') ON CONFLICT (id) DO UPDATE SET name = replace(name, 'a', 'b');", nil},
+		{"UPDATE OR REPLACE users SET name = 'Ada' WHERE id = 'b';", []string{"users"}},
+		{"update or replace \"Users\" set name = 'Ada';", []string{"users"}},
+		{"UPDATE OR IGNORE users SET name = 'Ada';\nUPDATE users SET name = replace(name, 'a', 'b');", nil},
 	} {
 		if got := takenAway(tt.script); !slices.Equal(got, tt.want) {
 			t.Errorf("takenAway(%q) = %v, want %v", tt.script, got, tt.want)
