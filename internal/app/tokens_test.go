@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -235,6 +236,41 @@ func TestATokenCannotMintATokenByItself(t *testing.T) {
 	}
 	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 1 {
 		t.Errorf("%d token(s), want the one made with the password", len(tokens))
+	}
+}
+
+// TestATokenCreationHeldOpenAcrossAResetCreatesNothing: the password is checked
+// against the row the request loaded when its headers arrived, and a body held
+// open keeps that row for as long as the server will read. A reset that lands
+// in between is the owner locking that password out; the insert names the
+// counter the request loaded, so it changes no row and the answer is a refusal
+// (patterns/go-auth-sessions.md rule 1). Inserted by user id alone, the held
+// request left with a token no reset ends.
+func TestATokenCreationHeldOpenAcrossAResetCreatesNothing(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	// The reset lands once the credential middleware has read Ada's row, and
+	// before the handler writes: the gap a held-open body keeps open.
+	var once sync.Once
+	ta.users.afterByID = func(u domain.User) {
+		once.Do(func() { ta.users.reset(u.ID, "the-resets-hash") })
+	}
+
+	res, body := ta.do(t, http.MethodPost, "/profile/tokens",
+		url.Values{"label": {"laptop"}, "password": {"correct-horse"}}, nil)
+
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("status %d, want 422", res.StatusCode)
+	}
+	if !strings.Contains(body, "That is not your password.") {
+		t.Error("the refusal is not worded like any other wrong password")
+	}
+	if findSecret(body) != "" {
+		t.Error("a secret was shown")
+	}
+	if tokens, _ := ta.tokens.ByUser(t.Context(), ta.onlyUserID(t)); len(tokens) != 0 {
+		t.Errorf("%d token(s) were created under a password that had been reset", len(tokens))
 	}
 }
 

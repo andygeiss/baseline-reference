@@ -20,12 +20,27 @@ func NewTokens(db *DB) *Tokens {
 
 // Add stores a machine token. hash is the SHA-256 of the secret; the secret
 // itself never reaches this package.
-func (s *Tokens) Add(ctx context.Context, t *domain.Token) error {
-	_, err := s.db.Write.ExecContext(ctx,
-		`INSERT INTO tokens (id, user_id, hash, label, created_at) VALUES (?, ?, ?, ?, ?)`,
-		t.ID, t.UserID, t.Hash, t.Label, now())
+//
+// version is the owner's password counter as the request read it, and the
+// INSERT names it: making a token is allowed by a password checked against the
+// row that request loaded, and a reset that landed since has made that check
+// worthless — the request was held open across it, and would leave with a
+// credential no reset ends (patterns/go-auth-sessions.md rule 1). No row
+// inserted is domain.ErrStale: a refusal, never a retry.
+func (s *Tokens) Add(ctx context.Context, t *domain.Token, version int64) error {
+	res, err := s.db.Write.ExecContext(ctx,
+		`INSERT INTO tokens (id, user_id, hash, label, created_at)
+		 SELECT ?, id, ?, ?, ? FROM users WHERE id = ? AND password_version = ?`,
+		t.ID, t.Hash, t.Label, now(), t.UserID, version)
 	if err != nil {
-		return fmt.Errorf("inserting token %s: %w", t.Label, err)
+		return fmt.Errorf("inserting token %s: %w", t.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("counting the insert of token %s: %w", t.ID, err)
+	}
+	if n == 0 {
+		return domain.ErrStale
 	}
 	return nil
 }
@@ -55,12 +70,15 @@ func (s *Tokens) UserByHash(ctx context.Context, hash string) (domain.User, erro
 // Owner returns whoever owns the token with that hash, and writes nothing. An
 // open socket asks it again and again to learn whether its token still
 // stands; that is not the token being used, and it must not queue a write.
+//
+// It returns the row a session's lookup returns, password counter included: a
+// request signed by a token may go on to a statement that names the counter.
 func (s *Tokens) Owner(ctx context.Context, hash string) (domain.User, error) {
 	var u domain.User
 	err := s.db.Read.QueryRowContext(ctx,
-		`SELECT u.id, u.name, u.password_hash
+		`SELECT u.id, u.name, u.password_hash, u.email, u.password_version
 		   FROM tokens t JOIN users u ON u.id = t.user_id
-		  WHERE t.hash = ?`, hash).Scan(&u.ID, &u.Name, &u.PasswordHash)
+		  WHERE t.hash = ?`, hash).Scan(&u.ID, &u.Name, &u.PasswordHash, &u.Email, &u.PasswordVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, domain.ErrNotFound
 	}

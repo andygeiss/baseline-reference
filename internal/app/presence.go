@@ -288,7 +288,7 @@ func (a *App) credentialOf(r *http.Request) credential {
 // it. A session is not bound to this goroutine's context, so it is loaded
 // afresh from the store by its token: a destroyed or expired one loads empty,
 // and sessionHolder then checks the user row and the password counter exactly
-// as a request would — the comparison lives there, so a password write ends
+// as a request would — the comparison lives there, so a new password ends
 // the socket with the sessions. An error is the store failing to answer, never a "no" — and
 // so is an answer that has not come within socketRecheckWait. A check the
 // shutdown cancels returns context.Canceled, which writeSeat closes 1001.

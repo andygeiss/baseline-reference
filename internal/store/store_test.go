@@ -147,19 +147,31 @@ func TestAddingAUserNamesNobodyInItsError(t *testing.T) {
 	}
 }
 
-// Every statement that writes a hash moves the counter, and the write names the
-// value its request loaded (patterns/go-auth-sessions.md rule 1).
-func TestSetPassword(t *testing.T) {
+// resetPassword sets a new password for a user the way the app does, through a
+// reset link, and so moves the password counter by one.
+func resetPassword(t *testing.T, db *store.DB, userID, hash string) {
+	t.Helper()
+	link := "link-for-" + hash
+	addReset(t, db, link, userID, time.Hour)
+	if _, err := store.NewResets(db).Redeem(t.Context(), link, hash, time.Now().UTC()); err != nil {
+		t.Fatalf("resetting the password of %s: %v", userID, err)
+	}
+}
+
+// A rehash sets no password, so it moves no counter; a password allowed it, so
+// it names the counter its request loaded, and no row changed is a refusal
+// (patterns/go-auth-sessions.md rule 1).
+func TestRehash(t *testing.T) {
 	t.Parallel()
 
-	t.Run("it writes the hash and moves the counter by one", func(t *testing.T) {
+	t.Run("it writes the hash and leaves the counter where it is", func(t *testing.T) {
 		db := newTestDB(t)
 		users := store.NewUsers(db)
 		ada := addUser(t, db, "Ada")
+		resetPassword(t, db, ada.ID, "weak") // so the counter is not the zero a new row has
 
-		version, err := users.SetPassword(t.Context(), ada.ID, "stronger", ada.PasswordVersion)
-		if err != nil || version != 1 {
-			t.Fatalf("SetPassword = %d, %v; want 1, nil", version, err)
+		if err := users.Rehash(t.Context(), ada.ID, "stronger", 1); err != nil {
+			t.Fatalf("Rehash: %v", err)
 		}
 		got, err := users.ByID(t.Context(), ada.ID)
 		if err != nil || got.PasswordHash != "stronger" || got.PasswordVersion != 1 {
@@ -167,19 +179,17 @@ func TestSetPassword(t *testing.T) {
 		}
 	})
 
-	// The request that loaded version 0 writes after something else moved the
-	// counter: a reset, in the attack this closes. Its hash must not land.
+	// The sign-in that loaded version 0 writes after a reset moved the
+	// counter: its hash is of the password the reset locked out, and must not
+	// land.
 	t.Run("a write that names a value the row no longer holds changes nothing", func(t *testing.T) {
 		db := newTestDB(t)
 		users := store.NewUsers(db)
 		ada := addUser(t, db, "Ada")
+		resetPassword(t, db, ada.ID, "the-reset")
 
-		if _, err := users.SetPassword(t.Context(), ada.ID, "the-reset", 0); err != nil {
-			t.Fatalf("the write that got there first: %v", err)
-		}
-		version, err := users.SetPassword(t.Context(), ada.ID, "the-thief", 0)
-		if !errors.Is(err, domain.ErrStale) {
-			t.Fatalf("the late write = %d, %v; want ErrStale", version, err)
+		if err := users.Rehash(t.Context(), ada.ID, "the-thief", 0); !errors.Is(err, domain.ErrStale) {
+			t.Fatalf("the late write = %v, want ErrStale", err)
 		}
 		got, err := users.ByID(t.Context(), ada.ID)
 		if err != nil || got.PasswordHash != "the-reset" || got.PasswordVersion != 1 {
@@ -187,40 +197,110 @@ func TestSetPassword(t *testing.T) {
 		}
 	})
 
-	t.Run("it deletes the reset links issued before it, and nobody else's", func(t *testing.T) {
-		db := newTestDB(t)
-		users, resets := store.NewUsers(db), store.NewResets(db)
-		ada, bob := addUser(t, db, "Ada"), addUser(t, db, "Bob")
-		addReset(t, db, "adas-link", ada.ID, time.Hour)
-		addReset(t, db, "bobs-link", bob.ID, time.Hour)
-
-		if _, err := users.SetPassword(t.Context(), ada.ID, "changed", 0); err != nil {
-			t.Fatalf("SetPassword: %v", err)
-		}
-		if _, err := resets.Redeem(t.Context(), "adas-link", "from-the-old-link", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
-			t.Errorf("a link from before the password write still redeems: %v", err)
-		}
-		if got, _ := users.ByID(t.Context(), ada.ID); got.PasswordHash != "changed" {
-			t.Errorf("hash = %q, want the one the write set", got.PasswordHash)
-		}
-		if _, err := resets.Redeem(t.Context(), "bobs-link", "bobs-new", time.Now().UTC()); err != nil {
-			t.Errorf("somebody else's link went with it: %v", err)
-		}
-	})
-
-	t.Run("a stale write leaves the reset links alone", func(t *testing.T) {
+	// A sign-in does not spend a reset link, and a rehash is part of a
+	// sign-in: only setting a password deletes the user's links.
+	t.Run("it leaves the reset links alone", func(t *testing.T) {
 		db := newTestDB(t)
 		users, resets := store.NewUsers(db), store.NewResets(db)
 		ada := addUser(t, db, "Ada")
 		addReset(t, db, "adas-link", ada.ID, time.Hour)
 
-		if _, err := users.SetPassword(t.Context(), ada.ID, "late", 7); !errors.Is(err, domain.ErrStale) {
-			t.Fatalf("SetPassword at a version the row never had = %v, want ErrStale", err)
+		if err := users.Rehash(t.Context(), ada.ID, "stronger", 0); err != nil {
+			t.Fatalf("Rehash: %v", err)
 		}
 		if _, err := resets.Redeem(t.Context(), "adas-link", "reset", time.Now().UTC()); err != nil {
-			t.Errorf("a refused write deleted the link: %v", err)
+			t.Errorf("a rehash deleted the link: %v", err)
 		}
 	})
+}
+
+// Making a machine token is a statement a password allowed, so its INSERT
+// names the password counter its request loaded: no row inserted is a refusal
+// (patterns/go-auth-sessions.md rule 1).
+func TestATokenIsAddedOnlyAtTheCounterItsRequestLoaded(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	tokens := store.NewTokens(db)
+	ada := addUser(t, db, "Ada")
+	resetPassword(t, db, ada.ID, "the-reset") // the counter moves from 0 to 1
+
+	// The request that loaded the row before the reset.
+	err := tokens.Add(t.Context(), &domain.Token{ID: "t-held", UserID: ada.ID, Hash: "hash-held", Label: "held"}, 0)
+	if !errors.Is(err, domain.ErrStale) {
+		t.Errorf("Add at the counter the row no longer holds = %v, want ErrStale", err)
+	}
+	if listed, err := tokens.ByUser(t.Context(), ada.ID); err != nil || len(listed) != 0 {
+		t.Errorf("%d token(s) after the refused insert (%v), want none", len(listed), err)
+	}
+
+	// The request that loaded it after.
+	if err := tokens.Add(t.Context(), &domain.Token{ID: "t-now", UserID: ada.ID, Hash: "hash-now", Label: "now"}, 1); err != nil {
+		t.Fatalf("Add at the current counter: %v", err)
+	}
+	if listed, err := tokens.ByUser(t.Context(), ada.ID); err != nil || len(listed) != 1 {
+		t.Errorf("%d token(s) after the one good insert (%v), want 1", len(listed), err)
+	}
+
+	// A request signed by that token loads the same row a session's does, the
+	// counter with it: it may go on to a statement that names the counter.
+	if err := store.NewUsers(db).SetEmail(t.Context(), ada.ID, "ada@example.com"); err != nil {
+		t.Fatalf("storing Ada's address: %v", err)
+	}
+	for name, lookup := range map[string]func(context.Context, string) (domain.User, error){
+		"Owner": tokens.Owner, "UserByHash": tokens.UserByHash,
+	} {
+		got, err := lookup(t.Context(), "hash-now")
+		if err != nil || got.PasswordVersion != 1 || got.Email != "ada@example.com" || got.PasswordHash != "the-reset" {
+			t.Errorf("%s = %q at %d, %q (%v); want the-reset at 1, ada@example.com",
+				name, got.PasswordHash, got.PasswordVersion, got.Email, err)
+		}
+	}
+}
+
+// Deleting an account is a statement a password allowed, so its DELETE names
+// the counter its request loaded (patterns/go-data-deletion.md, Deleting is a
+// write).
+func TestAnAccountIsDeletedOnlyAtTheCounterItsRequestLoaded(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	users := store.NewUsers(db)
+	ada := addUser(t, db, "Ada")
+	if err := users.SetEmail(t.Context(), ada.ID, "ada@example.com"); err != nil {
+		t.Fatalf("storing Ada's address: %v", err)
+	}
+	// Mail queued by address alone, which the delete removes by hand before
+	// it reaches the account: a refused delete must put it back.
+	if _, err := db.Write.ExecContext(t.Context(),
+		`INSERT INTO outbox (id, recipient, subject, body, created_at) VALUES ('to-ada', 'ada@example.com', 'Invitation', 'link', ?)`,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("queueing mail with no user: %v", err)
+	}
+	resetPassword(t, db, ada.ID, "the-reset") // the counter moves from 0 to 1
+
+	// The request that loaded the row before the reset.
+	if err := users.Delete(t.Context(), ada.ID, 0); !errors.Is(err, domain.ErrStale) {
+		t.Fatalf("Delete at the counter the row no longer holds = %v, want ErrStale", err)
+	}
+	if got, err := users.ByID(t.Context(), ada.ID); err != nil || got.PasswordHash != "the-reset" {
+		t.Fatalf("Ada after the refused delete = %q (%v), want her row as the reset left it", got.PasswordHash, err)
+	}
+	var queued int
+	if err := db.Read.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM outbox WHERE id = 'to-ada'`).Scan(&queued); err != nil || queued != 1 {
+		t.Errorf("%d row(s) of mail queued by address after the refused delete (%v), want 1", queued, err)
+	}
+
+	// The request that loaded it after, and then one for an account that is
+	// already gone: that is not a refusal.
+	if err := users.Delete(t.Context(), ada.ID, 1); err != nil {
+		t.Fatalf("Delete at the current counter: %v", err)
+	}
+	if _, err := users.ByID(t.Context(), ada.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Ada after the delete: err = %v, want ErrNotFound", err)
+	}
+	if err := users.Delete(t.Context(), ada.ID, 1); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Delete of an account that is gone = %v, want ErrNotFound", err)
+	}
 }
 
 // addReset stores one reset link for a user, with the mail that carries it.
@@ -793,7 +873,7 @@ func TestTokens(t *testing.T) {
 	bob := addUser(t, db, "Bob")
 
 	token := &domain.Token{ID: "t-1", UserID: ada.ID, Hash: "hash-1", Label: "laptop"}
-	if err := tokens.Add(t.Context(), token); err != nil {
+	if err := tokens.Add(t.Context(), token, ada.PasswordVersion); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -1024,7 +1104,7 @@ func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 	}
 	if err := store.NewTokens(db).Add(t.Context(), &domain.Token{
 		ID: "ada-token", UserID: ada.ID, Hash: "token-hash", Label: "laptop",
-	}); err != nil {
+	}, ada.PasswordVersion); err != nil {
 		t.Fatalf("adding a token: %v", err)
 	}
 	if err := store.NewResets(db).Add(t.Context(),
@@ -1056,7 +1136,7 @@ func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 		t.Fatalf("adding bob's message: %v", err)
 	}
 
-	if err := store.NewUsers(db).Delete(t.Context(), ada.ID); err != nil {
+	if err := store.NewUsers(db).Delete(t.Context(), ada.ID, ada.PasswordVersion); err != nil {
 		t.Fatalf("deleting Ada: %v", err)
 	}
 

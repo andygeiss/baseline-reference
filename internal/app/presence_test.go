@@ -578,18 +578,16 @@ func TestAnEndedSessionClosesTheSocket(t *testing.T) {
 				t.Fatalf("deleting the account: %d", res.StatusCode)
 			}
 		}},
-		// A password write moves the counter, which ends every older session
+		// A new password moves the counter, which ends every older session
 		// (go-auth-sessions.md rule 1) — this socket's included. The socket
 		// never passes the middleware again, so this case is what holds the
 		// comparison in the lookup both of them call.
-		"a password write elsewhere": {end: func(t *testing.T, ta *testApp) {
+		"a new password set elsewhere": {end: func(t *testing.T, ta *testApp) {
 			user, err := ta.users.ByName(t.Context(), "Ada")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ta.users.SetPassword(t.Context(), user.ID, "new-hash", user.PasswordVersion); err != nil {
-				t.Fatal(err)
-			}
+			ta.users.reset(user.ID, "new-hash")
 		}},
 		// The same through the front door: a link asked for and redeemed from
 		// another browser.

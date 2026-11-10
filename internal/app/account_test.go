@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
+
+	"github.com/andygeiss/baseline-reference/v5/internal/domain"
 )
 
 // The delete route names no account. It erases whoever is signed in, so the
@@ -62,6 +65,41 @@ func TestDeletingAnAccountSignsTheBrowserOut(t *testing.T) {
 	// ends it is authenticate resolving the credential to a row.
 	if res, _ := ta.do(t, http.MethodGet, "/profile", nil, nil); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("profile with a deleted account's cookie: status %d, want 303 to the sign-in page", res.StatusCode)
+	}
+}
+
+// TestAnAccountDeleteHeldOpenAcrossAResetDeletesNothing: the delete is allowed
+// by a password checked against the row the request loaded, and a reset that
+// lands while its body is held open has made that check worthless — it is the
+// owner locking out whoever knew the old password. The DELETE names the counter
+// the request loaded, so it changes no row (patterns/go-data-deletion.md,
+// Deleting is a write). By id alone, the old password still erased the account.
+func TestAnAccountDeleteHeldOpenAcrossAResetDeletesNothing(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "alice", "correct horse battery")
+	id := ta.onlyUserID(t)
+	var once sync.Once
+	ta.users.afterByID = func(u domain.User) {
+		once.Do(func() { ta.users.reset(u.ID, "the-resets-hash") })
+	}
+
+	res, body := ta.do(t, http.MethodPost, "/account/delete", url.Values{
+		"name": {"alice"}, "password": {"correct horse battery"},
+	}, nil)
+
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("status %d, want 422", res.StatusCode)
+	}
+	if !strings.Contains(body, "That is not your password.") {
+		t.Error("the refusal is not worded like any other wrong password")
+	}
+	got, err := ta.users.ByID(t.Context(), id)
+	if err != nil {
+		t.Fatalf("the account after the refused delete: %v", err)
+	}
+	if got.PasswordHash != "the-resets-hash" {
+		t.Errorf("hash = %q, want the reset's", got.PasswordHash)
 	}
 }
 

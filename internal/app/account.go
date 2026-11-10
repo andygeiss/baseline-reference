@@ -62,9 +62,21 @@ func (a *App) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ErrNotFound means the account went while this form was open. The reader
-	// asked for it gone and it is gone, so this is the same answer as success.
-	if err := a.users.Delete(r.Context(), user.ID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+	// The DELETE names the password counter of the row this request loaded,
+	// the row the password was just checked against. ErrStale means a reset
+	// landed while this form was open: what was typed is no longer the
+	// password, and nothing is deleted (patterns/go-data-deletion.md,
+	// Deleting is a write). ErrNotFound means the account went while this form
+	// was open. The reader asked for it gone and it is gone, so that is the
+	// same answer as success.
+	switch err := a.users.Delete(r.Context(), user.ID, user.PasswordVersion); {
+	case err == nil, errors.Is(err, domain.ErrNotFound):
+	case errors.Is(err, domain.ErrStale):
+		form.Check(false, "password", "That is not your password.")
+		a.renderInvalid(w, r, "account-delete.html",
+			deleteAccountPage{base: a.newBase(r, ""), Form: form})
+		return
+	default:
 		a.serverError(w, r, err)
 		return
 	}

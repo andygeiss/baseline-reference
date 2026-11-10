@@ -25,13 +25,15 @@ type fakeUsers struct {
 	mu   sync.Mutex
 	byID map[string]domain.User
 
-	// resets is where a password write deletes the user's reset links, as the
+	// resets is where a new password deletes the user's reset links, as the
 	// store does in the same transaction. Set by newFakeResets.
 	resets *fakeResets
 
 	// afterByName, when set, runs once a ByName has read its row and before
-	// it returns: the gap in which another request's write lands.
+	// it returns: the gap in which another request's write lands. afterByID
+	// is the same gap after the read the credential middleware makes.
 	afterByName func(domain.User)
+	afterByID   func(domain.User)
 }
 
 func newFakeUsers() *fakeUsers {
@@ -74,39 +76,61 @@ func (f *fakeUsers) ByName(_ context.Context, name string) (domain.User, error) 
 
 func (f *fakeUsers) ByID(_ context.Context, id string) (domain.User, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if u, ok := f.byID[id]; ok {
-		return u, nil
+	u, ok := f.byID[id]
+	after := f.afterByID
+	f.mu.Unlock()
+	if !ok {
+		return domain.User{}, domain.ErrNotFound
 	}
-	return domain.User{}, domain.ErrNotFound
+	if after != nil {
+		after(u)
+	}
+	return u, nil
 }
 
-func (f *fakeUsers) Delete(_ context.Context, id string) error {
+// Delete names the password counter, like the store: a fake that deleted by id
+// alone would let a delete held open across a reset go through, and still
+// pass.
+func (f *fakeUsers) Delete(_ context.Context, id string, version int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.byID[id]; !ok {
+	u, ok := f.byID[id]
+	if !ok {
 		return domain.ErrNotFound
+	}
+	if u.PasswordVersion != version {
+		return domain.ErrStale
 	}
 	delete(f.byID, id)
 	return nil
 }
 
-// SetPassword moves the counter as well as storing the hash, and refuses a
-// write that names a counter the row no longer holds, like the store — a fake
-// that skipped either would let a session survive a reset, or a late write land
-// over one, and still pass.
-func (f *fakeUsers) SetPassword(_ context.Context, id, hash string, version int64) (int64, error) {
+// Rehash stores a hash and leaves the counter where it is, and refuses a write
+// that names a counter the row no longer holds, like the store — a fake that
+// moved the counter would sign a user's other sessions out at a sign-in, and
+// one that skipped the refusal would let a late write land over a reset, and
+// both would still pass.
+func (f *fakeUsers) Rehash(_ context.Context, id, hash string, version int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
 	if !ok || u.PasswordVersion != version {
-		return 0, domain.ErrStale
+		return domain.ErrStale
 	}
+	u.PasswordHash = hash
+	f.byID[id] = u
+	return nil
+}
+
+// reset is a password set from somewhere else, as a redeemed link makes one:
+// the hash, the counter moved, and the user's reset links gone.
+func (f *fakeUsers) reset(id, hash string) {
+	f.mu.Lock()
 	f.resetPassword(id, hash)
+	f.mu.Unlock()
 	if f.resets != nil {
 		f.resets.forget(id)
 	}
-	return version + 1, nil
 }
 
 // resetPassword is the write itself, with f.mu held: the hash, and the counter
@@ -313,15 +337,15 @@ type fakeResets struct {
 }
 
 // newFakeResets ties the two fakes together, because the store ties the two
-// tables together: a redeemed link writes a password, and a password write
-// deletes links.
+// tables together: a redeemed link sets a password, and setting one deletes
+// the user's links.
 func newFakeResets(users *fakeUsers) *fakeResets {
 	f := &fakeResets{users: users, links: make(map[string]domain.Reset)}
 	users.resets = f
 	return f
 }
 
-// forget deletes every link a user has, as any password write does.
+// forget deletes every link a user has, as setting a password does.
 func (f *fakeResets) forget(userID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -402,7 +426,16 @@ func (f *fakeTokens) hang() {
 
 func newFakeTokens(users *fakeUsers) *fakeTokens { return &fakeTokens{users: users} }
 
-func (f *fakeTokens) Add(_ context.Context, t *domain.Token) error {
+// Add names the owner's password counter, like the store: a fake that inserted
+// by user id alone would let a token creation held open across a reset go
+// through, and still pass.
+func (f *fakeTokens) Add(_ context.Context, t *domain.Token, version int64) error {
+	f.users.mu.Lock()
+	owner, ok := f.users.byID[t.UserID]
+	f.users.mu.Unlock()
+	if !ok || owner.PasswordVersion != version {
+		return domain.ErrStale
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	t.CreatedAt = time.Now().UTC().Format(time.RFC3339)

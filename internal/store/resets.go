@@ -58,7 +58,8 @@ func (s *Resets) Add(ctx context.Context, res *domain.Reset, mail domain.Mail) e
 }
 
 // Redeem spends a reset link and sets the password it was issued for, in one
-// transaction: the link is read, the hash is written and the counter moved, and
+// transaction: the link is read with the user's password counter, the hash is
+// written and the counter moved by a statement that names the value read, and
 // every reset link the user has is deleted, this one among them. It returns the
 // user as the row now stands, for the session the reset signs in.
 //
@@ -82,10 +83,15 @@ func (s *Resets) Redeem(ctx context.Context, hash, passwordHash string, now time
 	}
 	defer tx.Rollback()
 
+	// The link, and the password counter of the user it was issued for: what
+	// this request loads, and what its write names below.
 	var userID, expiresAt string
+	var version int64
 	err = tx.QueryRowContext(ctx,
-		`SELECT user_id, expires_at FROM resets WHERE hash = ?`, hash,
-	).Scan(&userID, &expiresAt)
+		`SELECT r.user_id, r.expires_at, u.password_version
+		   FROM resets r JOIN users u ON u.id = r.user_id
+		  WHERE r.hash = ?`, hash,
+	).Scan(&userID, &expiresAt, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.User{}, domain.ErrNotFound
 	}
@@ -106,13 +112,26 @@ func (s *Resets) Redeem(ctx context.Context, hash, passwordHash string, now time
 		return domain.User{}, domain.ErrNotFound
 	}
 
-	// No version named here, unlike Users.SetPassword: the link is the
-	// authority, and it is read in this transaction, on the one write
-	// connection. Nothing this statement relies on was loaded earlier.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash = ?, password_version = password_version + 1 WHERE id = ?`,
-		passwordHash, userID); err != nil {
+	// It sets a password, so it moves the counter; a reset link allowed it, so
+	// it names the counter this request loaded (patterns/go-auth-sessions.md
+	// rule 1). The load is three statements up, in this transaction, on the
+	// one write connection: nothing can move the counter in between, so today
+	// the predicate cannot refuse on its own. It is the rule's statement all
+	// the same, and it is what refuses the day the link is read anywhere else.
+	// No row changed is the dead link's answer.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, password_version = password_version + 1
+		  WHERE id = ? AND password_version = ?`,
+		passwordHash, userID, version)
+	if err != nil {
 		return domain.User{}, fmt.Errorf("setting the password of user %s: %w", userID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return domain.User{}, fmt.Errorf("counting the password write of user %s: %w", userID, err)
+	}
+	if n == 0 {
+		return domain.User{}, domain.ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE user_id = ?`, userID); err != nil {
 		return domain.User{}, fmt.Errorf("deleting the reset links of user %s: %w", userID, err)

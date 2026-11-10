@@ -1036,6 +1036,23 @@ echo "$LINK" | grep -q "evil.example" && fail "the link was built from the Host 
 echo "$LINK" | grep -q "127.0.0.1:$PORT" || fail "the link was not built from the configured base URL"
 
 TOKEN="${LINK##*t=}"
+# Two requests from the session this reset is about to end, each with its body
+# held open across it: the server has loaded the account's row and is inside
+# ParseForm for two seconds. They carry the old password, and the step after
+# this one reads their answers. An address each, since each checks a password.
+HELDSESSION="$(awk '/session/ {print $7}' "$JAR2" | tail -1)"
+[ -n "$HELDSESSION" ] || fail "no session to hold a request open with"
+( printf 'label=held-open&password='; sleep 2; printf 'correct-horse' ) | curl -s -o /dev/null \
+    -w '%{http_code}' -T - -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H "Cookie: session=$HELDSESSION" -H 'X-Forwarded-For: 198.51.100.21' \
+    "localhost:$PORT/profile/tokens" > "$WORKDIR/held-token.code" &
+HELDTOKENPID=$!
+( printf 'name=Intruder&password='; sleep 2; printf 'correct-horse' ) | curl -s -o /dev/null \
+    -w '%{http_code}' -T - -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H "Cookie: session=$HELDSESSION" -H 'X-Forwarded-For: 198.51.100.22' \
+    "localhost:$PORT/account/delete" > "$WORKDIR/held-delete.code" &
+HELDDELETEPID=$!
+sleep 0.4
 # Its own client IP throughout: the reset endpoints are rate limited per address
 # like every other way in, and this gate is about the link, not about how often
 # anybody may ask for one.
@@ -1065,6 +1082,24 @@ CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 [ "$CODE" = "422" ] || fail "a link issued before the reset still set the password: got $CODE, want 422"
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
 [ "$CODE" = "200" ] || fail "the older link ended the session the reset started: got $CODE, want 200"
+
+step "smoke: a token creation and an account delete held open across the reset change no row"
+# patterns/go-auth-sessions.md rule 1: every statement a password allowed names
+# the password counter its request loaded, and no row changed is a refusal. Both
+# requests passed the sign-in check before the reset and checked the old
+# password against the row they had loaded; by user id alone the first left
+# with a token no reset ends, and the second erased the account the reset was
+# made to keep.
+wait "$HELDTOKENPID" || fail "the held-open token request did not finish"
+wait "$HELDDELETEPID" || fail "the held-open delete request did not finish"
+CODE="$(cat "$WORKDIR/held-token.code")"
+[ "$CODE" = "422" ] || fail "a token creation held open across a reset answered $CODE, want 422"
+CODE="$(cat "$WORKDIR/held-delete.code")"
+[ "$CODE" = "422" ] || fail "an account delete held open across a reset answered $CODE, want 422"
+curl -fsS -c "$JAR3" -b "$JAR3" "localhost:$PORT/profile" > "$WORKDIR/held-profile.html" \
+    || fail "the account a held-open delete named is gone"
+grep -q 'action="/profile/tokens/' "$WORKDIR/held-profile.html" \
+    && fail "a token was made with a password that had been reset"
 
 step "smoke: asking for a reset says the same thing whoever asks"
 # Three requests the server knows three different things about, and one answer.

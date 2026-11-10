@@ -137,9 +137,9 @@ func (a *App) handleResetConfirm(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, err)
 		return
 	}
-	// Redeem moves the password counter with the hash. The row it returns
-	// carries the new value, which is what ends every session opened before
-	// now, including whichever one made the reset necessary.
+	// Redeem sets the password, so it moves the password counter. The row it
+	// returns carries the new value, which is what ends every session opened
+	// before now, including whichever one made the reset necessary.
 	user, err := a.resets.Redeem(r.Context(), auth.HashToken(form.Token), hash, time.Now().UTC())
 	switch {
 	case err == nil:

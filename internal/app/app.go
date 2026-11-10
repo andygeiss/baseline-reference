@@ -27,13 +27,14 @@ type (
 		Add(ctx context.Context, u *domain.User) error
 		ByName(ctx context.Context, name string) (domain.User, error)
 		ByID(ctx context.Context, id string) (domain.User, error)
-		// SetPassword writes a hash over the one the request loaded at
-		// version, and answers domain.ErrStale when the row has moved on
-		// since. It returns the new version, which is what a fresh session
-		// records so older ones stop working.
-		SetPassword(ctx context.Context, id, hash string, version int64) (int64, error)
+		// Rehash and Delete are statements a password allowed, so each names
+		// the password counter its request loaded, version, and answers
+		// domain.ErrStale when the row has moved on since: a refusal
+		// (patterns/go-auth-sessions.md rule 1). Rehash writes a new hash of
+		// the same password and moves nothing.
+		Rehash(ctx context.Context, id, hash string, version int64) error
 		SetEmail(ctx context.Context, id, email string) error
-		Delete(ctx context.Context, id string) error
+		Delete(ctx context.Context, id string, version int64) error
 	}
 
 	RoomStore interface {
@@ -62,16 +63,19 @@ type (
 
 	// ResetStore holds outstanding password-reset links. Add takes the mail
 	// with them: the link and the message that carries it are one write.
-	// Redeem is one write too: the link is spent, the hash set, and the
-	// user's other links deleted together, and it returns the user as the row
-	// then stands.
+	// Redeem is one write too: the link is spent, the hash set and the
+	// counter moved, and the user's other links deleted together, and it
+	// returns the user as the row then stands.
 	ResetStore interface {
 		Add(ctx context.Context, res *domain.Reset, mail domain.Mail) error
 		Redeem(ctx context.Context, hash, passwordHash string, now time.Time) (domain.User, error)
 	}
 
 	TokenStore interface {
-		Add(ctx context.Context, t *domain.Token) error
+		// Add is a statement a password allowed too: version is the owner's
+		// password counter as the request loaded it, and domain.ErrStale the
+		// answer when the row has moved on.
+		Add(ctx context.Context, t *domain.Token, version int64) error
 		UserByHash(ctx context.Context, hash string) (domain.User, error)
 		// Owner is UserByHash without marking the token used: the open
 		// socket's recheck, which only reads (wasm-client.md rule 6).

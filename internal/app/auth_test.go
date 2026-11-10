@@ -427,15 +427,19 @@ func weakHash(password string) string {
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
 }
 
-// TestARehashAtSignInIsAPasswordWrite: every statement that writes a hash moves
-// the counter (patterns/go-auth-sessions.md rule 1), and the re-hash a sign-in
-// makes is one. The session that sign-in starts records the new value; a
-// session opened before it ends.
-func TestARehashAtSignInIsAPasswordWrite(t *testing.T) {
+// TestARehashAtSignInSetsNoPassword: every statement that sets a password moves
+// the counter, and the re-hash a sign-in makes sets none — the password is the
+// one it was (patterns/go-auth-sessions.md rule 1). Moved by a re-hash, the
+// counter signed every other session of that user out at their first sign-in
+// after the argon2id settings were raised.
+func TestARehashAtSignInSetsNoPassword(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	const password = "correct horse battery"
 	ta.users.byID["u1"] = domain.User{ID: "u1", Name: "Ada", PasswordHash: weakHash(password)}
+	// A reset link Ada asked for and has not used. A sign-in is not what
+	// spends it, with or without a re-hash.
+	ta.resets.links["adas-link"] = domain.Reset{Hash: "adas-link", UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}
 	signIn := func() {
 		t.Helper()
 		if res, _ := ta.do(t, http.MethodPost, "/login", url.Values{
@@ -453,10 +457,9 @@ func TestARehashAtSignInIsAPasswordWrite(t *testing.T) {
 	if weak, err := auth.NeedsRehash(first.PasswordHash); err != nil || weak {
 		t.Fatalf("the hash was not rewritten at sign-in (weak %v, %v)", weak, err)
 	}
-	if first.PasswordVersion != 1 {
-		t.Errorf("counter = %d after the re-hash, want 1", first.PasswordVersion)
+	if first.PasswordVersion != 0 {
+		t.Errorf("counter = %d after the re-hash, want it where it was, at 0", first.PasswordVersion)
 	}
-	// The session the re-hashing sign-in started carries the new value.
 	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("the session that re-hashed is signed out: status %d", res.StatusCode)
 	}
@@ -473,11 +476,16 @@ func TestARehashAtSignInIsAPasswordWrite(t *testing.T) {
 		t.Errorf("the second sign-in is signed out: status %d", res.StatusCode)
 	}
 
+	// The first machine is still signed in: nobody set a password.
 	ta.client.Jar = firstBrowser
-	res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/login" {
-		t.Errorf("the session opened before the second re-hash answered %d %q, want 303 to /login",
-			res.StatusCode, res.Header.Get("Location"))
+	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("the session opened before the second re-hash answered %d, want 200", res.StatusCode)
+	}
+	ta.resets.mu.Lock()
+	_, kept := ta.resets.links["adas-link"]
+	ta.resets.mu.Unlock()
+	if !kept {
+		t.Error("a sign-in that re-hashed deleted the reset link")
 	}
 }
 
@@ -494,9 +502,7 @@ func TestASignInDoesNotWriteOverAReset(t *testing.T) {
 	var once sync.Once
 	ta.users.afterByName = func(u domain.User) {
 		once.Do(func() {
-			if _, err := ta.users.SetPassword(t.Context(), u.ID, "the-resets-hash", u.PasswordVersion); err != nil {
-				t.Errorf("the reset: %v", err)
-			}
+			ta.users.reset(u.ID, "the-resets-hash")
 		})
 	}
 

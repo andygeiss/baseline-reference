@@ -49,11 +49,12 @@ type User struct {
 	// account cannot be recovered, which the profile page says out loud.
 	Email string
 
-	// PasswordVersion counts the writes to PasswordHash. A session records the
-	// value it signed in under, so a reset or a re-hash ends every session
-	// opened before it — including the one whoever took the account is
-	// holding. A counter, not a time: two writes inside one stored second would
-	// leave a time where it was.
+	// PasswordVersion counts the passwords this account has been given since
+	// its first: every statement that sets one moves it, and a re-hash of the
+	// same password does not. A session records the value it signed in under,
+	// so a reset ends every session opened before it — including the one
+	// whoever took the account is holding. A counter, not a time: two writes
+	// inside one stored second would leave a time where it was.
 	PasswordVersion int64
 }
 

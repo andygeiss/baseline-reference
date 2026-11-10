@@ -105,7 +105,18 @@ func (a *App) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// rand.Text: 128 unguessable bits, URL-safe, no encoding step.
 	token := &domain.Token{ID: rand.Text(), UserID: user.ID, Hash: hash, Label: form.Label}
-	if err := a.tokens.Add(r.Context(), token); err != nil {
+	// The password was checked against the row this request loaded when its
+	// headers arrived, and the body may have been held open since. The insert
+	// names that row's password counter, so a reset that landed in between
+	// leaves no token behind: what was typed is no longer the password
+	// (patterns/go-auth-sessions.md rule 1).
+	switch err := a.tokens.Add(r.Context(), token, user.PasswordVersion); {
+	case err == nil:
+	case errors.Is(err, domain.ErrStale):
+		form.Check(false, "password", "That is not your password.")
+		a.renderProfile(w, r, http.StatusUnprocessableEntity, form, emailForm{})
+		return
+	default:
 		a.serverError(w, r, err)
 		return
 	}

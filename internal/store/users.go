@@ -70,50 +70,35 @@ func (s *Users) ByID(ctx context.Context, id string) (domain.User, error) {
 	return s.one(ctx, userColumns+` WHERE id = ?`, id)
 }
 
-// SetPassword writes a new hash over the one a request loaded, and moves the
-// counter that ends every session opened under the old one.
+// Rehash writes a stronger hash of a password over the hash a sign-in loaded
+// and has just checked that password against.
 //
-// version is the counter as that request read it, and the statement names it.
-// A request loads the row when its headers arrive and may write minutes later,
-// its body held open the whole time: written by id alone, that late write would
-// put its password over a reset that landed in between — the reset somebody
-// made because the old password was known. No row changed means exactly that
-// happened, and the answer is domain.ErrStale: a refusal, never a retry
-// (patterns/go-auth-sessions.md rule 1).
+// It sets no password, so it moves no counter: the password is the one every
+// session of this user signed in with, and a statement that moved the counter
+// here would sign all of them out the first time the argon2id settings were
+// raised (patterns/go-auth-sessions.md rule 1).
 //
-// The user's reset links go in the same transaction. A link issued before this
-// write would otherwise still set the password after it.
-//
-// Login calls this to re-hash a password stored under weaker argon2id settings.
-// That write moves the counter like any other: every statement that writes a
-// hash does, so there is no second kind of write to get wrong.
-func (s *Users) SetPassword(ctx context.Context, id, hash string, version int64) (int64, error) {
-	tx, err := s.db.Write.BeginTx(ctx, nil)
+// It is a statement a password allowed, so it names the counter its request
+// loaded. A request loads the row when its headers arrive and may write
+// minutes later, its body held open the whole time: written by id alone, that
+// late write would put the old password's hash over a reset that landed in
+// between — the reset somebody made because the old password was known. No row
+// changed means exactly that happened, and the answer is domain.ErrStale: a
+// refusal, never a retry.
+func (s *Users) Rehash(ctx context.Context, id, hash string, version int64) error {
+	res, err := s.db.Write.ExecContext(ctx,
+		`UPDATE users SET password_hash = ? WHERE id = ? AND password_version = ?`, hash, id, version)
 	if err != nil {
-		return 0, fmt.Errorf("beginning to set the password of user %s: %w", id, err)
-	}
-	defer tx.Rollback()
-
-	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash = ?, password_version = password_version + 1
-		  WHERE id = ? AND password_version = ?`, hash, id, version)
-	if err != nil {
-		return 0, fmt.Errorf("setting the password of user %s: %w", id, err)
+		return fmt.Errorf("rehashing the password of user %s: %w", id, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("counting the password write of user %s: %w", id, err)
+		return fmt.Errorf("counting the rehash of user %s: %w", id, err)
 	}
 	if n == 0 {
-		return 0, domain.ErrStale
+		return domain.ErrStale
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE user_id = ?`, id); err != nil {
-		return 0, fmt.Errorf("deleting the reset links of user %s: %w", id, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("committing the password of user %s: %w", id, err)
-	}
-	return version + 1, nil
+	return nil
 }
 
 // SetEmail stores somebody's address, or clears it when email is empty.
@@ -140,7 +125,15 @@ func (s *Users) SetEmail(ctx context.Context, id, email string) error {
 // The id is the actor's own, out of the session: this app has no
 // administrator, so the only account anybody may delete is the one they are
 // signed in as, and there is no second predicate to forget.
-func (s *Users) Delete(ctx context.Context, id string) error {
+//
+// version is the password counter as the request read it, and the DELETE names
+// it: the delete is allowed by a password checked against the row that request
+// loaded, and a reset that landed since has made that check worthless
+// (patterns/go-data-deletion.md, Deleting is a write). No row changed is then
+// one of two things, and one read inside this transaction says which: the
+// account is already gone, domain.ErrNotFound, or it has moved on,
+// domain.ErrStale — a refusal, and the rollback puts the queued mail back.
+func (s *Users) Delete(ctx context.Context, id string, version int64) error {
 	tx, err := s.db.Write.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning to delete user %s: %w", id, err)
@@ -153,7 +146,8 @@ func (s *Users) Delete(ctx context.Context, id string) error {
 		    AND recipient = (SELECT email FROM users WHERE id = ?)`, id); err != nil {
 		return fmt.Errorf("deleting the mail queued to user %s by address: %w", id, err)
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM users WHERE id = ? AND password_version = ?`, id, version)
 	if err != nil {
 		return fmt.Errorf("deleting user %s: %w", id, err)
 	}
@@ -162,6 +156,14 @@ func (s *Users) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("counting the deletion of user %s: %w", id, err)
 	}
 	if n == 0 {
+		var there bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM users WHERE id = ?)`, id).Scan(&there); err != nil {
+			return fmt.Errorf("looking for user %s after a delete that changed no row: %w", id, err)
+		}
+		if there {
+			return domain.ErrStale
+		}
 		return domain.ErrNotFound
 	}
 	if err := tx.Commit(); err != nil {
