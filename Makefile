@@ -10,6 +10,14 @@ MAIN = ./cmd/server
 # .build file it records is true (stack/makefile.md rule 4).
 TINYGO_VERSION = 0.44.0
 
+# The wasm-opt (Binaryen) TinyGo runs on every wasm build: the binary `tinygo
+# env WASMOPT` names, which is the one on PATH unless TinyGo bundles its own or
+# the WASMOPT variable says otherwise. wasm refuses another version, as it
+# refuses another TinyGo, and records this one in the .build. The baseline's
+# VERSIONS.md has no row for it, so this is the version that built the
+# committed module.
+WASMOPT_VERSION = 133
+
 # The flags the module is built with. wasm records them beside it, because the
 # digest sees only the sources.
 WASM_FLAGS = -no-debug -opt=z -panic=trap
@@ -112,15 +120,16 @@ test:
 # The browser module, rebuilt and committed: make ci needs no TinyGo, and the
 # server embeds what is in the tree. wasm_exec.js is copied from the TinyGo
 # that built the module, because it must match its compiler. Beside the module
-# go the .build file (compiler, flags, and build tags) and the .sum of its
+# go the .build file (compiler, wasm-opt, flags, and build tags) and the .sum of its
 # inputs — every file INPUT_FILES lists under WASM_TAGS, go.mod, and the
 # .build — which module_test.go recomputes, so a source change cannot ship
 # with an old module. The size check is last.
 wasm:
 	v=$$(tinygo version | awk '{print $$3}'); test "$$v" = "$(TINYGO_VERSION)" || (echo "tinygo is $$v, and VERSIONS.md pins $(TINYGO_VERSION): install that one" && exit 1)
+	w=$$(tinygo env WASMOPT) && test -n "$$w" && v=$$("$$w" --version | awk '{print $$3}') && test "$$v" = "$(WASMOPT_VERSION)" || (echo "the wasm-opt tinygo runs ($$w) is version $$v, and WASMOPT_VERSION says $(WASMOPT_VERSION): install that one" && exit 1)
 	t=$$(tinygo info -target wasm $(WASM_FLAGS) | sed -n 's/^build tags: *//p' | tr ' ' ','); test "$$t" = "$(WASM_TAGS)" || (echo "tinygo builds under tags $$t, and WASM_TAGS says $(WASM_TAGS): set WASM_TAGS to them" && exit 1)
 	cp "$$(tinygo env TINYGOROOT)/targets/wasm_exec.js" web/static/js/wasm_exec.js
 	tinygo build -target wasm $(WASM_FLAGS) -o web/static/roommap.wasm ./cmd/roommap
-	printf 'tinygo-version %s\ntinygo-flags %s\ntinygo-tags %s\n' '$(TINYGO_VERSION)' '$(WASM_FLAGS)' '$(WASM_TAGS)' > web/static/roommap.wasm.build
+	printf 'tinygo-version %s\nwasm-opt-version %s\ntinygo-flags %s\ntinygo-tags %s\n' '$(TINYGO_VERSION)' '$(WASMOPT_VERSION)' '$(WASM_FLAGS)' '$(WASM_TAGS)' > web/static/roommap.wasm.build
 	l=$$(GOOS=js GOARCH=wasm go list -deps -tags "$(WASM_TAGS)" -f '$(INPUT_FILES)' ./cmd/roommap) && test -n "$$l" && (echo "$$l" | sed 's|^github.com/andygeiss/baseline-reference/v5/||'; echo go.mod; echo web/static/roommap.wasm.build) | LC_ALL=C sort | xargs shasum -a 256 > web/static/roommap.wasm.sum
 	s=$$(wc -c < web/static/roommap.wasm | tr -d ' '); test "$$s" -le $(WASM_MAX_BYTES) || (echo "roommap.wasm is $$s bytes, over WASM_MAX_BYTES ($(WASM_MAX_BYTES))" && exit 1)

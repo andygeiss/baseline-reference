@@ -93,22 +93,52 @@ func main() {
 		}
 		return nil
 	})
+	// A closed socket ends the program only once its canvas has left the
+	// page. While the canvas is there the program stays, parked: it is what
+	// reloads the page when the browser brings this document back (onShow).
 	onClose := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if !canvas.Get("isConnected").Bool() {
+			close(done)
+			return nil
+		}
 		draw(canvas, ctx, colors, nil, "The map closed. Reload to open it again.")
-		close(done)
+		return nil
+	})
+	// pagehide: the reader is leaving by a full navigation. This page is a
+	// document of its own, and Chrome keeps one in its back/forward cache with
+	// the socket open and answering pings — a live, signed-in socket for a page
+	// nobody is looking at. So the socket closes as the page goes
+	// (patterns/wasm-client.md, The two scripts).
+	onHide := js.FuncOf(func(js.Value, []js.Value) any {
+		sock.Call("close", 1000)
+		return nil
+	})
+	// pageshow with persisted set: the browser brought the document back from
+	// that cache, its socket closed. A reload is a page with a socket again.
+	// Not after the canvas has left: the document then shows another page.
+	onShow := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if args[0].Get("persisted").Bool() && canvas.Get("isConnected").Bool() {
+			loc.Call("reload")
+		}
 		return nil
 	})
 
 	canvas.Call("addEventListener", "pointermove", onMove)
+	js.Global().Call("addEventListener", "pagehide", onHide)
+	js.Global().Call("addEventListener", "pageshow", onShow)
 	sock.Set("onmessage", onMessage)
 	sock.Set("onclose", onClose)
 	draw(canvas, ctx, colors, nil, "Connecting…")
 
 	<-done
 	canvas.Call("removeEventListener", "pointermove", onMove)
+	js.Global().Call("removeEventListener", "pagehide", onHide)
+	js.Global().Call("removeEventListener", "pageshow", onShow)
 	onMove.Release()
 	onMessage.Release()
 	onClose.Release()
+	onHide.Release()
+	onShow.Release()
 }
 
 // palette is the page's own colours, read from app.css's tokens once, so the

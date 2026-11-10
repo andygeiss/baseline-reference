@@ -193,7 +193,10 @@ where people are, and this shows who is.
   `web/static/roommap.wasm`, embedded, and served; `make ci` needs no TinyGo.
   TinyGo compiles under build tags of its own (`tinygo`, `tinygo.wasm`, …), so the
   Makefile names them in `WASM_TAGS` and `make wasm` refuses a TinyGo that prints
-  others for `WASM_FLAGS`. The `.build` file records version, flags and tags;
+  others for `WASM_FLAGS`, and a wasm-opt other than `WASMOPT_VERSION`: TinyGo runs the
+  one `tinygo env WASMOPT` names on every build, and the baseline's `VERSIONS.md` has no
+  row for it, so the Makefile names the version that built the committed module. The
+  `.build` file records both versions, the flags and the tags;
   `roommap.wasm.sum` hashes it with `go.mod` and every Go and embedded file of this
   module's own packages as listed under those tags. `module_test.go` recomputes the
   digest from the `.build`'s tags and the Makefile's `INPUT_FILES` template, so a
@@ -203,7 +206,11 @@ where people are, and this shows who is.
 - **Into the map is a full load.** The link in carries `hx-boost="false"`: htmx
   swaps only the body, and the two scripts are in `<head>`. Links out stay boosted —
   the module stops itself once its canvas leaves the page — and Back or Forward is a
-  full load anyway, since the layout's `htmx-config` sets `"history":"reload"`.
+  full load anyway, since the layout's `htmx-config` sets `"history":"reload"`. Leaving
+  by a full navigation closes the socket on `pagehide`, because Chrome keeps the page in
+  its back/forward cache with the socket open; brought back from that cache, the module
+  reloads the page (`pageshow` with `persisted`). No gate drives a browser, so
+  `verify.sh` holds only that both listeners are in the source.
 - **The socket** is `GET /ws?room=<slug>`. It refuses another Origin, or none, with
   403, before any upgrade; a request with no session gets 401; a room no form
   made gets 404. An up message is four bytes — a position — and never a name: who is
@@ -214,7 +221,9 @@ where people are, and this shows who is.
   token closes it with 1008 within 5 seconds (1011 if the store cannot answer in
   time). From the moment a check falls due until it answers, moves are dropped. The
   handler returns right after the handshake and the socket runs on a goroutine the
-  app counts. Caps: 1 KiB a message, its fragments counted together; 30 frames a
+  app counts — before the hijack, since the server forgets the connection there —
+  reading the connection itself rather than the reader `Hijack` returns, whose read
+  errors cancel the handshake request's context. Caps: 1 KiB a message, its fragments counted together; 30 frames a
   second, pings and empty fragments included; 8 queued toward a slow reader. Past
   one the socket closes (1009, 1008, 1013); a message that is not a position is
   malformed (1002). A sender's own moves never queue: they owe it

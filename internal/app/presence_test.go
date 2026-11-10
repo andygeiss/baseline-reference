@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -1015,4 +1016,91 @@ func (l *lockedLog) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.String()
+}
+
+// hijackProbe is a ResponseWriter whose Hijack runs a probe first, so a test
+// can look at the app at the exact moment the server would forget the
+// connection.
+type hijackProbe struct {
+	http.ResponseWriter
+	conn     net.Conn
+	atHijack func()
+}
+
+func (p *hijackProbe) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	p.atHijack()
+	return p.conn, bufio.NewReadWriter(bufio.NewReader(p.conn), bufio.NewWriter(p.conn)), nil
+}
+
+// Rule 8, "count, hijack, return": srv.Shutdown forgets a connection the moment
+// it is hijacked, so the socket's goroutine has to be in the app's count before
+// that moment. Counted after, there is a window in which both of shutdown's
+// waits — the server's, then a.Wait — can return with the socket's goroutine
+// still to start: against a store that is closing, and with no 1001 for its
+// client. At the instant of the hijack, a.Wait must already be waiting.
+func TestTheSocketIsCountedBeforeTheHijack(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+	secret := ta.makeToken(t, "map", "correct-horse")
+	user, err := ta.users.ByName(t.Context(), "Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server, client := net.Pipe()
+	t.Cleanup(func() { client.Close() })
+	go io.Copy(io.Discard, client) // the handshake's answer has to go somewhere
+
+	counted := false
+	waited := make(chan struct{})
+	probe := &hijackProbe{ResponseWriter: httptest.NewRecorder(), conn: server, atHijack: func() {
+		go func() { ta.Wait(); close(waited) }()
+		select {
+		case <-waited: // nothing was counted: Wait had nothing to wait for
+		case <-time.After(100 * time.Millisecond):
+			counted = true
+		}
+	}}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws?room="+slug, nil)
+	r.Header.Set("Connection", "Upgrade")
+	r.Header.Set("Upgrade", "websocket")
+	r.Header.Set("Sec-WebSocket-Version", "13")
+	r.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	r.Header.Set("Origin", "http://"+r.Host)
+	r.Header.Set("Authorization", "Bearer "+secret)
+
+	ta.handleSocket(probe, withUser(r, user))
+
+	if !counted {
+		t.Error("at the hijack the socket's goroutine was not yet counted: a.Wait returned")
+	}
+	// The socket ends with its peer, and only then does the count reach zero.
+	client.Close()
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a.Wait never returned after the socket ended")
+	}
+}
+
+// A refused handshake leaves nothing in the count: counted before the hijack,
+// it is given back when there is no hijack.
+func TestARefusedSocketLeavesNothingCounted(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+
+	if _, err := openSocket(t, ta, ta.client, slug, "https://evil.example"); err == nil {
+		t.Fatal("a socket opened for another origin")
+	}
+	done := make(chan struct{})
+	go func() { ta.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a.Wait hangs after a refused handshake: its count was never given back")
+	}
 }

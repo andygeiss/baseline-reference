@@ -404,3 +404,74 @@ func TestTheFrameCapCountsEveryFrame(t *testing.T) {
 		})
 	}
 }
+
+// Rule 8: the socket reads the connection itself. Read through the reader
+// Hijack hands back, a client that hangs up cancels the handshake request's
+// context — net/http's reader does that on every read error — and whatever
+// still runs under that context fails with it: the session commit, in the app.
+func TestAHangUpDoesNotCancelTheHandshakesContext(t *testing.T) {
+	t.Parallel()
+	state := make(chan error, 1)
+	ln := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := ws.Accept(w, r)
+		if err != nil {
+			state <- err
+			return
+		}
+		// Still inside the handler, as the app's handler is when the peer
+		// goes: read until the hang-up, then look at the request's context.
+		if _, err := c.Read(); err == nil {
+			state <- errors.New("Read returned a message from a peer that hung up")
+			return
+		}
+		state <- r.Context().Err()
+	}))
+	nc := ln.dial(t)
+	if _, err := ws.Dial(nc, "chat.test", "/ws", nil); err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	nc.Close() // no close frame: the connection is just gone
+
+	select {
+	case err := <-state:
+		if err != nil {
+			t.Errorf("after the peer hung up, the handshake's context: %v, want it still alive", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server never noticed the hang-up")
+	}
+}
+
+// And nothing is lost by it: a frame the client sent in the same write as its
+// handshake is already in Hijack's reader, and is still the first one read.
+func TestAFrameSentWithTheHandshakeIsNotLost(t *testing.T) {
+	t.Parallel()
+	got := make(chan []byte, 1)
+	ln := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := ws.Accept(w, r)
+		if err != nil {
+			got <- nil
+			return
+		}
+		msg, _ := c.Read()
+		got <- msg
+	}))
+	nc := ln.dial(t)
+	// A masked binary frame holding "hi", written in one piece with the
+	// handshake so the server's reader takes both in one read.
+	frame := []byte{0x82, 0x82, 0, 0, 0, 0, 'h', 'i'}
+	go nc.Write(append([]byte("GET /ws HTTP/1.1\r\nHost: chat.test\r\nOrigin: http://chat.test\r\n"+
+		"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"+
+		"Sec-WebSocket-Key: "+rfcKey+"\r\n\r\n"), frame...))
+	if res, err := http.ReadResponse(bufio.NewReader(nc), &http.Request{Method: http.MethodGet}); err != nil || res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake: %v, %v", res, err)
+	}
+	select {
+	case msg := <-got:
+		if string(msg) != "hi" {
+			t.Errorf("the first message read = %q, want the one sent with the handshake", msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the frame sent with the handshake never arrived")
+	}
+}

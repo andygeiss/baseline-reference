@@ -17,6 +17,7 @@ package ws
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
@@ -186,9 +187,22 @@ func Accept(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("ws: writing the handshake: %w", err)
 	}
-	// The reader net/http handed back may already hold the first frame, so
-	// frames are read through it rather than from the connection directly.
-	return &Conn{nc: nc, br: brw.Reader, server: true}, nil
+	// Frames are read from the connection itself, never through the reader
+	// net/http handed back: that reader cancels the handshake request's
+	// context on any read error, a peer hanging up among them, and the caller's
+	// handler — or the session commit that runs as it returns — may still be
+	// under that context (patterns/wasm-client.md rule 8). What the reader had
+	// already buffered, a frame sent with the handshake, is read first.
+	var frames io.Reader = nc
+	if n := brw.Reader.Buffered(); n > 0 {
+		early, err := brw.Reader.Peek(n) // buffered already: no read of the connection
+		if err != nil {
+			nc.Close()
+			return nil, fmt.Errorf("ws: taking what the handshake's reader had buffered: %w", err)
+		}
+		frames = io.MultiReader(bytes.NewReader(bytes.Clone(early)), nc)
+	}
+	return &Conn{nc: nc, br: bufio.NewReader(frames), server: true}, nil
 }
 
 // Dial performs the client handshake over nc — a connection the caller

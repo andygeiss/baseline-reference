@@ -119,6 +119,19 @@ grep -qx "tinygo-version $TINYGO_VERSION" web/static/roommap.wasm.build \
     || fail "roommap.wasm was not built with TinyGo $TINYGO_VERSION — run make wasm"
 grep -qx "tinygo-tags $WASM_TAGS" web/static/roommap.wasm.build \
     || fail "roommap.wasm was not built under the Makefile's WASM_TAGS — run make wasm"
+# Both versions (rule 2): TinyGo runs wasm-opt on every wasm build, so the
+# optimiser is named in the Makefile, checked by make wasm against the binary
+# `tinygo env WASMOPT` names, and recorded beside the module.
+WASMOPT_VERSION="$(sed -n 's/^WASMOPT_VERSION = //p' Makefile)"
+[ -n "$WASMOPT_VERSION" ] || fail "the Makefile names no WASMOPT_VERSION"
+grep -qx "wasm-opt-version $WASMOPT_VERSION" web/static/roommap.wasm.build \
+    || fail "roommap.wasm was not built with wasm-opt $WASMOPT_VERSION — run make wasm"
+grep -q 'tinygo env WASMOPT' Makefile || fail "make wasm does not check the wasm-opt that tinygo runs"
+# The module closes its socket as its page is hidden, and reloads a page the
+# browser brings back from its cache (The two scripts). No gate here drives a
+# browser, so this holds the two listeners in the source the digest covers.
+grep -q '"pagehide"' cmd/roommap/main.go || fail "the module does not close its socket on pagehide"
+grep -q '"pageshow"' cmd/roommap/main.go || fail "the module does not reload on a persisted pageshow"
 MAX="$(sed -n 's/^WASM_MAX_BYTES = //p' Makefile)"
 SIZE="$(wc -c < web/static/roommap.wasm | tr -d ' ')"
 [ -n "$MAX" ] && [ "$SIZE" -le "$MAX" ] || fail "roommap.wasm is $SIZE bytes, over WASM_MAX_BYTES ($MAX)"

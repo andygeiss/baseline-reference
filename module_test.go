@@ -43,7 +43,7 @@ func TestTheCommittedModuleIsBuiltFromTheTree(t *testing.T) {
 }
 
 // The digest sees only the sources, so the .build file records the TinyGo, the
-// flags, and the build tags, and is hashed in with them. This holds each line
+// wasm-opt it ran, the flags, and the build tags, and is hashed in with them. This holds each line
 // to the Makefile, so a flag or a tag edited there without a rebuild goes red
 // like a source edit. That WASM_TAGS is what TinyGo prints is make wasm's
 // check, since make ci has no TinyGo to ask.
@@ -61,9 +61,10 @@ func TestTheRecordedBuildMatchesTheMakefile(t *testing.T) {
 		}
 	}
 	want := map[string]string{
-		"tinygo-version": vars["TINYGO_VERSION"],
-		"tinygo-flags":   vars["WASM_FLAGS"],
-		"tinygo-tags":    vars["WASM_TAGS"],
+		"tinygo-version":   vars["TINYGO_VERSION"],
+		"wasm-opt-version": vars["WASMOPT_VERSION"], // both versions: TinyGo runs wasm-opt on every build
+		"tinygo-flags":     vars["WASM_FLAGS"],
+		"tinygo-tags":      vars["WASM_TAGS"],
 	}
 	for key, w := range want {
 		if w == "" || got[key] != w {

@@ -99,10 +99,17 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 		a.serverError(w, r, err)
 		return
 	}
+	// Counted before the hijack (rule 8): srv.Shutdown forgets a connection
+	// the moment it is hijacked, so a goroutine counted after that can start
+	// once the server's wait and main's a.Wait have both returned — against a
+	// store that is closing, and with no 1001 for its client. Every return
+	// below that starts no goroutine gives the count back.
+	a.running.Add(1)
 	// Accept refuses an Origin that is not this host with 403 (rule 5, tier
 	// 1), hijacks the connection and clears the server's deadlines (rule 8).
 	conn, err := ws.Accept(w, r)
 	if err != nil {
+		a.running.Done()
 		a.logger.Debug("socket refused", "err", err)
 		return
 	}
@@ -125,6 +132,7 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 	s.vouch(time.Now().Add(socketRecheck))
 	if !a.presence.join(room.ID, s) {
 		conn.Close(ws.CloseTryAgain, "this room's map is full")
+		a.running.Done()
 		return
 	}
 	// The id, never the name: a log is a copy no account deletion reaches
@@ -132,11 +140,13 @@ func (a *App) handleSocket(w http.ResponseWriter, r *http.Request) {
 	a.logger.Info("socket opened", "room", room.Slug, "user", s.userID)
 
 	// srv.Shutdown does not track a hijacked connection, so this work is the
-	// app's to count: main's a.Wait joins it after the listeners are down.
-	a.running.Go(func() {
+	// app's to count: main's a.Wait joins it after the listeners are down. It
+	// was counted above, before the hijack, so this is a bare go and a Done.
+	go func() {
+		defer a.running.Done()
 		code := a.serveSeat(room.ID, s)
 		a.logger.Info("socket closed", "room", room.Slug, "user", s.userID, "code", code)
-	})
+	}()
 }
 
 // serveSeat reads one socket until it ends, and returns the close code. Its
