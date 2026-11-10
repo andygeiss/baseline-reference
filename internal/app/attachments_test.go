@@ -78,11 +78,19 @@ func TestUploadDecidesTheTypeFromTheBytes(t *testing.T) {
 		// And the download proves it: the type the bytes were sniffed as, plus
 		// the header that makes a browser save the file instead of opening it.
 		down, _ := ta.do(t, http.MethodGet, "/rooms/"+slug+"/files/"+files[0].ID, nil, nil)
-		if ct := down.Header.Get("Content-Type"); ct == "image/png" || strings.Contains(ct, "svg") {
-			t.Errorf("Content-Type = %q, want the sniffed type", ct)
+		// What the bytes are never served as: an image of any kind, and never
+		// inline. Not "refused" — stored as text and handed back as a
+		// download is safe too (patterns/go-file-uploads.md, Testing).
+		if ct := down.Header.Get("Content-Type"); strings.HasPrefix(ct, "image/") || strings.Contains(ct, "svg") || strings.Contains(ct, "html") {
+			t.Errorf("Content-Type = %q: the lying upload is served as an image or a document", ct)
 		}
 		if cd := down.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
-			t.Errorf("Content-Disposition = %q, want an attachment", cd)
+			t.Errorf("Content-Disposition = %q, want an attachment: it must never open inline", cd)
+		}
+		// Never stored: Back after signing out would show the file from the
+		// browser's cache, with no request for the server to refuse.
+		if cc := down.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want no-store", cc)
 		}
 	})
 

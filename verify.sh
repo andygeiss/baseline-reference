@@ -759,6 +759,9 @@ grep -qi '^content-type:.*\(svg\|html\)' "$WORKDIR/file.head" && fail "an SVG ca
 # Anything the app does not render in its own pages downloads instead of opening.
 grep -qi '^content-disposition: *attachment' "$WORKDIR/file.head" \
     || fail "a file the app does not render inline is not sent as an attachment"
+# Never stored: Back after signing out must not show it from the cache.
+grep -qi '^cache-control: *no-store' "$WORKDIR/file.head" \
+    || fail "the download may be stored by the browser: $(grep -i '^cache-control' "$WORKDIR/file.head")"
 # nosniff is what makes the stored type binding rather than a hint.
 grep -qi '^x-content-type-options: *nosniff' "$WORKDIR/file.head" \
     || fail "the download is served without nosniff"
@@ -766,8 +769,9 @@ grep -qi '^x-content-type-options: *nosniff' "$WORKDIR/file.head" \
 step "smoke: a picture round-trips byte for byte"
 # The usual way to lose the first 512 bytes is to sniff them off a stream and
 # store what is left, so the whole file is compared.
+# Well over 512 bytes, which is how much the sniff reads.
 printf '\211PNG\r\n\032\n' > "$WORKDIR/real.png"
-head -c 64 /dev/urandom >> "$WORKDIR/real.png"
+head -c 4096 /dev/urandom >> "$WORKDIR/real.png"
 curl -fsS -c "$JAR" -b "$JAR" -o "$WORKDIR/png.html" -H 'HX-Request: true' -H 'HX-Request-Type: partial' \
     -F 'body=' -F "file=@$WORKDIR/real.png;type=application/octet-stream;filename=shot.png" \
     "localhost:$PORT/rooms/general-chat/messages"

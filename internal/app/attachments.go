@@ -137,7 +137,10 @@ func (a *App) handleFileShow(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition",
 			mime.FormatMediaType("attachment", map[string]string{"filename": file.Name}))
 	}
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	// Never stored. Kept for five minutes, as this was, a picture from a room
+	// is still shown by Back after its reader has signed out, with no request
+	// for anything to refuse (patterns/go-file-uploads.md).
+	w.Header().Set("Cache-Control", "no-store")
 	// The name is empty because Content-Type is already set: ServeContent only
 	// consults the name when it is not, and an extension must never overrule
 	// the type the bytes were sniffed as.

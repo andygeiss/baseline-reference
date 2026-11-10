@@ -226,3 +226,30 @@ func TestTheSocketsLogLinesNameNobody(t *testing.T) {
 		t.Errorf("the socket's lines do not carry the user's id %s:\n%s", id, got)
 	}
 }
+
+// TestASignedInPageIsNeverStored: a page behind the sign-in is not kept by the
+// browser, or Back after signing out shows it again with no request made
+// (patterns/go-performance.md, HTML responses). The sign-in page itself may be.
+func TestASignedInPageIsNeverStored(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.signUp(t, "Ada", "correct-horse")
+	slug := ta.makeRoom(t, "General")
+	ta.postMessage(t, "/rooms/"+slug+"/messages", "hello", nil, nil)
+
+	for name, get := range map[string]struct {
+		path    string
+		headers http.Header
+	}{
+		"a page":             {"/rooms", nil},
+		"a boosted page":     {"/rooms/" + slug, boosted()},
+		"a fragment":         {"/rooms/" + slug + "/messages?since=0", htmx()},
+		"the profile":        {"/profile", nil},
+		"a page that is 404": {"/rooms/no-such-room", nil},
+	} {
+		res, _ := ta.do(t, http.MethodGet, get.path, nil, get.headers)
+		if cc := res.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", name, cc)
+		}
+	}
+}

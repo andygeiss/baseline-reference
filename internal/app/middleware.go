@@ -168,11 +168,16 @@ func (a *App) sessionHolder(ctx context.Context) (domain.User, error) {
 }
 
 // requireAuth guards the pages. A signed-out reader is sent to the sign-in page.
+//
+// What a signed-in reader is sent is never stored by the browser: kept, a page
+// comes back on Back after signing out, with no request made
+// (patterns/go-performance.md, HTML responses).
 func (a *App) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, err := a.authenticate(r)
 		switch {
 		case err == nil:
+			w.Header().Set("Cache-Control", "no-store")
 			next.ServeHTTP(w, withUser(r, user))
 		case errors.Is(err, errNoCredential):
 			a.toLogin(w, r)
