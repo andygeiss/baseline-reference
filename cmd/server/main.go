@@ -124,7 +124,7 @@ func run(cfg Config) error {
 	// Constructing either one connects to nothing.
 	var mailer Mailer = logmail.New(logger)
 	if cfg.Mailer == "smtp" {
-		mailer = smtpmail.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, string(cfg.SMTPPassword))
+		mailer = smtpmail.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, string(cfg.SMTPPassword), cfg.BaseURL.Hostname())
 	}
 
 	resets := store.NewResets(db)

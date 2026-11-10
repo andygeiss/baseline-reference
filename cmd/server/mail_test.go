@@ -111,13 +111,18 @@ func TestDrainOutboxGivesUpAfterEnoughFailures(t *testing.T) {
 	}
 }
 
-// TestDrainOutboxNeverLogsTheBody is the rule that keeps a credential out of the
-// logs: the body holds a reset link, so the sender names the recipient and the
-// row and stops there (patterns/go-email.md).
-func TestDrainOutboxNeverLogsTheBody(t *testing.T) {
+// TestDrainOutboxLogsTheIDAndNothingOfThePerson is the rule that keeps a
+// credential and an address out of the logs: the body holds a reset link, and
+// an address in a log line is a copy no account deletion reaches. The sender
+// names the row and stops there (patterns/go-email.md).
+func TestDrainOutboxLogsTheIDAndNothingOfThePerson(t *testing.T) {
 	t.Parallel()
 	outbox, _ := outboxFixture(t)
 	mailer := &fakeMailer{err: errors.New("relay refused")} // the noisy path
+	queued, err := outbox.Unsent(t.Context(), 1)
+	if err != nil || len(queued) != 1 {
+		t.Fatalf("Unsent = %v, %v, want the one queued message", queued, err)
+	}
 
 	var log bytes.Buffer
 	drainOutbox(t.Context(), slog.New(slog.NewTextHandler(&log, nil)), outbox, mailer)
@@ -125,9 +130,12 @@ func TestDrainOutboxNeverLogsTheBody(t *testing.T) {
 	if strings.Contains(log.String(), "SECRET-TOKEN") {
 		t.Errorf("the reset token reached the log:\n%s", log.String())
 	}
-	// The two things it may say, so this test fails if the line goes silent
+	if strings.Contains(log.String(), "ada@example.com") {
+		t.Errorf("the recipient's address reached the log:\n%s", log.String())
+	}
+	// The one thing it must say, so this test fails if the line goes silent
 	// rather than passing because nothing was logged at all.
-	if !strings.Contains(log.String(), "ada@example.com") {
-		t.Errorf("the failure names no recipient:\n%s", log.String())
+	if !strings.Contains(log.String(), "id="+queued[0].ID) {
+		t.Errorf("the failure does not name its row:\n%s", log.String())
 	}
 }

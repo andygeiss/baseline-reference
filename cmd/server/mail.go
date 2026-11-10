@@ -30,9 +30,11 @@ const (
 	// than holding this goroutine through hundreds of connections.
 	sendBatch = 20
 
-	// sendTimeout bounds one message. A relay that accepts the connection and
-	// then goes quiet must not outlast a shutdown.
-	sendTimeout = 20 * time.Second
+	// sendTimeout bounds one message, and sits inside the stop grace: the
+	// adapter copies it onto the connection, so a relay that accepts and then
+	// goes quiet is given up on before the 10 s the listeners get to drain, and
+	// well before the container's 15 s (patterns/go-background-work.md).
+	sendTimeout = 8 * time.Second
 )
 
 // sendMail drains the outbox on a ticker.
@@ -69,9 +71,11 @@ func drainOutbox(ctx context.Context, logger *slog.Logger, outbox *store.Outbox,
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			// The recipient and the id, never the body: the body is where the
-			// reset token is, and a log is not where a credential goes.
-			logger.Warn("sending mail", "id", q.ID, "to", q.Mail.To, "err", err)
+			// The id, never the address or the body. The body is where the
+			// reset token is, and an address in a log line is a copy of
+			// somebody's data that no account deletion reaches; the id finds
+			// the row for as long as the row exists (patterns/go-email.md).
+			logger.Warn("sending mail", "id", q.ID, "err", err)
 			// WithoutCancel so the attempt is still counted during a shutdown,
 			// rather than being retried forever from a clean slate.
 			if err := outbox.Failed(context.WithoutCancel(ctx), q.ID); err != nil {
