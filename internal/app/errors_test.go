@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -21,33 +22,38 @@ func debugLog(buf *bytes.Buffer) *slog.Logger {
 }
 
 // TestServerErrorAndARequestWhoseClientLeft: a client that goes away cancels
-// its request's context, and every store call under it then fails. That is no
-// fault of the server's, and logged as one it is an error line for every tab
-// somebody closed (patterns/go-errors-logging.md rule 4).
+// its request's context, and a store call under it then fails with that
+// cancellation. That is no fault of the server's, and logged as one it is an
+// error line for every tab somebody closed. The exception is that error and no
+// other (patterns/go-errors-logging.md rule 4).
 func TestServerErrorAndARequestWhoseClientLeft(t *testing.T) {
 	t.Parallel()
 
-	// The store fails the way a real one does under a cancelled context.
-	newApp := func(t *testing.T, log *bytes.Buffer) *testApp {
+	// The store fails with failure: context.Canceled is what a real one
+	// returns under a cancelled context.
+	newApp := func(t *testing.T, log *bytes.Buffer, failure error) *testApp {
 		ta := newTestApp(t, func(o *Options) { o.Logger = debugLog(log) })
-		ta.tokens.goDown(context.Canceled)
+		ta.tokens.goDown(failure)
 		return ta
 	}
-	request := func(ctx context.Context) *http.Request {
-		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/rooms", nil)
+	request := func(ctx context.Context, path string) *http.Request {
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer gochat_anything")
 		return r
+	}
+	left := func(t *testing.T) context.Context {
+		gone, cancel := context.WithCancel(t.Context())
+		cancel()
+		return gone
 	}
 
 	t.Run("the client left: a debug line, and nothing is written", func(t *testing.T) {
 		t.Parallel()
 		var log bytes.Buffer
-		ta := newApp(t, &log)
-		gone, cancel := context.WithCancel(t.Context())
-		cancel()
+		ta := newApp(t, &log, context.Canceled)
 
 		rec := httptest.NewRecorder()
-		ta.Routes().ServeHTTP(rec, request(gone))
+		ta.Routes().ServeHTTP(rec, request(left(t), "/rooms"))
 
 		if strings.Contains(log.String(), "level=ERROR") {
 			t.Errorf("an abandoned request was logged as an error:\n%s", log.String())
@@ -61,15 +67,15 @@ func TestServerErrorAndARequestWhoseClientLeft(t *testing.T) {
 		}
 	})
 
-	// The exception is the request's own context, not the error's kind: the
-	// same error under a request that is still there is a fault.
+	// The error's kind is not the test: the same error under a request that is
+	// still there is a fault.
 	t.Run("the client is still there: an error line and the 500", func(t *testing.T) {
 		t.Parallel()
 		var log bytes.Buffer
-		ta := newApp(t, &log)
+		ta := newApp(t, &log, context.Canceled)
 
 		rec := httptest.NewRecorder()
-		ta.Routes().ServeHTTP(rec, request(t.Context()))
+		ta.Routes().ServeHTTP(rec, request(t.Context(), "/rooms"))
 
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status %d, want 500", rec.Code)
@@ -79,17 +85,33 @@ func TestServerErrorAndARequestWhoseClientLeft(t *testing.T) {
 		}
 	})
 
+	// Nor is the request's context: a fault found after the reader left is
+	// still a fault, and at debug nobody would ever read of it.
+	for surface, path := range map[string]string{"a page": "/rooms", "the JSON surface": "/api/me"} {
+		t.Run("the client left and the failure is another: an error line, on "+surface, func(t *testing.T) {
+			t.Parallel()
+			var log bytes.Buffer
+			ta := newApp(t, &log, errors.New("SQL logic error: no such table: tokens (1)"))
+
+			ta.Routes().ServeHTTP(httptest.NewRecorder(), request(left(t), path))
+
+			if !strings.Contains(log.String(), `level=ERROR msg="server error"`) ||
+				!strings.Contains(log.String(), "no such table") {
+				t.Errorf("a missing table was not logged as an error because the reader had left:\n%s", log.String())
+			}
+			if strings.Contains(log.String(), `msg="client left"`) {
+				t.Errorf("a missing table was logged as the client leaving:\n%s", log.String())
+			}
+		})
+	}
+
 	t.Run("the JSON surface makes the same exception", func(t *testing.T) {
 		t.Parallel()
 		var log bytes.Buffer
-		ta := newApp(t, &log)
-		gone, cancel := context.WithCancel(t.Context())
-		cancel()
-		r := httptest.NewRequestWithContext(gone, http.MethodGet, "/api/me", nil)
-		r.Header.Set("Authorization", "Bearer gochat_anything")
+		ta := newApp(t, &log, context.Canceled)
 
 		rec := httptest.NewRecorder()
-		ta.Routes().ServeHTTP(rec, r)
+		ta.Routes().ServeHTTP(rec, request(left(t), "/api/me"))
 
 		if strings.Contains(log.String(), "level=ERROR") || rec.Body.Len() != 0 {
 			t.Errorf("an abandoned API request was answered %q and logged:\n%s", rec.Body.String(), log.String())

@@ -4,6 +4,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -307,11 +308,10 @@ func (a *App) redirect(w http.ResponseWriter, r *http.Request, to string) {
 // serverError logs the cause and answers with the 500 page, which says nothing
 // about it.
 //
-// A request whose own context is cancelled is the exception: the client left,
-// and every store call under that context then fails. That is nobody's fault to
-// look into and there is nobody to answer, so it is a debug line and nothing is
-// written. The test is the request's context, not the error's kind — a budget
-// that ran out under a reader who is still waiting is a fault like any other
+// An error that is the cancellation of the request's own context is the
+// exception: the client left, and a store call under that context then fails
+// with it. That is nobody's fault to look into and there is nobody to answer,
+// so it is a debug line and nothing is written
 // (patterns/go-errors-logging.md rule 4).
 func (a *App) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	if a.clientLeft(r, err) {
@@ -321,10 +321,18 @@ func (a *App) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	a.write500(w)
 }
 
-// clientLeft reports whether the request's own context is cancelled, and logs
-// it at debug when it is. Every 500 this app writes asks it first.
+// clientLeft reports whether err is the cancellation of the request's own
+// context, and logs it at debug when it is. Every 500 this app writes asks it
+// first.
+//
+// It asks both halves. The request's context alone is not the test: any
+// failure after the reader left would pass as their leaving, a missing table
+// among them. The error's kind alone is not the test either: a cancellation
+// under a reader who is still waiting is some other context's, and a fault
+// like any other — as is a budget that ran out, which is a deadline and no
+// cancellation at all.
 func (a *App) clientLeft(r *http.Request, err error) bool {
-	if r.Context().Err() == nil {
+	if r.Context().Err() == nil || !errors.Is(err, context.Canceled) {
 		return false
 	}
 	a.logger.Debug("client left", "method", r.Method, "path", r.URL.Path, "err", err)

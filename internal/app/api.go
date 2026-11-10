@@ -269,8 +269,9 @@ func (a *App) apiInvalid(w http.ResponseWriter, r *http.Request, field, message 
 
 // apiServerError logs the cause and tells the caller nothing about it.
 //
-// It makes serverError's one exception too: a caller that went away is a debug
-// line, and is sent nothing.
+// It makes serverError's one exception too: an error that is the cancellation
+// of the request's own context is a debug line, and the caller that went away
+// is sent nothing.
 func (a *App) apiServerError(w http.ResponseWriter, r *http.Request, err error) {
 	if a.clientLeft(r, err) {
 		return
