@@ -20,7 +20,7 @@
          {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="password-error"{{end}}>
   {{with .Form.FieldErrors.password}}<p class="field-error" id="password-error">{{.}}</p>{{end}}
 
-  <button class="button-danger" type="submit">Delete my account for good</button>
+  <button id="account-delete-submit" class="button-danger" type="submit">Delete my account for good</button>
 </form>
 
 <p><a href="/profile">Never mind, take me back</a></p>

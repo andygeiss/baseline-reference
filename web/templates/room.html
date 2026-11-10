@@ -87,7 +87,7 @@
         {{if $m.Mine}}
           <form method="post" action="/rooms/{{$m.RoomSlug}}/files/{{.ID}}/delete"
                 hx-confirm="Remove this file? The message stays.">
-            <button type="submit" class="attachment-remove">
+            <button id="attachment-remove-{{.ID}}" type="submit" class="attachment-remove">
               <span class="icon icon-trash" aria-hidden="true"></span>
               <span class="visually-hidden">Remove {{.Name}}</span>
             </button>
@@ -142,7 +142,10 @@
     {{with .Form.FieldErrors.file}}<p class="field-error" id="file-error">{{.}}</p>{{end}}
   </div>
 
-  <button class="button-primary" type="submit">
+  {{/* An id, because this button is inside the region its form replaces:
+       htmx puts focus back only on an element it finds by id
+       (patterns/htmx-server-rendering.md). */}}
+  <button id="say-submit" class="button-primary" type="submit">
     <span class="icon icon-send" aria-hidden="true"></span>Send
     <span id="sending" class="htmx-indicator visually-hidden">Sending…</span>
   </button>

@@ -17,7 +17,7 @@
          {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="password-error"{{end}}>
   {{with .Form.FieldErrors.password}}<p class="field-error" id="password-error">{{.}}</p>{{end}}
 
-  <button class="button-primary" type="submit">Set it</button>
+  <button id="reset-confirm-submit" class="button-primary" type="submit">Set it</button>
 </form>
 
 <p>Setting a new password signs you out everywhere else.</p>

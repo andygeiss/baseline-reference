@@ -10,7 +10,7 @@
          {{with .Form.FieldErrors.name}}aria-invalid="true" aria-describedby="name-error"{{end}}>
   {{with .Form.FieldErrors.name}}<p class="field-error" id="name-error">{{.}}</p>{{end}}
 
-  <button class="button-primary" type="submit">Create</button>
+  <button id="room-new-submit" class="button-primary" type="submit">Create</button>
 </form>
 
 <p><a href="/rooms">Back to the rooms</a></p>

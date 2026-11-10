@@ -6,7 +6,7 @@
 <p>Signed in as <strong>{{.User.Name}}</strong>.</p>
 
 <form method="post" action="/logout">
-  <button type="submit">Sign out</button>
+  <button id="logout-submit" type="submit">Sign out</button>
 </form>
 
 <h2>Email address</h2>
@@ -21,7 +21,7 @@
          {{with .EmailForm.FieldErrors.email}}aria-invalid="true" aria-describedby="email-error"{{end}}>
   {{with .EmailForm.FieldErrors.email}}<p class="field-error" id="email-error">{{.}}</p>{{end}}
 
-  <button class="button-primary" type="submit">Save</button>
+  <button id="email-submit" class="button-primary" type="submit">Save</button>
 </form>
 
 <h2>Leaving</h2>
@@ -56,7 +56,7 @@
          {{with .Form.FieldErrors.password}}aria-invalid="true" aria-describedby="token-password-error"{{end}}>
   {{with .Form.FieldErrors.password}}<p class="field-error" id="token-password-error">{{.}}</p>{{end}}
 
-  <button class="button-primary" type="submit">
+  <button id="token-submit" class="button-primary" type="submit">
     <span class="icon icon-plus" aria-hidden="true"></span>Make a token
   </button>
 </form>
@@ -77,7 +77,7 @@
           <td>
             <form method="post" action="/profile/tokens/{{.ID}}/delete"
                   hx-confirm="Revoke this token? Anything using it stops working.">
-              <button type="submit" class="token-revoke">
+              <button id="token-revoke-{{.ID}}" type="submit" class="token-revoke">
                 <span class="icon icon-trash" aria-hidden="true"></span>
                 <span class="visually-hidden">Revoke {{.Label}}</span>
               </button>
