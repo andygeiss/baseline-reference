@@ -32,19 +32,32 @@ fixes.
 **What moved here,** in three syncs on the branch `sync-owed-run`. Sessions: the store
 hashes its token, keeps a deleted row emptied, writes no emptied and no expired row, and
 its janitor runs an hour behind; the user row carries a password counter, and every
-statement a password or a reset link allows names the value its request loaded. A client
-that left is not a server error, and the 500 is a page that needs no session. An
-adapter's error carries the status code, never the URL or what the other side wrote, and
-no log line names a person. The room map's socket is counted before the hijack, reads
-the connection itself, and is closed on `pagehide`; its recipe checks the `wasm-opt` that
-`tinygo env WASMOPT` names. Every submit button inside a fragment carries an id, the
-headers test compares a literal, an owned file and a signed-in page are `no-store`, and
-`gochat` refuses a stray argument and a token with a control character.
+statement a password or a reset link allows names the value its request loaded. The 500
+is a page that needs no session. An adapter's error carries the status code, never the
+URL or what the other side wrote, and no log line names a person. The room map's socket
+is counted before the hijack, reads the connection itself, and is closed on `pagehide`;
+its recipe checks the `wasm-opt` that `tinygo env WASMOPT` names. Every submit button
+inside a fragment carries an id, the headers test compares a literal, an owned file and a
+signed-in page are `no-store`, and `gochat` refuses a stray argument and a token with a
+control character.
+
+**A fourth sync** follows the baseline's `26f8f08` and `c512e31`, what that run's fourth
+pass corrected. `serverError` makes no exception for a client that left: an earlier sync
+had written one, and the baseline took it back. An adapter's transport error keeps its
+type and none of its text, a context that ended comes back as itself, and an answer that
+does not decode is a fixed sentence. A urlencoded post to the upload route keeps its 413
+and its 400. The server refuses a stray argument, and `gochat` trims and checks a token
+from the environment as it does one from a file. A new token's secret is in the answer to
+the request that made it, never in the session. The migration walk reads `UPDATE OR
+REPLACE`.
 
 **One rule is not followed, and not waived:** the baseline now keeps a blob for what fits
-its blanket 1 MiB cap, and attachments here are blobs under a 3 MiB cap. The README
-records it under *Baseline deviations*; lowering the cap, moving the bytes to a
-directory, or a waiver is Andy's to choose.
+its blanket 1 MiB cap, and attachments here are blobs under a 3 MiB cap. **And two rules
+do not compose on one request:** making a token answers its POST with the page, where
+every plain form answers 303, because the secret is shown in that answer and nowhere
+after it. The README records both under *Baseline deviations*; lowering the cap, moving
+the bytes to a directory, or a waiver is Andy's to choose, and so is which of the two
+rules gives way.
 
 `./verify.sh` exits 0 against `39ad142` (94 steps).
 
@@ -95,8 +108,9 @@ directory, or a waiver is Andy's to choose.
 4. `go list -deps` on each adapter — `./internal/chatapi` and
    `./internal/anthropic` — names `internal/domain` and nothing else of ours: an
    adapter never learns about the application it serves.
-5. `make ci` is green: the same gates against `git archive HEAD`, so nothing missing
-   from `git add` can pass.
+5. `make ci` is green, its `go version` line at the baseline's pin or a later patch of
+   it: the same gates against `git archive HEAD`, so nothing missing from `git add` can
+   pass.
 
 ## Reproduction protocol
 
