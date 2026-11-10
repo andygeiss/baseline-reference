@@ -910,7 +910,7 @@ set +e
 set -e
 [ "$CODE" = "2" ] || fail "an unknown command exited $CODE, want 2"
 set +e
-GOCHAT_TOKEN_FILE="" CHAT_TOKEN="gochat_nope" "$WORKDIR/gochat" rooms >/dev/null 2>&1; CODE=$?
+GOCHAT_TOKEN_FILE="" GOCHAT_TOKEN="gochat_nope" "$WORKDIR/gochat" rooms >/dev/null 2>&1; CODE=$?
 set -e
 [ "$CODE" = "1" ] || fail "a refused token exited $CODE, want 1"
 
@@ -963,6 +963,21 @@ set +e
 GOCHAT_TOKEN_FILE="$WORKDIR/token-two-lines" "$WORKDIR/gochat" whoami >/dev/null 2>"$WORKDIR/token.err"; CODE=$?
 set -e
 [ "$CODE" = "1" ] || fail "a two-line token file exited $CODE, want 1"
+grep -q 'control character' "$WORKDIR/token.err" || fail "the refusal does not say what is wrong: $(cat "$WORKDIR/token.err")"
+grep -q "$SECRET\|gochat_pasted_twice" "$WORKDIR/token.err" && fail "the refusal prints the token"
+
+step "smoke: a token from the environment is trimmed and checked like one from a file"
+# patterns/go-cli.md, Config precedence: both sources reach one trim and one
+# check. A variable set from a file can carry the file's line break along; a
+# second line in it is refused, as it is in a file.
+NL='
+'
+[ "$(GOCHAT_TOKEN_FILE="" GOCHAT_TOKEN="$SECRET$NL" "$WORKDIR/gochat" whoami 2>"$WORKDIR/token.err")" = "Ada" ] \
+    || fail "a token variable ending in a line break did not sign in: $(cat "$WORKDIR/token.err")"
+set +e
+GOCHAT_TOKEN_FILE="" GOCHAT_TOKEN="$SECRET${NL}gochat_pasted_twice" "$WORKDIR/gochat" whoami >/dev/null 2>"$WORKDIR/token.err"; CODE=$?
+set -e
+[ "$CODE" = "1" ] || fail "a two-line token variable exited $CODE, want 1"
 grep -q 'control character' "$WORKDIR/token.err" || fail "the refusal does not say what is wrong: $(cat "$WORKDIR/token.err")"
 grep -q "$SECRET\|gochat_pasted_twice" "$WORKDIR/token.err" && fail "the refusal prints the token"
 unset GOCHAT_ADDR GOCHAT_TOKEN_FILE

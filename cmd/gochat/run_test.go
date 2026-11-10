@@ -464,17 +464,24 @@ func TestATokenWithAControlCharacterIsRefused(t *testing.T) {
 	}
 }
 
-// A token file's one trailing line break is not a control character in the
-// token: every editor leaves one.
-func TestATokenFileMayEndInALineBreak(t *testing.T) {
-	t.Parallel()
-	for _, ending := range []string{"\n", "\r\n", ""} {
+// A token's one trailing line break is not a control character in the token:
+// every editor leaves one in a file, and a variable set from that file can
+// carry it along. Both sources reach the same trim and the same check
+// (patterns/go-cli.md, Config precedence).
+func TestATokenMayEndInALineBreak(t *testing.T) {
+	// No t.Parallel: t.Setenv below forbids it.
+	for _, ending := range []string{"\n", "\r\n", " ", ""} {
 		path := filepath.Join(t.TempDir(), "token")
 		if err := os.WriteFile(path, []byte("gochat_token"+ending), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		t.Setenv("GOCHAT_TOKEN", "gochat_not_this_one")
 		if got, err := readToken(path); err != nil || string(got) != "gochat_token" {
-			t.Errorf("readToken with ending %q = %q, %v; want gochat_token", ending, string(got), err)
+			t.Errorf("readToken from a file ending %q = %q, %v; want gochat_token", ending, string(got), err)
+		}
+		t.Setenv("GOCHAT_TOKEN", "gochat_token"+ending)
+		if got, err := readToken(""); err != nil || string(got) != "gochat_token" {
+			t.Errorf("readToken from a variable ending %q = %q, %v; want gochat_token", ending, string(got), err)
 		}
 	}
 }

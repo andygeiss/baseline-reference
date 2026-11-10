@@ -119,10 +119,12 @@ func (Secret) MarshalText() ([]byte, error) { return []byte("REDACTED"), nil }
 // process and into anything that dumps the environment. A flag is worse still —
 // its value shows up in ps and in shell history — so there is no -token flag.
 //
-// A token that holds a control character is refused here, by where it came
-// from and never by what it is. A second line in the file is the usual way to
-// get one, and net/http then refuses the Authorization header on every request
-// with an error that names a header and no file (patterns/go-cli.md).
+// Both sources reach one trim and one check. A file usually ends in a newline,
+// and a variable set from one can carry it along. A token that still holds a
+// control character is refused here, by where it came from and never by what
+// it is. A second line in the file is the usual way to get one, and net/http
+// then refuses the Authorization header on every request with an error that
+// names a header and no file (patterns/go-cli.md, Config precedence).
 func readToken(path string) (Secret, error) {
 	from, token := "$GOCHAT_TOKEN", os.Getenv("GOCHAT_TOKEN")
 	if path != "" {
@@ -130,8 +132,9 @@ func readToken(path string) (Secret, error) {
 		if err != nil {
 			return "", fmt.Errorf("read token file: %w", err)
 		}
-		from, token = "the token file "+path, strings.TrimSpace(string(b)) // the file usually ends in a newline
+		from, token = "the token file "+path, string(b)
 	}
+	token = strings.TrimSpace(token)
 	if strings.ContainsFunc(token, unicode.IsControl) {
 		return "", fmt.Errorf("%s holds a control character: a token is one line, with nothing after it", from)
 	}
