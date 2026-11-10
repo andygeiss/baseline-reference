@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -123,6 +125,100 @@ func TestUploadDecidesTheTypeFromTheBytes(t *testing.T) {
 			t.Errorf("stored %d files, want none", len(files))
 		}
 	})
+}
+
+// TestTheUploadRouteKeepsItsRefusals: the route that takes a file is posted to
+// both ways — multipart with a file, urlencoded without — and a body it cannot
+// take is refused the same either way: 413 over the route's cap, 400 when it
+// does not parse. For a urlencoded body ParseMultipartForm drops the error its
+// own ParseForm hit and answers "not multipart", so read alone it posted what
+// it had: nothing past the cap, a 422 for the missing message; and the pairs
+// that did parse, a 303 (patterns/go-file-uploads.md, Taking the bytes).
+func TestTheUploadRouteKeepsItsRefusals(t *testing.T) {
+	t.Parallel()
+
+	multipartBody := func(t *testing.T, fileBytes int) (contentType string, body []byte) {
+		t.Helper()
+		var buf bytes.Buffer
+		w := multipart.NewWriter(&buf)
+		if err := w.WriteField("body", "look at this"); err != nil {
+			t.Fatal(err)
+		}
+		part, err := w.CreateFormFile("file", "shot.png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		big := make([]byte, fileBytes)
+		copy(big, pngBytes)
+		if _, err := part.Write(big); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return w.FormDataContentType(), buf.Bytes()
+	}
+	const urlencoded = "application/x-www-form-urlencoded"
+
+	for name, tt := range map[string]struct {
+		body func(*testing.T) (contentType string, body []byte)
+		want int
+	}{
+		"multipart, over the route's cap": {
+			body: func(t *testing.T) (string, []byte) { return multipartBody(t, uploadLimit) },
+			want: http.StatusRequestEntityTooLarge,
+		},
+		"urlencoded, over the route's cap": {
+			body: func(*testing.T) (string, []byte) {
+				return urlencoded, []byte("body=" + strings.Repeat("a", uploadLimit))
+			},
+			want: http.StatusRequestEntityTooLarge,
+		},
+		"urlencoded, and it does not parse": {
+			body: func(*testing.T) (string, []byte) { return urlencoded, []byte("body=hello&more=%zz") },
+			want: http.StatusBadRequest,
+		},
+		"multipart, and it breaks off": {
+			body: func(t *testing.T) (string, []byte) {
+				contentType, body := multipartBody(t, len(pngBytes))
+				return contentType, body[:len(body)/2]
+			},
+			want: http.StatusBadRequest,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ta := newTestApp(t)
+			ta.signUp(t, "Ada", "correct horse battery")
+			slug := ta.makeRoom(t, "General")
+			contentType, body := tt.body(t)
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				ta.server.URL+"/rooms/"+slug+"/messages", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", contentType)
+			res, err := ta.client.Do(req)
+			if err != nil {
+				t.Fatalf("posting: %v", err)
+			}
+			res.Body.Close()
+
+			if res.StatusCode != tt.want {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.want)
+			}
+			ta.messages.mu.Lock()
+			posted := len(ta.messages.msgs)
+			ta.messages.mu.Unlock()
+			if posted != 0 {
+				t.Errorf("%d message(s) were posted from a body the route refused", posted)
+			}
+			if n := len(ta.attachments.all()); n != 0 {
+				t.Errorf("%d file(s) were stored from a body the route refused", n)
+			}
+		})
+	}
 }
 
 func TestUploadedNameNeverBecomesAPath(t *testing.T) {

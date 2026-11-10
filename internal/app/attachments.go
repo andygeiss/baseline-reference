@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -23,15 +24,17 @@ const multipartMemory = domain.MaxAttachmentBytes
 
 // parseUpload reads a body that may carry a file.
 //
-// ParseForm is not enough here. On a multipart request it leaves PostForm
-// non-nil and empty, and every PostFormValue after it then answers "" — the
-// field is there on the wire and gone in Go, with no error anywhere.
+// ParseForm first: for a urlencoded body ParseMultipartForm drops the error
+// its own ParseForm hit — the route's cap, a pair that does not parse — and
+// answers ErrNotMultipart, so read alone it posted whatever had parsed.
+//
+// Then ParseMultipartForm, because ParseForm is not enough here. On a
+// multipart request it leaves PostForm non-nil and empty, and every
+// PostFormValue after it then answers "" — the field is there on the wire and
+// gone in Go, with no error anywhere. Its ErrNotMultipart is a plain form
+// post: no file to read (patterns/go-file-uploads.md, Taking the bytes).
 func (a *App) parseUpload(w http.ResponseWriter, r *http.Request) bool {
-	err := r.ParseMultipartForm(multipartMemory)
-	if errors.Is(err, http.ErrNotMultipart) {
-		return a.parseForm(w, r) // a plain form post: no file to read
-	}
-	if err != nil {
+	if err := cmp.Or(r.ParseForm(), r.ParseMultipartForm(multipartMemory)); err != nil && !errors.Is(err, http.ErrNotMultipart) {
 		status := http.StatusBadRequest // malformed body — not a validation failure
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			status = http.StatusRequestEntityTooLarge // the route's own cap, in middleware.go
