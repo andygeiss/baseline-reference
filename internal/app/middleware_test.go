@@ -2,6 +2,7 @@ package app
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,7 +30,9 @@ func TestSecureHeaders(t *testing.T) {
 	// Unlike the loop above, these are not tautologies: comparing the header
 	// against the csp constant proves only that it was sent. Each directive
 	// below is one a future "tidy the policy" edit would drop without knowing
-	// the cost — starting with the mask icons.
+	// the cost — starting with the mask icons — or widen without knowing it:
+	// each is matched whole, so "img-src 'self' data: https:" fails this too.
+	directives := strings.Split(csp, "; ")
 	for _, directive := range []string{
 		"img-src 'self' data:",
 		"frame-ancestors 'none'",
@@ -37,8 +40,8 @@ func TestSecureHeaders(t *testing.T) {
 		"form-action 'self'",
 		"script-src 'self' 'wasm-unsafe-eval'",
 	} {
-		if !strings.Contains(csp, directive) {
-			t.Errorf("CSP lost %q", directive)
+		if !slices.Contains(directives, directive) {
+			t.Errorf("CSP has no directive that is exactly %q", directive)
 		}
 	}
 	// The two keywords that undo the policy, matched with both quotes and
