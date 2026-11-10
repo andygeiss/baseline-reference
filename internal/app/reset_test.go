@@ -164,6 +164,43 @@ func TestResetLinkWorksOnceAndEndsOtherSessions(t *testing.T) {
 	})
 }
 
+// TestAResetDeletesTheUsersMachineTokens: a reset is what somebody does when
+// another person may know the password, and that person may have made a token
+// with it. The reset ends the token with the sessions
+// (patterns/go-auth-sessions.md, Machine tokens rule 5). The store's own test
+// has the other half: nobody else's token goes, and a dead link deletes none.
+func TestAResetDeletesTheUsersMachineTokens(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+
+	ta.signUp(t, "Ada", "correct horse battery")
+	if res, _ := ta.do(t, http.MethodPost, "/profile/email",
+		url.Values{"email": {"ada@example.com"}}, nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("saving the address: status = %d, want 303", res.StatusCode)
+	}
+	secret := ta.makeToken(t, "laptop", "correct horse battery")
+	bearer := http.Header{"Authorization": {"Bearer " + secret}}
+
+	ta.client.Jar = emptyJar(t)
+	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, bearer); res.StatusCode != http.StatusOK {
+		t.Fatalf("the token before the reset: status = %d, want 200", res.StatusCode)
+	}
+	if res, _ := ta.do(t, http.MethodPost, "/reset", url.Values{"name": {"Ada"}}, nil); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("asking for a link: status = %d, want 303", res.StatusCode)
+	}
+	res, _ := ta.do(t, http.MethodPost, "/reset/confirm", url.Values{
+		"token": {tokenFromMail(t, ta)}, "password": {"a whole new password"},
+	}, nil)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("using the link: status = %d, want 303", res.StatusCode)
+	}
+
+	ta.client.Jar = emptyJar(t)
+	if res, _ := ta.do(t, http.MethodGet, "/rooms", nil, bearer); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a token made under the old password answered %d after the reset, want 401", res.StatusCode)
+	}
+}
+
 func TestResetRefusesAPasswordThatIsTooShort(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

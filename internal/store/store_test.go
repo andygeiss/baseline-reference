@@ -318,6 +318,59 @@ func addReset(t *testing.T, db *store.DB, hash, userID string, lifetime time.Dur
 func TestRedeem(t *testing.T) {
 	t.Parallel()
 
+	// Machine tokens rule 5: whoever knew the old password may have made a
+	// token, and the reset is what ends it.
+	t.Run("it deletes the user's machine tokens, and nobody else's", func(t *testing.T) {
+		db := newTestDB(t)
+		ada, bob := addUser(t, db, "Ada"), addUser(t, db, "Bob")
+		tokens := store.NewTokens(db)
+		for _, tok := range []domain.Token{
+			{ID: "ada-laptop", UserID: ada.ID, Hash: "ada-hash-1", Label: "laptop"},
+			{ID: "ada-script", UserID: ada.ID, Hash: "ada-hash-2", Label: "script"},
+			{ID: "bob-laptop", UserID: bob.ID, Hash: "bob-hash", Label: "laptop"},
+		} {
+			if err := tokens.Add(t.Context(), &tok, 0); err != nil {
+				t.Fatalf("adding token %s: %v", tok.ID, err)
+			}
+		}
+		addReset(t, db, "link", ada.ID, time.Hour)
+
+		if _, err := store.NewResets(db).Redeem(t.Context(), "link", "new-hash", time.Now().UTC()); err != nil {
+			t.Fatalf("Redeem: %v", err)
+		}
+
+		for _, hash := range []string{"ada-hash-1", "ada-hash-2"} {
+			if _, err := tokens.Owner(t.Context(), hash); !errors.Is(err, domain.ErrNotFound) {
+				t.Errorf("Owner(%s) after the reset = %v, want ErrNotFound: the token outlived the password", hash, err)
+			}
+		}
+		if left, err := tokens.ByUser(t.Context(), ada.ID); err != nil || len(left) != 0 {
+			t.Errorf("Ada still lists %d tokens (%v), want none", len(left), err)
+		}
+		if u, err := tokens.Owner(t.Context(), "bob-hash"); err != nil || u.ID != bob.ID {
+			t.Errorf("Owner(bob-hash) = %q, %v; want Bob: somebody else's reset deleted his token", u.ID, err)
+		}
+	})
+
+	t.Run("a link that is refused deletes no token", func(t *testing.T) {
+		db := newTestDB(t)
+		ada := addUser(t, db, "Ada")
+		tokens := store.NewTokens(db)
+		if err := tokens.Add(t.Context(), &domain.Token{ID: "ada-laptop", UserID: ada.ID, Hash: "ada-hash", Label: "laptop"}, 0); err != nil {
+			t.Fatalf("adding a token: %v", err)
+		}
+		addReset(t, db, "old", ada.ID, -time.Minute)
+
+		for _, link := range []string{"old", "guessed"} {
+			if _, err := store.NewResets(db).Redeem(t.Context(), link, "x", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
+				t.Fatalf("Redeem(%s) = %v, want ErrNotFound", link, err)
+			}
+		}
+		if u, err := tokens.Owner(t.Context(), "ada-hash"); err != nil || u.ID != ada.ID {
+			t.Errorf("Owner(ada-hash) = %q, %v; want Ada: a dead link deleted her token", u.ID, err)
+		}
+	})
+
 	t.Run("it sets the password, moves the counter, and returns the row as it now stands", func(t *testing.T) {
 		db := newTestDB(t)
 		ada := addUser(t, db, "Ada")

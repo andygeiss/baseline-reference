@@ -1036,6 +1036,16 @@ step "smoke: a reset link is delivered, works once, and ends the other sessions"
 # so the browser every gate above uses keeps its session.
 curl -fsS -c "$JAR2" -b "$JAR2" -o /dev/null -X POST "localhost:$PORT/profile/email" \
     -d "email=intruder@example.com"
+# This account also holds a machine token, made under the password the reset is
+# about to replace. The step after this one reads what became of it.
+CODE="$(curl -s -c "$JAR2" -b "$JAR2" -o "$WORKDIR/token-before-reset.html" -w '%{http_code}' \
+    -X POST "localhost:$PORT/profile/tokens" \
+    -H 'X-Forwarded-For: 198.51.100.23' -d "label=before-the-reset&password=correct-horse")"
+[ "$CODE" = "200" ] || fail "the second user making a token: got $CODE, want 200"
+OLDSECRET="$(grep -o 'gochat_[A-Za-z0-9_-]*' "$WORKDIR/token-before-reset.html" | head -1)"
+[ -n "$OLDSECRET" ] || fail "the answer to the second user's token showed no secret"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $OLDSECRET" "localhost:$PORT/rooms")"
+[ "$CODE" = "200" ] || fail "the second user's token before the reset: got $CODE, want 200"
 JAR3="$WORKDIR/cookies-reset"
 # Host is whatever the client sent. A link built from it mails a working token
 # to whoever asked for one — the tier-1 rule this gate exists for.
@@ -1110,13 +1120,20 @@ CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
 [ "$CODE" = "200" ] || fail "the older link ended the session the reset started: got $CODE, want 200"
 
+step "smoke: a password reset deletes the user's machine tokens"
+# patterns/go-auth-sessions.md, Machine tokens rule 5. The token was made under
+# the password the reset replaced, and whoever knew that password may hold it:
+# the reset's transaction deletes it with the links.
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $OLDSECRET" "localhost:$PORT/rooms")"
+[ "$CODE" = "401" ] || fail "a token made before the reset still answers $CODE, want 401"
+
 step "smoke: a token creation and an account delete held open across the reset change no row"
 # patterns/go-auth-sessions.md rule 1: every statement a password allowed names
 # the password counter its request loaded, and no row changed is a refusal. Both
 # requests passed the sign-in check before the reset and checked the old
 # password against the row they had loaded; by user id alone the first left
-# with a token no reset ends, and the second erased the account the reset was
-# made to keep.
+# with a token made after the reset that deletes them, and the second erased
+# the account the reset was made to keep.
 wait "$HELDTOKENPID" || fail "the held-open token request did not finish"
 wait "$HELDDELETEPID" || fail "the held-open delete request did not finish"
 CODE="$(cat "$WORKDIR/held-token.code")"

@@ -143,7 +143,7 @@ missing predicate and a forgotten one look identical in a diff.
 
 | Table | Owner | What that means here |
 |---|---|---|
-| `tokens` | whoever created it | Every query names the actor. `ByUser` lists only theirs; `Delete` carries `user_id` in the `WHERE` clause and checks how many rows it hit, so guessing somebody else's token ID revokes nothing. `TestRevokingSomebodyElsesTokenDoesNothing` is that check. |
+| `tokens` | whoever created it | Every query names the actor. `ByUser` lists only theirs; `Delete` carries `user_id` in the `WHERE` clause and checks how many rows it hit, so guessing somebody else's token ID revokes nothing. `TestRevokingSomebodyElsesTokenDoesNothing` is that check. A password reset deletes its owner's tokens in the transaction that writes the new hash (`TestRedeem`). |
 | `users` | itself | `/profile` reads the signed-in user from the session. No route takes a user ID, so there is nothing to guess. |
 | `rooms` | **nobody — shared on purpose** | This is a group chat: every signed-in member sees every room and may post in any of them. `All` and `BySlug` take no actor because there is no owner to match, not because one was forgotten. |
 | `messages` | **nobody — shared on purpose** | A message belongs to its room, and rooms are shared. Nobody edits a message and no route deletes one, so the only write from a request is an append that stamps its author from the credential rather than from the request. The one delete is the cascade when its author's account goes — see *What a delete means, table by table* below. |

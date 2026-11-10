@@ -136,6 +136,14 @@ func (s *Resets) Redeem(ctx context.Context, hash, passwordHash string, now time
 	if _, err := tx.ExecContext(ctx, `DELETE FROM resets WHERE user_id = ?`, userID); err != nil {
 		return domain.User{}, fmt.Errorf("deleting the reset links of user %s: %w", userID, err)
 	}
+	// The user's machine tokens go in this transaction too
+	// (patterns/go-auth-sessions.md, Machine tokens rule 5). A reset is what
+	// somebody does when another person may know the password, and a token
+	// made under that password would otherwise go on working: nothing on the
+	// way to a new password shows the person that it exists.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ?`, userID); err != nil {
+		return domain.User{}, fmt.Errorf("deleting the tokens of user %s: %w", userID, err)
+	}
 	var u domain.User
 	if err := tx.QueryRowContext(ctx, userColumns+` WHERE id = ?`, userID).
 		Scan(&u.ID, &u.Name, &u.PasswordHash, &u.Email, &u.PasswordVersion); err != nil {

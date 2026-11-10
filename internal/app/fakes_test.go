@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -329,8 +330,11 @@ func (nopCloser) Close() error { return nil }
 // fakeResets holds outstanding links and the messages that carry them, in one
 // place, because the store writes both in one transaction.
 type fakeResets struct {
-	mu     sync.Mutex
-	users  *fakeUsers
+	mu    sync.Mutex
+	users *fakeUsers
+	// tokens is the store a reset deletes from, as the real one does in its
+	// transaction (patterns/go-auth-sessions.md, Machine tokens rule 5).
+	tokens *fakeTokens
 	links  map[string]domain.Reset
 	sent   []domain.Mail
 	addErr error
@@ -388,6 +392,7 @@ func (f *fakeResets) Redeem(_ context.Context, hash, passwordHash string, now ti
 	user := f.users.resetPassword(res.UserID, passwordHash)
 	f.users.mu.Unlock()
 	f.forget(res.UserID)
+	f.tokens.forget(res.UserID)
 	return user, nil
 }
 
@@ -425,6 +430,13 @@ func (f *fakeTokens) hang() {
 }
 
 func newFakeTokens(users *fakeUsers) *fakeTokens { return &fakeTokens{users: users} }
+
+// forget deletes every token a user has, as a password reset does.
+func (f *fakeTokens) forget(userID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tokens = slices.DeleteFunc(f.tokens, func(t domain.Token) bool { return t.UserID == userID })
+}
 
 // Add names the owner's password counter, like the store: a fake that inserted
 // by user id alone would let a token creation held open across a reset go
