@@ -26,7 +26,10 @@
     {{with .User.Name}}<span class="site-who">{{.}}</span>{{end}}
   </header>
   <main>
-    {{with .Flash}}<p class="flash" role="status">{{.}}</p>{{end}}
+    {{/* alert, not status: a boosted swap inserts this region already
+         filled, and only the alert role is announced that way
+         (patterns/go-forms-validation.md). */}}
+    {{with .Flash}}<p class="flash" role="alert">{{.}}</p>{{end}}
     {{template "main" .}}
   </main>
   <footer class="site-footer">

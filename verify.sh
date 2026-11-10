@@ -555,6 +555,36 @@ wait "$SLOWPID"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: session=$SLOWTOKEN" "localhost:$PORT/rooms")"
 [ "$CODE" = "303" ] || fail "the slow request saved the logged-out session again: the old cookie got $CODE, want 303"
 
+step "smoke: a client that hangs up mid-request is not logged as a server error"
+# patterns/go-errors-logging.md rule 4: a client that goes away cancels its
+# request's context, and the session commit under it then fails. That reached
+# serverError and was an ERROR line for every upload somebody abandoned. It is a
+# debug line, and nothing is written. A person and an address of her own again.
+GONEJAR="$WORKDIR/cookies-gone"
+curl -s -c "$GONEJAR" -b "$GONEJAR" -o /dev/null -X POST "localhost:$PORT/register" \
+    -H 'X-Forwarded-For: 198.51.100.16' -d "name=Leaver&password=correct-horse&invite=$INVITE"
+GONETOKEN="$(awk '/session/ {print $7}' "$GONEJAR" | tail -1)"
+[ -n "$GONETOKEN" ] || fail "no session to abandon a request with"
+ERRORS_BEFORE="$(grep -c 'level=ERROR' "$WORKDIR/server.log" || true)"
+( printf 'name='; sleep 2 ) | curl -s -o /dev/null -T - -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' -H "Cookie: session=$GONETOKEN" \
+    "localhost:$PORT/rooms" &
+GONEPID=$!
+sleep 0.4
+kill "$GONEPID" 2>/dev/null || fail "the slow request ended before it could be abandoned"
+wait "$GONEPID" 2>/dev/null || true
+# The server sees the hang-up on its next read; the request is logged when its
+# handler returns.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    grep -q 'msg=request method=POST path=/rooms status=400' "$WORKDIR/server.log" && break
+    sleep 0.2
+done
+grep -q 'msg=request method=POST path=/rooms status=400' "$WORKDIR/server.log" \
+    || fail "the abandoned request never ended on the server"
+ERRORS_AFTER="$(grep -c 'level=ERROR' "$WORKDIR/server.log" || true)"
+[ "$ERRORS_AFTER" = "$ERRORS_BEFORE" ] \
+    || fail "a client that hung up was logged as an error: $(grep 'level=ERROR' "$WORKDIR/server.log" | tail -1)"
+
 step "smoke: a wrong password and an unknown name answer the same way"
 curl -s -o "$WORKDIR/wrongpw.html" -X POST "localhost:$PORT/login" \
     -d "name=Ada&password=wrong-horse"

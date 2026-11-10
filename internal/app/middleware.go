@@ -260,7 +260,9 @@ func (a *App) recoverPanic(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				a.logger.Error("panic", "path", r.URL.Path, "panic", rec)
-				http.Error(w, "Sorry, something went wrong.", http.StatusInternalServerError)
+				// The same page serverError writes. This runs outside the
+				// session middleware, which is why that page reads no session.
+				a.write500(w)
 			}
 		}()
 		next.ServeHTTP(w, r)

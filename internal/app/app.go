@@ -233,12 +233,17 @@ type base struct {
 
 // newBase reads the signed-in user and takes the flash message off the session
 // — a flash is shown once, so reading it removes it.
+//
+// Not for a fragment: a fragment has no layout to show the flash in, so one
+// that popped it — a poll landing between a redirect and the page it leads to —
+// would spend the message where nobody sees it. It is left for the page
+// (patterns/go-forms-validation.md, Flash messages).
 func (a *App) newBase(r *http.Request, nav string) base {
-	return base{
-		User:  userFrom(r.Context()),
-		Flash: a.sessions.PopString(r.Context(), "flash"),
-		Nav:   nav,
+	b := base{User: userFrom(r.Context()), Nav: nav}
+	if !isFragment(r) {
+		b.Flash = a.sessions.PopString(r.Context(), "flash")
 	}
+	return b
 }
 
 // flash leaves a message for the page the browser lands on next. It is how a
@@ -295,9 +300,56 @@ func (a *App) redirect(w http.ResponseWriter, r *http.Request, to string) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
+// serverError logs the cause and answers with the 500 page, which says nothing
+// about it.
+//
+// A request whose own context is cancelled is the exception: the client left,
+// and every store call under that context then fails. That is nobody's fault to
+// look into and there is nobody to answer, so it is a debug line and nothing is
+// written. The test is the request's context, not the error's kind — a budget
+// that ran out under a reader who is still waiting is a fault like any other
+// (patterns/go-errors-logging.md rule 4).
 func (a *App) serverError(w http.ResponseWriter, r *http.Request, err error) {
+	if a.clientLeft(r, err) {
+		return
+	}
 	a.logger.Error("server error", "method", r.Method, "path", r.URL.Path, "err", err)
-	http.Error(w, "Sorry, something went wrong.", http.StatusInternalServerError)
+	a.write500(w)
+}
+
+// clientLeft reports whether the request's own context is cancelled, and logs
+// it at debug when it is. Every 500 this app writes asks it first.
+func (a *App) clientLeft(r *http.Request, err error) bool {
+	if r.Context().Err() == nil {
+		return false
+	}
+	a.logger.Debug("client left", "method", r.Method, "path", r.URL.Path, "err", err)
+	return true
+}
+
+// errorPage is the 500 page's data. Its base is the zero value, never
+// newBase(r): this page is also written where no session was loaded — a panic
+// caught outside the session middleware, a session store that failed — and
+// scs panics when asked for a flash there. A zero base is a page with nobody
+// signed in and nothing to say but the apology, which is all a 500 may say
+// (patterns/go-forms-validation.md, Flash messages rule 2).
+type errorPage struct {
+	base
+}
+
+// write500 writes the 500 page. It reads nothing from the request, and if the
+// page itself cannot be rendered it falls back to one line of text rather than
+// to serverError, which would call it again.
+func (a *App) write500(w http.ResponseWriter) {
+	var buf bytes.Buffer
+	ts, ok := a.templates["error.html"]
+	if !ok || ts.ExecuteTemplate(&buf, "layout.html", errorPage{}) != nil {
+		http.Error(w, "Sorry, something went wrong.", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	buf.WriteTo(w)
 }
 
 func (a *App) clientError(w http.ResponseWriter, r *http.Request, status int) {
