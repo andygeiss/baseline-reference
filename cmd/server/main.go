@@ -235,21 +235,32 @@ func snapshot(ctx context.Context, logger *slog.Logger, db *store.DB, dbPath str
 		// directory: every other path may be read-only, and VACUUM INTO
 		// resolves a relative path against the process's working directory,
 		// not the database's.
-		dst := filepath.Join(filepath.Dir(dbPath), "snapshot-"+time.Now().UTC().Format("2006-01-02")+".db")
-		if !filepath.IsAbs(dst) {
-			dst = "./" + dst // a leading "file:" would make it a URI (go-sqlite.md rule 10)
+		dir := filepath.Dir(dbPath)
+		dst := filepath.Join(dir, "snapshot-"+time.Now().UTC().Format(time.DateOnly)+".db")
+		// One fixed temporary name, never dst itself: VACUUM INTO refuses a
+		// file that exists, which is every start after the day's first, and a
+		// stop mid-copy would leave half a database under the name a restore
+		// reads. Fixed, so that a copy a kill left behind is cleared by the
+		// next run whatever day that is.
+		tmp := filepath.Join(dir, "snapshot.tmp")
+		if !filepath.IsAbs(tmp) {
+			tmp = "./" + tmp // a leading "file:" would make it a URI (go-sqlite.md rule 10)
 		}
-		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logger.Error("clearing yesterday's snapshot", "path", dst, "err", err)
+		if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			logger.Error("clearing an unfinished snapshot", "path", tmp, "err", err)
 			return
 		}
 		// The read pool, never the write pool: this statement only reads, so
 		// running it on the single write connection would starve writes for its
 		// whole duration.
-		if _, err := db.Read.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
+		if _, err := db.Read.ExecContext(ctx, "VACUUM INTO ?", tmp); err != nil {
 			if !errors.Is(err, context.Canceled) { // shutdown mid-snapshot is not a fault
-				logger.Error("writing snapshot", "path", dst, "err", err)
+				logger.Error("writing snapshot", "path", tmp, "err", err)
 			}
+			return
+		}
+		if err := os.Rename(tmp, dst); err != nil {
+			logger.Error("naming the snapshot", "path", dst, "err", err)
 			return
 		}
 		logger.Info("snapshot written", "path", dst)
