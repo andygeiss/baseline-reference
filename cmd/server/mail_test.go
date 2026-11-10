@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -51,6 +52,16 @@ func outboxFixture(t *testing.T) (*store.Outbox, domain.Mail) {
 		t.Fatalf("opening the database: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// Registered after the Close cleanup, so LIFO runs this one first: a test
+	// that leaves a pool in use fails, as the store's own tests do
+	// (patterns/go-sqlite.md rule 8). Each test here calls this itself.
+	t.Cleanup(func() {
+		for name, pool := range map[string]*sql.DB{"read": db.Read, "write": db.Write} {
+			if n := pool.Stats().InUse; n != 0 {
+				t.Errorf("%s pool: %d connection(s) still in use — a Rows or Tx was not closed", name, n)
+			}
+		}
+	})
 
 	users := store.NewUsers(db)
 	ada := &domain.User{ID: "ada", Name: "Ada", PasswordHash: "x"}

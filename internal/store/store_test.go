@@ -21,6 +21,16 @@ import (
 // newTestDB opens a real database in a temporary directory, with the production
 // pragmas and migrations. The SQL is the unit under test here, so there is
 // nothing to fake.
+//
+// It also fails the test that leaves a pool in use, and for that it has to be
+// called by the test or subtest that uses the database, never above a run of
+// subtests: a Rows leaked under a subtest's t.Context() is released soon after
+// that subtest ends, and a check registered above it mostly finds the pool idle
+// (patterns/go-sqlite.md, Testing). Measured here, under -race: the check above
+// a leaking subtest saw the leaked Rows in 7 runs of 40, and the leaking
+// subtest's own check in 40 of 40. So a test here either uses the database
+// itself, in one function with no subtests under it, or gives each subtest a
+// database of its own.
 func newTestDB(t *testing.T) *store.DB {
 	t.Helper()
 	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
@@ -29,14 +39,15 @@ func newTestDB(t *testing.T) *store.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	// Registered after the Close cleanup, so LIFO runs this one first. A leaked
-	// Rows, Stmt or Tx wedges the one-connection write pool, and neither go vet
-	// nor staticcheck reports it (patterns/go-sqlite.md rule 8).
+	// Rows or Tx wedges the one-connection write pool, and neither go vet nor
+	// staticcheck reports it (patterns/go-sqlite.md rule 8). Both pools: a
+	// SELECT runs on the read pool, so a check of the write pool alone passes
+	// a leaked Rows.
 	t.Cleanup(func() {
-		if n := db.Write.Stats().InUse; n != 0 {
-			t.Errorf("write pool: %d connection(s) still in use — a Rows, Stmt or Tx was not closed", n)
-		}
-		if n := db.Read.Stats().InUse; n != 0 {
-			t.Errorf("read pool: %d connection(s) still in use — a Rows, Stmt or Tx was not closed", n)
+		for name, pool := range map[string]*sql.DB{"read": db.Read, "write": db.Write} {
+			if n := pool.Stats().InUse; n != 0 {
+				t.Errorf("%s pool: %d connection(s) still in use — a Rows or Tx was not closed", name, n)
+			}
 		}
 	})
 	return db
@@ -71,7 +82,8 @@ func TestUsers(t *testing.T) {
 	users := store.NewUsers(db)
 	ada := addUser(t, db, "Ada")
 
-	t.Run("found by name, ignoring capitals", func(t *testing.T) {
+	// Found by name, ignoring capitals.
+	{
 		got, err := users.ByName(t.Context(), "ADA")
 		if err != nil {
 			t.Fatalf("ByName: %v", err)
@@ -79,35 +91,39 @@ func TestUsers(t *testing.T) {
 		if got.ID != ada.ID {
 			t.Errorf("ID = %q, want %q", got.ID, ada.ID)
 		}
-	})
+	}
 
-	t.Run("found by ID", func(t *testing.T) {
+	// Found by ID.
+	{
 		got, err := users.ByID(t.Context(), ada.ID)
 		if err != nil || got.Name != "Ada" {
 			t.Errorf("ByID = %v, %v; want Ada", got, err)
 		}
-	})
+	}
 
-	t.Run("an unknown name is not found", func(t *testing.T) {
+	// An unknown name is not found.
+	{
 		_, err := users.ByName(t.Context(), "Nobody")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("err = %v, want ErrNotFound", err)
 		}
-	})
+	}
 
-	t.Run("a name differing only by capitals is taken", func(t *testing.T) {
+	// A name differing only by capitals is taken.
+	{
 		err := users.Add(t.Context(), &domain.User{ID: "other", Name: "ada", PasswordHash: "hash"})
 		if !errors.Is(err, domain.ErrNameTaken) {
 			t.Errorf("err = %v, want ErrNameTaken", err)
 		}
-	})
+	}
 
-	t.Run("a new account starts its password counter at zero", func(t *testing.T) {
+	// A new account starts its password counter at zero.
+	{
 		got, err := users.ByID(t.Context(), ada.ID)
 		if err != nil || got.PasswordVersion != 0 {
 			t.Errorf("PasswordVersion = %d (%v), want 0", got.PasswordVersion, err)
 		}
-	})
+	}
 }
 
 // An error's text is logged by whoever handles it, so it names a person by id
@@ -318,28 +334,32 @@ func TestRooms(t *testing.T) {
 	rooms := store.NewRooms(db)
 	addRoom(t, db, "General")
 
-	t.Run("found by slug", func(t *testing.T) {
+	// Found by slug.
+	{
 		got, err := rooms.BySlug(t.Context(), "general")
 		if err != nil || got.Name != "General" {
 			t.Errorf("BySlug = %v, %v; want General", got, err)
 		}
-	})
+	}
 
-	t.Run("an unknown slug is not found", func(t *testing.T) {
+	// An unknown slug is not found.
+	{
 		_, err := rooms.BySlug(t.Context(), "nowhere")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("err = %v, want ErrNotFound", err)
 		}
-	})
+	}
 
-	t.Run("the same address twice is refused", func(t *testing.T) {
+	// The same address twice is refused.
+	{
 		err := rooms.Add(t.Context(), &domain.Room{ID: "other", Slug: "general", Name: "general"})
 		if !errors.Is(err, domain.ErrSlugTaken) {
 			t.Errorf("err = %v, want ErrSlugTaken", err)
 		}
-	})
+	}
 
-	t.Run("listed by name", func(t *testing.T) {
+	// Listed by name.
+	{
 		addRoom(t, db, "Announcements")
 		got, err := rooms.All(t.Context())
 		if err != nil {
@@ -348,7 +368,7 @@ func TestRooms(t *testing.T) {
 		if len(got) != 2 || got[0].Name != "Announcements" {
 			t.Errorf("All = %v, want Announcements first", got)
 		}
-	})
+	}
 }
 
 func TestMessages(t *testing.T) {
@@ -372,15 +392,17 @@ func TestMessages(t *testing.T) {
 	second := post(general, "two")
 	post(other, "elsewhere")
 
-	t.Run("the sequence comes back on the message", func(t *testing.T) {
+	// The sequence comes back on the message.
+	{
 		// The caller needs it: that number is the cursor every reader polls with.
 		if first.Seq == 0 || second.Seq <= first.Seq {
 			t.Errorf("sequences = %d, %d; want the second to be higher and neither zero",
 				first.Seq, second.Seq)
 		}
-	})
+	}
 
-	t.Run("Since brings back only what is newer, in one room", func(t *testing.T) {
+	// Since brings back only what is newer, in one room.
+	{
 		got, err := messages.Since(t.Context(), general.ID, first.Seq)
 		if err != nil {
 			t.Fatalf("Since: %v", err)
@@ -391,9 +413,10 @@ func TestMessages(t *testing.T) {
 		if got[0].Author != "Ada" {
 			t.Errorf("Author = %q, want Ada — the name is joined on read", got[0].Author)
 		}
-	})
+	}
 
-	t.Run("Page with no cursor brings back the newest, oldest first", func(t *testing.T) {
+	// Page with no cursor brings back the newest, oldest first.
+	{
 		got, err := messages.Page(t.Context(), general.ID, 0, 1)
 		if err != nil {
 			t.Fatalf("Page: %v", err)
@@ -409,9 +432,10 @@ func TestMessages(t *testing.T) {
 		if len(all) != 2 || all[0].Body != "one" {
 			t.Errorf("Page(0, 10) = %v, want both, oldest first", all)
 		}
-	})
+	}
 
-	t.Run("Page walks backwards from a cursor", func(t *testing.T) {
+	// Page walks backwards from a cursor.
+	{
 		// The keyset read: everything strictly older than the cursor, and
 		// nothing from another room.
 		got, err := messages.Page(t.Context(), general.ID, second.Seq, 10)
@@ -431,16 +455,18 @@ func TestMessages(t *testing.T) {
 		if len(none) != 0 {
 			t.Errorf("Page(first, 10) = %v, want nothing older", none)
 		}
-	})
+	}
 
-	t.Run("the time survives the round trip", func(t *testing.T) {
+	// The time survives the round trip.
+	{
 		got, _ := messages.Page(t.Context(), general.ID, 0, 1)
 		if got[0].CreatedAt.IsZero() {
 			t.Error("CreatedAt came back zero")
 		}
-	})
+	}
 
-	t.Run("a message with an attachment reads back with it", func(t *testing.T) {
+	// A message with an attachment reads back with it.
+	{
 		withFile := &domain.Message{RoomID: general.ID, AuthorID: ada.ID, Body: "look"}
 		withFile.Attachment = &domain.Attachment{
 			ID: "att-1", UploaderID: ada.ID, Name: "note.txt",
@@ -469,7 +495,7 @@ func TestMessages(t *testing.T) {
 		if len(plain) != 1 || plain[0].Attachment != nil {
 			t.Errorf("older message = %v, want no attachment", plain)
 		}
-	})
+	}
 }
 
 func TestAttachments(t *testing.T) {
@@ -493,7 +519,8 @@ func TestAttachments(t *testing.T) {
 	}
 	post("ada-file", ada.ID)
 
-	t.Run("Open brings back the bytes and the sniffed type", func(t *testing.T) {
+	// Open brings back the bytes and the sniffed type.
+	{
 		file, content, err := attachments.Open(t.Context(), "ada-file")
 		if err != nil {
 			t.Fatalf("Open: %v", err)
@@ -509,15 +536,17 @@ func TestAttachments(t *testing.T) {
 		if string(bs) != "\x89PNG" {
 			t.Errorf("bytes = %q, want the bytes that went in", bs)
 		}
-	})
+	}
 
-	t.Run("Open answers ErrNotFound for a file that is not there", func(t *testing.T) {
+	// Open answers ErrNotFound for a file that is not there.
+	{
 		if _, _, err := attachments.Open(t.Context(), "nobody"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("Open(nobody) = %v, want ErrNotFound", err)
 		}
-	})
+	}
 
-	t.Run("somebody else's file cannot be deleted, and answers like one that is gone", func(t *testing.T) {
+	// Somebody else's file cannot be deleted, and answers like one that is gone.
+	{
 		// The two-user test at the store: the ownership predicate is in the
 		// WHERE clause, so Bob's delete matches no row and says so exactly the
 		// way a missing file does.
@@ -535,7 +564,7 @@ func TestAttachments(t *testing.T) {
 		if _, _, err := attachments.Open(t.Context(), "ada-file"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("the file after Ada's delete = %v, want ErrNotFound", err)
 		}
-	})
+	}
 }
 
 func TestResetsAndOutbox(t *testing.T) {
@@ -551,7 +580,8 @@ func TestResetsAndOutbox(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	t.Run("the link and its message are written together", func(t *testing.T) {
+	// The link and its message are written together.
+	{
 		queued, err := outbox.Unsent(t.Context(), 10)
 		if err != nil {
 			t.Fatalf("Unsent: %v", err)
@@ -574,9 +604,10 @@ func TestResetsAndOutbox(t *testing.T) {
 		if body := outboxBody(t, db, queued[0].ID); body != "" {
 			t.Errorf("the sent row still holds its body: %q", body)
 		}
-	})
+	}
 
-	t.Run("a message that is given up on loses its body with the last attempt", func(t *testing.T) {
+	// A message that is given up on loses its body with the last attempt.
+	{
 		res := &domain.Reset{Hash: "hash-failing", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
 		if err := resets.Add(t.Context(), res, mail); err != nil {
 			t.Fatalf("Add: %v", err)
@@ -601,9 +632,10 @@ func TestResetsAndOutbox(t *testing.T) {
 		if body := outboxBody(t, db, id); body != "" {
 			t.Errorf("the abandoned row still holds its body: %q", body)
 		}
-	})
+	}
 
-	t.Run("a header with a line break is refused before anything is written", func(t *testing.T) {
+	// A header with a line break is refused before anything is written.
+	{
 		bad := domain.Mail{To: "ada@example.com\r\nBcc: attacker@example.com", Subject: "Reset"}
 		err := resets.Add(t.Context(), &domain.Reset{
 			Hash: "hash-2", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(time.Hour),
@@ -614,7 +646,7 @@ func TestResetsAndOutbox(t *testing.T) {
 		if _, err := resets.Redeem(t.Context(), "hash-2", "x", time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("the reset was stored anyway: %v", err)
 		}
-	})
+	}
 }
 
 func TestSessions(t *testing.T) {
@@ -622,7 +654,8 @@ func TestSessions(t *testing.T) {
 	db := newTestDB(t)
 	sessions := store.NewSessions(db, 12*time.Hour)
 
-	t.Run("what is committed is found", func(t *testing.T) {
+	// What is committed is found.
+	{
 		if err := sessions.CommitCtx(t.Context(), "token-1", []byte("data"), time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("CommitCtx: %v", err)
 		}
@@ -630,9 +663,10 @@ func TestSessions(t *testing.T) {
 		if err != nil || !found || string(got) != "data" {
 			t.Errorf("FindCtx = %q, %v, %v; want data, true, nil", got, found, err)
 		}
-	})
+	}
 
-	t.Run("committing the same token again replaces it", func(t *testing.T) {
+	// Committing the same token again replaces it.
+	{
 		if err := sessions.CommitCtx(t.Context(), "token-1", []byte("newer"), time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("CommitCtx: %v", err)
 		}
@@ -640,12 +674,13 @@ func TestSessions(t *testing.T) {
 		if string(got) != "newer" {
 			t.Errorf("FindCtx = %q, want newer", got)
 		}
-	})
+	}
 
 	// This is the one that matters. scs performs no expiry check of its own, so
 	// a store that returns expired rows keeps those sessions alive and every
 	// request refreshes their idle deadline — IdleTimeout silently off.
-	t.Run("an expired session is not found, before any janitor runs", func(t *testing.T) {
+	// An expired session is not found, before any janitor runs.
+	{
 		if err := sessions.CommitCtx(t.Context(), "old", []byte("data"), time.Now().Add(-time.Second)); err != nil {
 			t.Fatalf("CommitCtx: %v", err)
 		}
@@ -653,32 +688,35 @@ func TestSessions(t *testing.T) {
 		if err != nil || found {
 			t.Errorf("FindCtx found an expired session (%v)", err)
 		}
-	})
+	}
 
-	t.Run("delete removes it", func(t *testing.T) {
+	// Delete removes it.
+	{
 		if err := sessions.DeleteCtx(t.Context(), "token-1"); err != nil {
 			t.Fatalf("DeleteCtx: %v", err)
 		}
 		if _, found, _ := sessions.FindCtx(t.Context(), "token-1"); found {
 			t.Error("the session survived a delete")
 		}
-	})
+	}
 
 	// The one a logout depends on. A request that loaded the session before the
 	// logout landed commits it when its handler returns — scs commits every
 	// loaded session under IdleTimeout — and a store that simply deleted the
 	// row would take that commit as a new session: the logged-out cookie is
 	// signed in again (patterns/go-auth-sessions.md).
-	t.Run("a deleted token cannot be committed back", func(t *testing.T) {
+	// A deleted token cannot be committed back.
+	{
 		if err := sessions.CommitCtx(t.Context(), "token-1", []byte("revived"), time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("CommitCtx: %v", err)
 		}
 		if got, found, _ := sessions.FindCtx(t.Context(), "token-1"); found {
 			t.Errorf("a commit after the delete brought the session back: %q", got)
 		}
-	})
+	}
 
-	t.Run("nor can one that was deleted before it was ever stored", func(t *testing.T) {
+	// Nor can one that was deleted before it was ever stored.
+	{
 		if err := sessions.DeleteCtx(t.Context(), "never-stored"); err != nil {
 			t.Fatalf("DeleteCtx: %v", err)
 		}
@@ -688,9 +726,10 @@ func TestSessions(t *testing.T) {
 		if _, found, _ := sessions.FindCtx(t.Context(), "never-stored"); found {
 			t.Error("a commit after the delete made a session of a deleted token")
 		}
-	})
+	}
 
-	t.Run("the janitor keeps what a delete left", func(t *testing.T) {
+	// The janitor keeps what a delete left.
+	{
 		if err := sessions.DeleteExpired(t.Context()); err != nil {
 			t.Fatalf("DeleteExpired: %v", err)
 		}
@@ -716,9 +755,10 @@ func TestSessions(t *testing.T) {
 		if want := []string{"never-stored", "old", "token-1"}; !slices.Equal(tokens, want) {
 			t.Errorf("rows left = %v, want %v", tokens, want)
 		}
-	})
+	}
 
-	t.Run("a deleted token is forgotten an hour after its lifetime has passed", func(t *testing.T) {
+	// A deleted token is forgotten an hour after its lifetime has passed.
+	{
 		brief := store.NewSessions(db, -2*time.Hour) // a lifetime that ended two hours ago
 		if err := brief.DeleteCtx(t.Context(), "gone"); err != nil {
 			t.Fatalf("DeleteCtx: %v", err)
@@ -729,10 +769,11 @@ func TestSessions(t *testing.T) {
 		if _, ok := sessionExpiry(t, db, "gone"); ok {
 			t.Error("a row is left for a token whose lifetime ended two hours ago")
 		}
-	})
+	}
 
 	// The mark the rule names: an emptied row is one whose data is NULL.
-	t.Run("a deleted token's row holds no data", func(t *testing.T) {
+	// A deleted token's row holds no data.
+	{
 		var emptied int
 		if err := db.Read.QueryRowContext(t.Context(),
 			"SELECT count(*) FROM sessions WHERE token = 'token-1' AND data IS NULL").Scan(&emptied); err != nil {
@@ -741,7 +782,7 @@ func TestSessions(t *testing.T) {
 		if emptied != 1 {
 			t.Errorf("%d emptied row(s) for the deleted token, want 1", emptied)
 		}
-	})
+	}
 }
 
 func TestTokens(t *testing.T) {
@@ -757,7 +798,8 @@ func TestTokens(t *testing.T) {
 	}
 
 	// First, while nothing has used the token: Owner must not be what marks it.
-	t.Run("Owner finds the owner and marks nothing", func(t *testing.T) {
+	// Owner finds the owner and marks nothing.
+	{
 		got, err := tokens.Owner(t.Context(), "hash-1")
 		if err != nil || got.ID != ada.ID {
 			t.Fatalf("Owner = %v, %v; want Ada", got, err)
@@ -772,23 +814,26 @@ func TestTokens(t *testing.T) {
 		if listed[0].LastUsedAt != "" {
 			t.Errorf("LastUsedAt = %q after Owner, want it untouched", listed[0].LastUsedAt)
 		}
-	})
+	}
 
-	t.Run("the hash finds its owner", func(t *testing.T) {
+	// The hash finds its owner.
+	{
 		got, err := tokens.UserByHash(t.Context(), "hash-1")
 		if err != nil || got.ID != ada.ID {
 			t.Errorf("UserByHash = %v, %v; want Ada", got, err)
 		}
-	})
+	}
 
-	t.Run("an unknown hash finds nobody", func(t *testing.T) {
+	// An unknown hash finds nobody.
+	{
 		_, err := tokens.UserByHash(t.Context(), "nothing")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("err = %v, want ErrNotFound", err)
 		}
-	})
+	}
 
-	t.Run("using it records when", func(t *testing.T) {
+	// Using it records when.
+	{
 		got, err := tokens.ByUser(t.Context(), ada.ID)
 		if err != nil || len(got) != 1 {
 			t.Fatalf("ByUser = %v, %v", got, err)
@@ -796,9 +841,10 @@ func TestTokens(t *testing.T) {
 		if got[0].LastUsedAt == "" {
 			t.Error("LastUsedAt is empty after the token was used")
 		}
-	})
+	}
 
-	t.Run("somebody else's token cannot be revoked", func(t *testing.T) {
+	// Somebody else's token cannot be revoked.
+	{
 		err := tokens.Delete(t.Context(), bob.ID, "t-1")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("err = %v, want ErrNotFound", err)
@@ -806,16 +852,17 @@ func TestTokens(t *testing.T) {
 		if _, err := tokens.UserByHash(t.Context(), "hash-1"); err != nil {
 			t.Errorf("the token stopped working after somebody else tried to revoke it: %v", err)
 		}
-	})
+	}
 
-	t.Run("its owner can", func(t *testing.T) {
+	// Its owner can.
+	{
 		if err := tokens.Delete(t.Context(), ada.ID, "t-1"); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
 		if _, err := tokens.UserByHash(t.Context(), "hash-1"); !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("err = %v, want ErrNotFound", err)
 		}
-	})
+	}
 }
 
 // TestForeignKeysAreEnforced proves the pragma is on: without it SQLite accepts
