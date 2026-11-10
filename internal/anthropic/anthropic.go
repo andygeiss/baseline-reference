@@ -139,7 +139,8 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("building the request: %w", err)
+		// No %w: its error quotes the URL (patterns/go-http-client.md).
+		return "", errors.New("building the request: the endpoint does not parse")
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("anthropic-version", apiVersion)

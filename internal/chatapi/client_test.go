@@ -110,6 +110,44 @@ func TestATransportErrorCarriesNoURL(t *testing.T) {
 	}
 }
 
+// TestABaseURLThatDoesNotParseStaysOutOfTheError: NewRequestWithContext
+// returns a *url.Error too, and its text quotes the whole URL — the address
+// somebody configured, a password in it if they put one there, and the path
+// and query this client built from its arguments. The wrap around building
+// the request carries no %w (patterns/go-http-client.md, One request, end to
+// end).
+func TestABaseURLThatDoesNotParseStaysOutOfTheError(t *testing.T) {
+	t.Parallel()
+	// A trailing space, as a pasted address has: the host no longer parses.
+	client := chatapi.New("http://ada:hunter2@chat.example.com ", "gochat_secret")
+	calls := map[string]func() error{
+		"a read": func() error {
+			_, _, err := client.Messages(t.Context(), "private-room", 12)
+			return err
+		},
+		"a write": func() error {
+			_, err := client.Post(t.Context(), "private-room", "hello")
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("a base URL that does not parse was accepted")
+			}
+			if !strings.Contains(err.Error(), "the base URL does not parse") {
+				t.Errorf("err = %v, want it to name the fix", err)
+			}
+			for _, leak := range []string{"http://", "chat.example.com", "hunter2", "/api/", "private-room", "since=12", "gochat_secret"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("the error carries %q: %v", leak, err)
+				}
+			}
+		})
+	}
+}
+
 func TestUnknownStatusIsStillAnError(t *testing.T) {
 	t.Parallel()
 	client := serverSaying(t, http.StatusTeapot, `{"error":"no coffee"}`)

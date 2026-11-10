@@ -161,10 +161,18 @@ func (m wireMessage) domain() (domain.Message, error) {
 	return domain.Message{Seq: m.Seq, Author: m.Author, Body: m.Body, CreatedAt: at}, nil
 }
 
+// errBaseURL is all a request that could not be built says. The method is a
+// constant and the context is never nil, so what failed is the URL, and
+// NewRequestWithContext's own error quotes it whole: the address somebody
+// configured, a password in it if they put one there, and the path and query
+// built from this call's arguments. So the wrap carries no %w
+// (patterns/go-http-client.md, One request, end to end).
+var errBaseURL = errors.New("chatapi: build request: the base URL does not parse")
+
 func (c *Client) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return fmt.Errorf("chatapi: build request: %w", err)
+		return errBaseURL
 	}
 	return c.do(req, out, true)
 }
@@ -176,7 +184,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("chatapi: build request: %w", err)
+		return errBaseURL
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// Never retried: posting the same message twice is worse than failing.

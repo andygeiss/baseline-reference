@@ -958,6 +958,15 @@ set -e
 [ "$CODE" = "1" ] || fail "an unreachable server exited $CODE, want 1"
 grep -q 'connection refused' "$WORKDIR/refused.err" || fail "the error lost its cause: $(cat "$WORKDIR/refused.err")"
 grep -q 'since=\|/api/\|general-chat' "$WORKDIR/refused.err" && fail "the URL reached stderr: $(cat "$WORKDIR/refused.err")"
+# An address that does not parse, pasted with a space after it: building the
+# request fails with an error that quotes the whole URL, a password in it
+# included. The tool says what is wrong and prints none of it.
+set +e
+GOCHAT_ADDR="http://ada:hunter2@127.0.0.1:1 " "$WORKDIR/gochat" read -since 7 general-chat >/dev/null 2>"$WORKDIR/refused.err"; CODE=$?
+set -e
+[ "$CODE" != "0" ] || fail "an address that does not parse exited 0"
+grep -q 'the base URL does not parse' "$WORKDIR/refused.err" || fail "the error does not say the address is wrong: $(cat "$WORKDIR/refused.err")"
+grep -q 'hunter2\|127\.0\.0\.1\|since=\|/api/\|general-chat' "$WORKDIR/refused.err" && fail "the address reached stderr: $(cat "$WORKDIR/refused.err")"
 
 step "smoke: a token file with a second line is refused before anything is sent"
 # patterns/go-cli.md: net/http refuses that header on every request, and says

@@ -280,3 +280,27 @@ func TestATransportErrorCarriesNoURL(t *testing.T) {
 		}
 	}
 }
+
+// TestAnEndpointThatDoesNotParseStaysOutOfTheError: NewRequestWithContext
+// returns a *url.Error as Do does, and its text is the whole URL. The wrap
+// around building the request carries no %w (patterns/go-http-client.md, One
+// request, end to end).
+func TestAnEndpointThatDoesNotParseStaysOutOfTheError(t *testing.T) {
+	t.Parallel()
+	a := New("sk-test-key")
+	a.endpoint = "http://api.example.com /v1/messages?debug=ada@example.com"
+
+	_, err := a.Reply(t.Context(), history())
+
+	if err == nil {
+		t.Fatal("an endpoint that does not parse was accepted")
+	}
+	if !strings.Contains(err.Error(), "the endpoint does not parse") {
+		t.Errorf("err = %v, want it to say what is wrong", err)
+	}
+	for _, leak := range []string{"http://", "api.example.com", "/v1/messages", "ada@example.com", "sk-test-key"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("the error carries %q: %v", leak, err)
+		}
+	}
+}
