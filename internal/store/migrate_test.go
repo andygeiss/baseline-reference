@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -62,8 +63,9 @@ func applyMigration(t *testing.T, db *sql.DB, n int) {
 	}
 }
 
-// referencedTables is every table some foreign key points at, as the schema
-// stands now.
+// referencedTables is every table a foreign key names, as the schema stands
+// now — its own key included: a table that references only itself is on the
+// list (patterns/go-data-deletion.md rule 6).
 func referencedTables(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 	rows, err := db.QueryContext(t.Context(),
@@ -89,10 +91,11 @@ func referencedTables(t *testing.T, db *sql.DB) []string {
 	return tables
 }
 
-// takenAway is every table a migration script drops or renames away, lower
-// case. Both take a table's references with it: DROP TABLE runs an implicit
-// DELETE that fires every foreign key action below it, and a table renamed
-// away leaves its children pointing at the new name
+// takenAway is every table a migration script drops, renames away, or writes
+// with REPLACE, lower case. All three take a table's references with them:
+// DROP TABLE runs an implicit DELETE that fires every foreign key action below
+// it, INSERT OR REPLACE and REPLACE INTO do the same to each row they replace,
+// and a table renamed away leaves its children pointing at the new name
 // (patterns/go-data-deletion.md rule 6).
 func takenAway(script string) []string {
 	var words []string
@@ -108,6 +111,12 @@ func takenAway(script string) []string {
 	}
 	var tables []string
 	for i := range words {
+		// "insert or replace into t" and "replace into t" end the same way.
+		if words[i] == "replace" && name(i+1) == "into" {
+			table, _, _ := strings.Cut(name(i+2), "(") // "t(a, b)" is written without a space too
+			tables = append(tables, table)
+			continue
+		}
 		if i+1 >= len(words) || words[i+1] != "table" {
 			continue
 		}
@@ -140,6 +149,9 @@ func TestTakenAwayReadsAMigration(t *testing.T) {
 		{"ALTER TABLE users ADD COLUMN x TEXT;\nALTER TABLE users DROP COLUMN y;", nil},
 		{"-- DROP TABLE users;\nCREATE TABLE t (a TEXT); -- never drop table users", nil},
 		{"CREATE TABLE a (x);\nDROP TABLE sessions;\nDROP TABLE users;", []string{"sessions", "users"}},
+		{"INSERT OR REPLACE INTO users (id, name) VALUES ('a', 'Ada');", []string{"users"}},
+		{"replace into Users(id, name) values ('a', 'Ada');", []string{"users"}},
+		{"INSERT INTO users (id) VALUES ('a') ON CONFLICT (id) DO UPDATE SET name = replace(name, 'a', 'b');", nil},
 	} {
 		if got := takenAway(tt.script); !slices.Equal(got, tt.want) {
 			t.Errorf("takenAway(%q) = %v, want %v", tt.script, got, tt.want)
@@ -148,11 +160,11 @@ func TestTakenAwayReadsAMigration(t *testing.T) {
 }
 
 // Rule 6 of patterns/go-data-deletion.md, against every migration this
-// repository has: none drops, or renames away, a table that another table
-// references at the moment it runs. Such a migration boots green and takes the
-// children with it, and their children, so no boot and no integrity check
-// would ever say.
-func TestNoMigrationDropsATableOthersReference(t *testing.T) {
+// repository has: none drops, renames away, or writes with REPLACE a table that
+// a foreign key names at the moment it runs, its own key included. Such a
+// migration boots green and takes the children with it, and their children, so
+// no boot and no integrity check would ever say.
+func TestNoMigrationDropsATableAForeignKeyNames(t *testing.T) {
 	t.Parallel()
 	db := openAt(t, filepath.Join(t.TempDir(), "walk.db"), 0)
 	for i, name := range migrationNames(t) {
@@ -163,7 +175,7 @@ func TestNoMigrationDropsATableOthersReference(t *testing.T) {
 		}
 		for _, table := range takenAway(string(script)) {
 			if slices.Contains(referenced, table) {
-				t.Errorf("%s drops or renames away %s, which other tables reference: change it in place", name, table)
+				t.Errorf("%s drops, renames away or REPLACEs into %s, which a foreign key names: change it in place", name, table)
 			}
 		}
 		applyMigration(t, db, i+1)
@@ -171,6 +183,51 @@ func TestNoMigrationDropsATableOthersReference(t *testing.T) {
 	// The walk above passes on an empty list, so say what it stood on.
 	if got := referencedTables(t, db); !slices.Contains(got, "users") {
 		t.Errorf("referenced tables = %v: the walk never saw users as a parent", got)
+	}
+}
+
+// The rule's "its own included": a table whose only foreign key points at
+// itself — a thread of comments — is a table a foreign key names, and the walk
+// above has to see it as one. Rebuilt the ordinary way it loses its replies
+// under CASCADE and every parent under SET NULL, with a green boot. This app
+// has no such table, so the helper is held to one made here.
+func TestATableThatReferencesOnlyItselfIsOneAForeignKeyNames(t *testing.T) {
+	t.Parallel()
+	db := openAt(t, filepath.Join(t.TempDir(), "self.db"), 0)
+	if _, err := db.ExecContext(t.Context(),
+		`CREATE TABLE comments (
+		     id     INTEGER PRIMARY KEY,
+		     parent INTEGER REFERENCES comments(id) ON DELETE CASCADE
+		 )`); err != nil {
+		t.Fatalf("creating a table that references itself: %v", err)
+	}
+	if got := referencedTables(t, db); !slices.Equal(got, []string{"comments"}) {
+		t.Errorf("referenced tables = %v, want comments: no other table names it, and its own key does", got)
+	}
+}
+
+// And the statements the store itself runs, which no migration walk reads: none
+// says REPLACE. The walk is over this package's own source, because a statement
+// is a string in it. No table is exempt here, though the rule is about a table
+// a foreign key names: ON CONFLICT … DO UPDATE is the same write on every
+// table, and the next foreign key is one migration away.
+func TestNoStatementInTheStoreSaysReplace(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("listing the store's source: %v, %v", files, err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("reading %s: %v", file, err)
+		}
+		if tables := takenAway(string(src)); len(tables) != 0 {
+			t.Errorf("%s drops, renames away or REPLACEs into %v: write ON CONFLICT … DO UPDATE", file, tables)
+		}
 	}
 }
 
