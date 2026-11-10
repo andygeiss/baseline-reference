@@ -189,3 +189,75 @@ func sendToARelayThatSays(t *testing.T, refusal string) error {
 	s := New(ln.Addr().String(), "chat@example.com", "", "", "chat.example.com")
 	return s.Send(t.Context(), domain.Mail{To: "ada@example.com", Subject: "Reset", Text: "link"})
 }
+
+// TestSendIsDoneOnceTheRelayTookTheMessage: the relay answers the end of DATA
+// with 250, and the message is its to deliver from that moment. A QUIT that
+// then fails — a relay that hangs up, or answers 421 — is not a failed send:
+// returned as one, the outbox sends the same message again on every attempt
+// (patterns/go-email.md, Which transport).
+func TestSendIsDoneOnceTheRelayTookTheMessage(t *testing.T) {
+	t.Parallel()
+	for name, quit := range map[string]string{
+		"QUIT answered with an error": "421 4.3.0 shutting down",
+		"QUIT answered by hanging up": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			took := make(chan bool, 1)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				r := bufio.NewReader(conn)
+				say := func(line string) { _, _ = conn.Write([]byte(line + "\r\n")) }
+				say("220 relay.test ESMTP")
+				inData := false
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					switch verb := strings.ToUpper(line); {
+					case inData:
+						if line == ".\r\n" {
+							inData = false
+							took <- true
+							say("250 2.0.0 queued")
+						}
+					case strings.HasPrefix(verb, "EHLO"):
+						say("250 relay.test")
+					case strings.HasPrefix(verb, "MAIL FROM"), strings.HasPrefix(verb, "RCPT TO"):
+						say("250 2.1.0 ok")
+					case strings.HasPrefix(verb, "DATA"):
+						inData = true
+						say("354 go ahead")
+					case strings.HasPrefix(verb, "QUIT"):
+						if quit != "" {
+							say(quit)
+						}
+						return
+					}
+				}
+			}()
+
+			s := New(ln.Addr().String(), "chat@example.com", "", "", "chat.example.com")
+			err = s.Send(t.Context(), domain.Mail{To: "ada@example.com", Subject: "Reset", Text: "link"})
+
+			select {
+			case <-took:
+			default:
+				t.Fatal("the relay never took the message")
+			}
+			if err != nil {
+				t.Errorf("Send = %v after the relay took the message: the outbox would send it again", err)
+			}
+		})
+	}
+}

@@ -2,10 +2,13 @@ package chatapi_test
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/chatapi"
@@ -28,36 +31,80 @@ func serverSaying(t *testing.T, status int, body string) *chatapi.Client {
 
 // TestStatusTranslation is the adapter's whole job on the failure side: turn
 // somebody else's HTTP into errors this program already knows how to branch on.
+//
+// What the error carries of the answer is its status code and nothing the
+// server wrote (patterns/go-http-client.md, statusError). A body is where an API
+// quotes the request back — an address, a name, a query — and an error ends up
+// on stderr or in a log, where no account deletion reaches it
+// (patterns/go-errors-logging.md, Never log).
 func TestStatusTranslation(t *testing.T) {
 	t.Parallel()
 
+	const quoted = `{"error":"no room general for ada@example.com with token gochat_s3cr3t"}`
 	tests := []struct {
-		name    string
-		status  int
-		body    string
-		want    error
-		wantSay string // the server's own words, which must survive
+		name   string
+		status int
+		want   error // nil: nobody's domain error
 	}{
-		{"unauthorized", http.StatusUnauthorized, `{"error":"send a token"}`, domain.ErrUnauthorized, "send a token"},
-		{"no such room", http.StatusNotFound, `{"error":"no room"}`, domain.ErrNotFound, "no room"},
-		{"refused input", http.StatusUnprocessableEntity, `{"error":"write something first"}`, domain.ErrRejected, "write something first"},
-		{"a failure with no body at all", http.StatusNotFound, ``, domain.ErrNotFound, "the server gave no reason"},
+		{"unauthorized", http.StatusUnauthorized, domain.ErrUnauthorized},
+		{"no such room", http.StatusNotFound, domain.ErrNotFound},
+		{"refused input", http.StatusUnprocessableEntity, domain.ErrRejected},
+		{"a status this client has no word for", http.StatusTeapot, nil},
+		{"the server failing", http.StatusInternalServerError, nil},
+		{"the server busy", http.StatusTooManyRequests, nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client := serverSaying(t, tt.status, tt.body)
+			client := serverSaying(t, tt.status, quoted)
 
-			_, err := client.Me(t.Context())
+			_, _, err := client.Messages(t.Context(), "general", 42)
 
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("err = %v, want %v", err, tt.want)
+			if err == nil {
+				t.Fatalf("a %d was treated as success", tt.status)
 			}
-			// The server's own words survive, so the person running the tool
-			// finds out what it did not like.
-			if !strings.Contains(err.Error(), tt.wantSay) {
-				t.Errorf("err = %v, want it to carry %q", err, tt.wantSay)
+			if tt.want != nil && !errors.Is(err, tt.want) {
+				t.Errorf("err = %v, want %v", err, tt.want)
+			}
+			if want := fmt.Sprintf("status %d", tt.status); !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want it to carry %q", err, want)
+			}
+			for _, leak := range []string{"ada@example.com", "gochat_s3cr3t", "no room", "since=42", "/api/rooms", "general"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("the error carries %q, which the answer or the request held: %v", leak, err)
+				}
+			}
+		})
+	}
+}
+
+// TestATransportErrorCarriesNoURL: Do returns a *url.Error, and its text is the
+// whole URL, query string included. The cause stays; the URL goes.
+func TestATransportErrorCarriesNoURL(t *testing.T) {
+	t.Parallel()
+	// A port nothing listens on: opened, then closed again.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	for name, call := range map[string]func(*chatapi.Client) error{
+		"a read":  func(c *chatapi.Client) error { _, _, err := c.Messages(t.Context(), "general", 42); return err },
+		"a write": func(c *chatapi.Client) error { _, err := c.Post(t.Context(), "general", "hello ada"); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := call(chatapi.New("http://"+addr, "gochat_s3cr3t"))
+			if !errors.Is(err, syscall.ECONNREFUSED) {
+				t.Fatalf("err = %v, want it to still be a refused connection", err)
+			}
+			for _, leak := range []string{"since=42", "/api/rooms", "general", "http://", "gochat_s3cr3t"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("the error carries %q: %v", leak, err)
+				}
 			}
 		})
 	}
@@ -207,6 +254,10 @@ func TestAnUnreadableTimeIsAnError(t *testing.T) {
 	// Better to fail loudly than to hand back a zero time that prints as 1970.
 	if err == nil {
 		t.Fatal("an unreadable time was accepted")
+	}
+	// And without quoting it: what the answer held stays out of the error.
+	if strings.Contains(err.Error(), "yesterday") {
+		t.Errorf("the error quotes the answer: %v", err)
 	}
 }
 

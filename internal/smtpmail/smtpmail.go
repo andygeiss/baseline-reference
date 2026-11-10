@@ -108,9 +108,11 @@ func (s *Sender) Send(ctx context.Context, m domain.Mail) error {
 	if err := w.Close(); err != nil {
 		return said("finishing the message", err)
 	}
-	if err := c.Quit(); err != nil {
-		return said("ending the session", err)
-	}
+	// The relay took the message when the data writer closed. Whatever QUIT
+	// answers after that — an error, a hang-up — is not a failed send, and
+	// returned as one it would make the outbox send the message again
+	// (patterns/go-email.md, Which transport).
+	_ = c.Quit()
 	return nil
 }
 

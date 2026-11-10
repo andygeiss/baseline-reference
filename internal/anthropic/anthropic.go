@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -145,12 +147,18 @@ func (a *Assistant) Reply(ctx context.Context, history []domain.Message) (string
 
 	res, err := a.http.Do(req)
 	if err != nil {
+		if ue, ok := errors.AsType[*url.Error](err); ok {
+			err = ue.Err // drop the URL: an error ends up in a log
+		}
 		return "", fmt.Errorf("asking the model: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("asking the model: %s", res.Status)
+		// The code, and nothing the API wrote: its error body quotes the
+		// request back, and the request is the room's conversation
+		// (patterns/go-http-client.md, statusError).
+		return "", fmt.Errorf("asking the model: status %d", res.StatusCode)
 	}
 
 	var out response

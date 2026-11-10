@@ -154,7 +154,9 @@ type wireMessage struct {
 func (m wireMessage) domain() (domain.Message, error) {
 	at, err := time.Parse(time.RFC3339, m.CreatedAt)
 	if err != nil {
-		return domain.Message{}, fmt.Errorf("message %d has an unreadable time %q: %w", m.Seq, m.CreatedAt, err)
+		// Neither the value nor time.Parse's error, which quotes it: what the
+		// answer held stays out of the error.
+		return domain.Message{}, errors.New("chatapi: a message's time is not RFC 3339")
 	}
 	return domain.Message{Seq: m.Seq, Author: m.Author, Body: m.Body, CreatedAt: at}, nil
 }
@@ -207,7 +209,12 @@ func (c *Client) do(req *http.Request, out any, retry bool) error {
 		}
 		res, err := c.http.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("chatapi: %s %s: %w", req.Method, req.URL.Path, err)
+			if ue, ok := errors.AsType[*url.Error](err); ok {
+				err = ue.Err // drop the URL: its query string would reach stderr
+			}
+			// The host, which the person running the tool configured, and
+			// never the path: the path is what was sent.
+			lastErr = fmt.Errorf("chatapi: %s %s: %w", req.Method, req.URL.Host, err)
 			continue // a connection that failed may succeed on the next try
 		}
 		err = decode(res, out)
@@ -220,53 +227,49 @@ func (c *Client) do(req *http.Request, out any, retry bool) error {
 	return lastErr
 }
 
-// errTransient marks the answers worth trying again. It never leaves this
-// package: callers see the domain error, or the last failure.
-var errTransient = errors.New("transient")
+// errTransient marks the answers worth trying again: the server is busy or
+// broken, not the request.
+var errTransient = errors.New("the server is busy or failing")
 
 // decode reads one answer, turning the server's status into an error the rest
 // of the program already understands.
+//
+// A failure carries the status code and nothing the server wrote
+// (patterns/go-http-client.md, statusError). Its body is where an API quotes
+// the request back — a name, an address, a query — and its reason phrase is
+// the server's to write too; whatever this returns is printed, and may be
+// logged by whoever runs the tool (patterns/go-errors-logging.md, Never log).
+// The command says what to do about each kind in its own words.
 func decode(res *http.Response, out any) error {
 	defer res.Body.Close()
-	// Capped: a server that answers forever would otherwise fill this process.
-	body, err := io.ReadAll(io.LimitReader(res.Body, maxBody))
-	if err != nil {
-		return fmt.Errorf("chatapi: read answer: %w", err)
-	}
 
 	switch {
 	case res.StatusCode >= 200 && res.StatusCode < 300:
 		if out == nil {
 			return nil
 		}
-		if err := json.Unmarshal(body, out); err != nil {
+		// Capped: a server that answers forever would otherwise fill this
+		// process.
+		if err := json.UnmarshalRead(io.LimitReader(res.Body, maxBody), out); err != nil {
 			return fmt.Errorf("chatapi: the answer is not the JSON this client expects: %w", err)
 		}
 		return nil
 
 	case res.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("%w: %s", domain.ErrUnauthorized, serverMessage(body))
+		return fmt.Errorf("%w: %w", domain.ErrUnauthorized, statusError(res))
 	case res.StatusCode == http.StatusNotFound:
-		return fmt.Errorf("%w: %s", domain.ErrNotFound, serverMessage(body))
+		return fmt.Errorf("%w: %w", domain.ErrNotFound, statusError(res))
 	case res.StatusCode == http.StatusUnprocessableEntity:
-		return fmt.Errorf("%w: %s", domain.ErrRejected, serverMessage(body))
+		return fmt.Errorf("%w: %w", domain.ErrRejected, statusError(res))
 	case res.StatusCode == http.StatusTooManyRequests,
 		res.StatusCode >= 500:
-		// Worth another attempt: the server is busy or broken, not the request.
-		return fmt.Errorf("%w: %s: %s", errTransient, res.Status, serverMessage(body))
+		return fmt.Errorf("chatapi: %w: %w", errTransient, statusError(res))
 	default:
-		return fmt.Errorf("chatapi: %s: %s", res.Status, serverMessage(body))
+		return fmt.Errorf("chatapi: %w", statusError(res))
 	}
 }
 
-// serverMessage pulls the reason out of a failure, falling back to the status
-// when the body is not the shape this client knows.
-func serverMessage(body []byte) string {
-	var failure struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(body, &failure); err == nil && failure.Error != "" {
-		return failure.Error
-	}
-	return "the server gave no reason"
+// statusError reports the code and nothing the other side wrote.
+func statusError(res *http.Response) error {
+	return fmt.Errorf("status %d", res.StatusCode)
 }

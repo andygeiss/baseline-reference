@@ -3,8 +3,11 @@ package anthropic
 import (
 	"encoding/json/v2"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -225,4 +228,55 @@ func writeJSON(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(body))
+}
+
+// TestAnErrorCarriesNothingTheAPIWrote: the reason phrase and the body are the
+// other side's to write, and an API's error quotes the request back — here, the
+// room's own conversation. The error names the status code and stops
+// (patterns/go-http-client.md, statusError; patterns/go-errors-logging.md,
+// Never log).
+func TestAnErrorCarriesNothingTheAPIWrote(t *testing.T) {
+	t.Parallel()
+	a := serving(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusBadRequest,
+			`{"type":"error","error":{"type":"invalid_request_error","message":"messages.0: Ada said: my address is ada@example.com"}}`)
+	})
+
+	_, err := a.Reply(t.Context(), history())
+
+	if err == nil {
+		t.Fatal("Reply() = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "status 400") {
+		t.Errorf("err = %v, want it to name the status code", err)
+	}
+	for _, leak := range []string{"ada@example.com", "Ada said", "invalid_request_error", "Bad Request"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("the error carries %q, which the API wrote: %v", leak, err)
+		}
+	}
+}
+
+// TestATransportErrorCarriesNoURL: Do returns a *url.Error, whose text is the
+// whole URL. The cause stays; the URL goes.
+func TestATransportErrorCarriesNoURL(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("sk-test-key")
+	a.endpoint = "http://" + ln.Addr().String() + "/v1/messages?debug=ada@example.com"
+	ln.Close() // nothing listens there now
+
+	_, err = a.Reply(t.Context(), history())
+
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("err = %v, want it to still be a refused connection", err)
+	}
+	for _, leak := range []string{"http://", "/v1/messages", "ada@example.com", "sk-test-key"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("the error carries %q: %v", leak, err)
+		}
+	}
 }
