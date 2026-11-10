@@ -381,9 +381,10 @@ is.
   region from a 200, which is the first rule's own fragment case, and never boosts it,
   so no POST address reaches the history. A browser without htmx gets the whole page
   as the 200 answer to its POST, where the first rule asks for the 303: a reload there
-  asks to send the form again, and sent again it makes a second token. Before baseline
-  `26f8f08` the secret rode the session to the page after a redirect; measured on that
-  binary, it was still in the database's write-ahead log after the page had shown it.
+  asks to send the form again, and sent again it makes a second token. Until the sync
+  that followed baseline `26f8f08`, the secret rode the session to the page after a
+  redirect; measured on that binary, it was still in the database's write-ahead log
+  after the page had shown it.
 - **The library project type is unexercised** (`project-types/library.md`,
   `patterns/go-library.md`, `checklists/library.md`) — and for the reason that
   document itself gives. Libraries are *extracted when a second project needs the

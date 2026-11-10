@@ -112,7 +112,7 @@ func (s *Resets) Redeem(ctx context.Context, hash, passwordHash string, now time
 		return domain.User{}, domain.ErrNotFound
 	}
 
-	// It sets a password, so it moves the counter; a reset link allowed it, so
+	// It sets a new password, so it moves the counter; a reset link allowed it, so
 	// it names the counter this request loaded (patterns/go-auth-sessions.md
 	// rule 1). The load is three statements up, in this transaction, on the
 	// one write connection: nothing can move the counter in between, so today

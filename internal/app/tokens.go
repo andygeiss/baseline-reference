@@ -78,7 +78,7 @@ func (a *App) handleEmailSet(w http.ResponseWriter, r *http.Request) {
 // behind the login's limiter, in the login's bucket
 // (patterns/go-auth-sessions.md, Machine tokens rule 3).
 //
-// Every answer here is the tokens region for htmx and the whole page for a
+// Its 200 and its 422 are the tokens region for htmx and the whole page for a
 // plain form: the form is a fragment form, because its good answer cannot be
 // a redirect.
 func (a *App) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
