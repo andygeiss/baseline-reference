@@ -22,12 +22,14 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`39ad142`**, on the baseline's branch `owed-fixes`:
+Built against baseline commit **`b2f040a`**, on the baseline's branch `owed-fixes`:
 untagged, and not merged. It is the last commit of the 2026-11-10 backlog run that
 changes anything a project reads. That run read the baseline's oldest unread documents
-three times and did not converge: its last, narrow look found two highs and eighteen
-mediums in the fixes of the pass before it. They are fixed, and nobody has read those
-fixes.
+four times and did not converge. Its owner then took two areas out of the baseline, a
+CLI that listens and a program a tool keeps running, and changed what a tag needs: no
+known high, and every known medium listed. **One high is known and waits on his
+decision:** a password reset leaves the user's machine tokens. This repository follows
+the rule as it is written, so its reset leaves them too.
 
 **What moved here,** in three syncs on the branch `sync-owed-run`. Sessions: the store
 hashes its token, keeps a deleted row emptied, writes no emptied and no expired row, and
@@ -49,7 +51,9 @@ does not decode is a fixed sentence. A urlencoded post to the upload route keeps
 and its 400. The server refuses a stray argument, and `gochat` trims and checks a token
 from the environment as it does one from a file. A new token's secret is in the answer to
 the request that made it, never in the session. The migration walk reads `UPDATE OR
-REPLACE`.
+REPLACE`. And from `b2f040a`, which answers what this sync found: a cancel that lands
+while an answer is being read comes back as the context's error, not as an answer that
+does not decode.
 
 **One rule is not followed, and not waived:** the baseline now keeps a blob for what fits
 its blanket 1 MiB cap, and attachments here are blobs under a 3 MiB cap. **And two rules
@@ -59,7 +63,7 @@ after it. The README records both under *Baseline deviations*; lowering the cap,
 the bytes to a directory, or a waiver is Andy's to choose, and so is which of the two
 rules gives way.
 
-`./verify.sh` exits 0 against `39ad142` (94 steps).
+`./verify.sh` exits 0 against `b2f040a` (96 steps).
 
 ## The task (give this to the builder, human or AI, verbatim)
 
