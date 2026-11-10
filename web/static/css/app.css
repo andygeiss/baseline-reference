@@ -135,11 +135,9 @@
     inline-size: min(100% - 2 * var(--space), var(--measure));
   }
 
-  /* State feedback + smooth-scroll glide (patterns/css-motion.md). Only the
-     motion sits inside the wrapper; state rules stay outside. */
+  /* State feedback (patterns/css-motion.md). Only the motion sits inside the
+     wrapper; state rules stay outside. */
   @media (prefers-reduced-motion: no-preference) {
-    html { scroll-behavior: smooth; } /* same-page anchor jumps glide */
-
     a, button, summary,
     input, select, textarea {
       transition: color var(--motion-fast) ease-out,
@@ -435,7 +433,6 @@
       align-items: center;
       gap: var(--space-sm);
       color: var(--color-text-muted);
-      font-size: var(--step--1);
     }
   }
 
@@ -458,7 +455,6 @@
     & .say-file {
       display: grid;
       gap: var(--space-xs);
-      font-size: var(--step--1);
       color: var(--color-text-muted);
     }
 
@@ -468,7 +464,6 @@
       border-radius: var(--radius);
       background: var(--color-bg);
       color: var(--color-text);
-      resize: vertical;
 
       &:focus-visible {
         outline: 2px solid var(--color-accent);
@@ -485,9 +480,6 @@
     border-radius: var(--radius);
     background: var(--color-surface);
   }
-
-  /* The one thing on the page worth selecting in a hurry. */
-  .secret-value { user-select: all; }
 
   .tokens {
     inline-size: 100%;
