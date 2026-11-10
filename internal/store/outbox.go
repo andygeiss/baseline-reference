@@ -54,22 +54,30 @@ func (s *Outbox) Unsent(ctx context.Context, limit int) ([]Queued, error) {
 	return queued, nil
 }
 
-// Sent marks a message as delivered to the relay. The body stays: it holds a
-// link that expires within the hour, and knowing what was sent is what makes a
-// "no mail arrived" report answerable.
+// Sent marks a message as delivered to the relay, and empties its body in the
+// same statement. The body holds the reset link, and the resets table keeps
+// only that token's hash: a sent row that kept its body would be the one place
+// the plaintext outlived the mail (patterns/go-email.md). What is left — the
+// id, the recipient, the subject and the two times — still answers a "no mail
+// arrived" report.
 func (s *Outbox) Sent(ctx context.Context, id string) error {
 	if _, err := s.db.Write.ExecContext(ctx,
-		`UPDATE outbox SET sent_at = ? WHERE id = ?`, now(), id); err != nil {
+		`UPDATE outbox SET sent_at = ?, body = '' WHERE id = ?`, now(), id); err != nil {
 		return fmt.Errorf("marking mail %s sent: %w", id, err)
 	}
 	return nil
 }
 
 // Failed records one unsuccessful attempt. Past MaxSendAttempts the row stops
-// being picked up.
+// being picked up, and the attempt that gives up on it empties its body in the
+// same statement, for the reason Sent does. Both sides of the CASE read the
+// row as it was before this statement, so "attempts + 1" is the count it sets.
 func (s *Outbox) Failed(ctx context.Context, id string) error {
 	if _, err := s.db.Write.ExecContext(ctx,
-		`UPDATE outbox SET attempts = attempts + 1 WHERE id = ?`, id); err != nil {
+		`UPDATE outbox
+		    SET attempts = attempts + 1,
+		        body = CASE WHEN attempts + 1 >= ? THEN '' ELSE body END
+		  WHERE id = ?`, MaxSendAttempts, id); err != nil {
 		return fmt.Errorf("recording a failed send of mail %s: %w", id, err)
 	}
 	return nil

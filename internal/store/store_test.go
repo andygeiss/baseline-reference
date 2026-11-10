@@ -369,6 +369,38 @@ func TestResetsAndOutbox(t *testing.T) {
 		if len(again) != 0 {
 			t.Errorf("Unsent after Sent = %v, want nothing left", again)
 		}
+		// The body held the link, and the resets table keeps only its hash:
+		// a sent row that kept its body would keep the plaintext.
+		if body := outboxBody(t, db, queued[0].ID); body != "" {
+			t.Errorf("the sent row still holds its body: %q", body)
+		}
+	})
+
+	t.Run("a message that is given up on loses its body with the last attempt", func(t *testing.T) {
+		res := &domain.Reset{Hash: "hash-failing", UserID: ada.ID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+		if err := resets.Add(t.Context(), res, mail); err != nil {
+			t.Fatalf("Add: %v", err)
+		}
+		queued, err := outbox.Unsent(t.Context(), 10)
+		if err != nil || len(queued) != 1 {
+			t.Fatalf("Unsent = %v, %v, want the one new message", queued, err)
+		}
+		id := queued[0].ID
+		for range store.MaxSendAttempts - 1 {
+			if err := outbox.Failed(t.Context(), id); err != nil {
+				t.Fatalf("Failed: %v", err)
+			}
+		}
+		// One attempt left: the next tick still has to send it.
+		if body := outboxBody(t, db, id); body != mail.Text {
+			t.Errorf("body before the last attempt = %q, want it intact", body)
+		}
+		if err := outbox.Failed(t.Context(), id); err != nil {
+			t.Fatalf("Failed: %v", err)
+		}
+		if body := outboxBody(t, db, id); body != "" {
+			t.Errorf("the abandoned row still holds its body: %q", body)
+		}
 	})
 
 	t.Run("a header with a line break is refused before anything is written", func(t *testing.T) {
@@ -671,6 +703,18 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 // user_id column and no REFERENCES clause. The delete would still succeed, the
 // rows would still be there, and a test naming today's tables would still be
 // green. This one fails the day that table is created with a row in it.
+// outboxBody reads one row's body past the store, which has no reason to offer
+// that read: nothing in the app wants the body of a message it is done with.
+func outboxBody(t *testing.T, db *store.DB, id string) string {
+	t.Helper()
+	var body string
+	if err := db.Read.QueryRowContext(t.Context(),
+		`SELECT body FROM outbox WHERE id = ?`, id).Scan(&body); err != nil {
+		t.Fatalf("reading the body of outbox row %s: %v", id, err)
+	}
+	return body
+}
+
 func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 	t.Parallel()
 	db := newTestDB(t)
