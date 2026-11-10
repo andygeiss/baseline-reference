@@ -256,7 +256,8 @@ default. Here they are, in one place.
   backup that already protects the messages protects their files, `VACUUM INTO` sees
   everything, and a row and its file cannot disagree — which is why this app has no
   orphan sweeper. The cost is the 2 MB cap: the right size for a screenshot or a log,
-  the wrong size for video.
+  the wrong size for video. That cap is above what the pattern now gives a blob: see
+  *Baseline deviations*.
 - **Three snapshots are kept** (`patterns/go-data-deletion.md`). Each daily
   `VACUUM INTO` file beside the database still holds everyone deleted since it was
   written, so the number decides how long a deleted account outlives its delete on this
@@ -354,6 +355,22 @@ is.
   which is what lets this app start with an empty environment and still exercise the
   whole loop. It lives in `internal/` and config selects it; the fake that tests the
   handlers is a separate thing in `internal/app/fakes_test.go`.
+- **Attachment bytes are a `BLOB` on a route that raised its cap**
+  (`patterns/go-file-uploads.md`, *Where the bytes live*) — not followed, and not
+  waived: it waits on a decision. Since baseline `768e460` the table there decides by
+  the route's cap: a blob for what fits the blanket 1 MiB, a directory for any route
+  that raised it. `POST /rooms/{slug}/messages` raised it: 2 MiB for the file
+  (`domain.MaxAttachmentBytes`) plus 1 MiB for the form around it, 3 MiB in all
+  (`uploadLimit` in `internal/app/middleware.go`), and the bytes are a column of
+  `attachments`. Following the rule is one of two changes. Lower the cap until the
+  whole request fits 1 MiB, and drop the route's own limit: a 2 MB screenshot then no
+  longer attaches. Or move the bytes to a directory of their own beside the database,
+  behind one `*os.Root`: a temp file renamed into place, the row deleted before its
+  file, the names collected inside the transaction that deletes an account, a janitor
+  held to that directory and to files older than an hour, a second thing to copy off
+  the box — and the bytes already stored moved by Go code at boot, which no `.sql`
+  migration can do. Where the bytes live is tier 2 in that document, so a waiver is the
+  third way out.
 - **The library project type is unexercised** (`project-types/library.md`,
   `patterns/go-library.md`, `checklists/library.md`) — and for the reason that
   document itself gives. Libraries are *extracted when a second project needs the

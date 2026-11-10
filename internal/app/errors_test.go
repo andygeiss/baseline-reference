@@ -119,9 +119,10 @@ func TestServerErrorAndARequestWhoseClientLeft(t *testing.T) {
 	})
 }
 
-// TestThe500PageNeedsNoSession: serverError also runs where no session was
-// loaded — a session-store error, a panic — and a page whose data popped the
-// flash would panic there, inside the handler that is answering the failure.
+// TestThe500PageNeedsNoSession: the 500 page is also rendered where no session
+// was loaded — on a session-store error, after a panic — and a page whose data
+// popped the flash would panic there, inside the code that is answering the
+// failure.
 // The 500 page embeds a zero base (patterns/go-forms-validation.md, Flash
 // messages rule 2).
 func TestThe500PageNeedsNoSession(t *testing.T) {

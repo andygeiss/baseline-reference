@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-// TestSecureHeaders pins the whole header contract, so an edit to the
-// middleware cannot quietly drop one of them.
+// TestSecureHeaders pins the four values a page carries, so an edit to the
+// middleware cannot quietly drop one of them. It asks one page: a middleware
+// that sent them on that request alone would pass it
+// (patterns/security-headers.md, Testing).
 func TestSecureHeaders(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

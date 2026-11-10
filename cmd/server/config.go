@@ -23,11 +23,13 @@ import (
 	_ "time/tzdata"
 )
 
-// Secret is a value that must never reach a log line. The three methods are the
-// three ways a value gets printed: slog, fmt, and anything writing text.
+// Secret is a value that must never reach a log line. The four methods are the
+// four ways a value gets printed: slog, fmt, %#v, and anything writing text.
 // Config.LogValue leaves these fields out, but that only holds when the Config
-// *is* the value logged — nested, in a slice, in a map, or under any fmt verb,
-// the field's own type is what holds (patterns/go-config.md).
+// *is* the value logged — nested, in a slice, in a map, or under %v, the
+// field's own type is what holds (patterns/go-config.md). Under %v, not under
+// every verb: %d prints the value, and so do %s and %q below a pointer, which
+// is why go vet refusing those lines is part of the defence.
 type Secret string
 
 func (Secret) LogValue() slog.Value         { return slog.StringValue("REDACTED") }
