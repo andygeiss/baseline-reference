@@ -913,6 +913,45 @@ set +e
 GOCHAT_TOKEN_FILE="" CHAT_TOKEN="gochat_nope" "$WORKDIR/gochat" rooms >/dev/null 2>&1; CODE=$?
 set -e
 [ "$CODE" = "1" ] || fail "a refused token exited $CODE, want 1"
+
+step "smoke: the client refuses an argument it would have ignored"
+# patterns/go-cli.md: flag stops at the first argument, so the -json after it
+# was never parsed and the command printed the other format with exit 0.
+set +e
+"$WORKDIR/gochat" rooms extra -json >"$WORKDIR/stray.out" 2>/dev/null; CODE=$?
+set -e
+[ "$CODE" = "2" ] || fail "'gochat rooms extra -json' exited $CODE, want 2"
+[ -s "$WORKDIR/stray.out" ] && fail "'gochat rooms extra -json' printed the rooms anyway"
+
+step "smoke: the client's errors carry nothing the server wrote, and no URL"
+# patterns/go-http-client.md and go-errors-logging.md, Never log: stderr is
+# somebody's log. The server's refusal of an empty message names the rule in
+# its own words; the tool prints the status and the rule in the tool's.
+set +e
+"$WORKDIR/gochat" post general-chat "   " >/dev/null 2>"$WORKDIR/refused.err"; CODE=$?
+set -e
+[ "$CODE" = "1" ] || fail "a refused message exited $CODE, want 1"
+grep -q 'status 422' "$WORKDIR/refused.err" || fail "the refusal does not name the status: $(cat "$WORKDIR/refused.err")"
+grep -q 'A message is 1 to' "$WORKDIR/refused.err" || fail "the refusal does not say what a message may be"
+grep -q 'Write something' "$WORKDIR/refused.err" && fail "the server's own words reached stderr: $(cat "$WORKDIR/refused.err")"
+# A port nothing listens on: the cause is printed, the URL and its query are not.
+set +e
+GOCHAT_ADDR="http://127.0.0.1:1" "$WORKDIR/gochat" read -since 7 general-chat >/dev/null 2>"$WORKDIR/refused.err"; CODE=$?
+set -e
+[ "$CODE" = "1" ] || fail "an unreachable server exited $CODE, want 1"
+grep -q 'connection refused' "$WORKDIR/refused.err" || fail "the error lost its cause: $(cat "$WORKDIR/refused.err")"
+grep -q 'since=\|/api/\|general-chat' "$WORKDIR/refused.err" && fail "the URL reached stderr: $(cat "$WORKDIR/refused.err")"
+
+step "smoke: a token file with a second line is refused before anything is sent"
+# patterns/go-cli.md: net/http refuses that header on every request, and says
+# which header, not which file.
+printf '%s\n%s\n' "$SECRET" "gochat_pasted_twice" > "$WORKDIR/token-two-lines"
+set +e
+GOCHAT_TOKEN_FILE="$WORKDIR/token-two-lines" "$WORKDIR/gochat" whoami >/dev/null 2>"$WORKDIR/token.err"; CODE=$?
+set -e
+[ "$CODE" = "1" ] || fail "a two-line token file exited $CODE, want 1"
+grep -q 'control character' "$WORKDIR/token.err" || fail "the refusal does not say what is wrong: $(cat "$WORKDIR/token.err")"
+grep -q "$SECRET\|gochat_pasted_twice" "$WORKDIR/token.err" && fail "the refusal prints the token"
 unset GOCHAT_ADDR GOCHAT_TOKEN_FILE
 
 step "smoke: another signed-in user cannot revoke your token"

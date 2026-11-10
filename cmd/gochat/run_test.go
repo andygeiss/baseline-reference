@@ -360,3 +360,121 @@ func TestAMissingTokenFileIsReported(t *testing.T) {
 		t.Errorf("err = %v, want it to name the token file", err)
 	}
 }
+
+// TestARefusedMessageIsExplainedInTheToolsOwnWords: the adapter's error carries
+// the status code and nothing the server wrote (patterns/go-http-client.md),
+// because a server's refusal quotes the request back and this tool's stderr is
+// somebody's log. So the reason a person needs comes from the tool, which knows
+// the rule: the domain's own limit.
+func TestARefusedMessageIsExplainedInTheToolsOwnWords(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"error":"\"hello ada@example.com\" is not allowed here"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, stderr, err := call(t, srv, "post", "general", "hello ada@example.com")
+
+	if err == nil || errors.Is(err, errUsage) {
+		t.Fatalf("err = %v, want a failure that is not a usage error", err)
+	}
+	said := err.Error() + stderr
+	if !strings.Contains(said, "status 422") || !strings.Contains(said, "1 to 2000 characters") {
+		t.Errorf("the refusal does not say what a message may be: %q", said)
+	}
+	for _, leak := range []string{"ada@example.com", "not allowed here"} {
+		if strings.Contains(said, leak) {
+			t.Errorf("the refusal carries %q, which the server wrote or the request held: %q", leak, said)
+		}
+	}
+}
+
+// TestACommandThatTakesNoArgumentsRefusesOne: flag stops at the first argument
+// that is not a flag, so in "gochat rooms extra -json" the -json is never
+// parsed. Run anyway, the command prints the other format with exit 0, and the
+// script reading it finds out later (patterns/go-cli.md).
+func TestACommandThatTakesNoArgumentsRefusesOne(t *testing.T) {
+	t.Parallel()
+	srv := fakeServer(t)
+	for _, args := range [][]string{
+		{"rooms", "extra"},
+		{"rooms", "extra", "-json"},
+		{"whoami", "extra"},
+		{"version", "extra"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			stdout, stderr, err := call(t, srv, args...)
+			if !errors.Is(err, errUsage) {
+				t.Errorf("err = %v, want a usage error", err)
+			}
+			if stdout != "" {
+				t.Errorf("the command ran anyway: %q", stdout)
+			}
+			if !strings.Contains(stderr, "takes no arguments") || !strings.Contains(stderr, "Usage:") {
+				t.Errorf("stderr does not say what was wrong: %q", stderr)
+			}
+		})
+	}
+}
+
+// TestATokenWithAControlCharacterIsRefused: a token file with a second line —
+// two tokens pasted, a stray carriage return inside one — is a header value
+// net/http refuses, on every request, with an error that names a header and no
+// file. The tool says which file, before it sends anything
+// (patterns/go-cli.md, Config precedence).
+func TestATokenWithAControlCharacterIsRefused(t *testing.T) {
+	// No t.Parallel: t.Setenv below forbids it.
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Write([]byte(`{"name":"Ada"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	twoLines := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(twoLines, []byte("gochat_first\ngochat_second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOCHAT_TOKEN", "gochat_with_a\x01bell")
+	t.Setenv("GOCHAT_TOKEN_FILE", "")
+
+	for name, args := range map[string][]string{
+		"in the file":        {"whoami", "-addr", srv.URL, "-token-file", twoLines},
+		"in the environment": {"whoami", "-addr", srv.URL},
+	} {
+		var out, errs bytes.Buffer
+		err := run(t.Context(), args, &out, &errs)
+		if err == nil {
+			t.Fatalf("%s: a token with a control character was accepted", name)
+		}
+		if !strings.Contains(err.Error(), "control character") {
+			t.Errorf("%s: err = %v, want it to say what is wrong with the token", name, err)
+		}
+		for _, leak := range []string{"gochat_first", "gochat_second", "gochat_with_a"} {
+			if strings.Contains(err.Error()+errs.String(), leak) {
+				t.Errorf("%s: the refusal prints the token: %v", name, err)
+			}
+		}
+	}
+	if called {
+		t.Error("a request was sent with a token the tool should have refused")
+	}
+}
+
+// A token file's one trailing line break is not a control character in the
+// token: every editor leaves one.
+func TestATokenFileMayEndInALineBreak(t *testing.T) {
+	t.Parallel()
+	for _, ending := range []string{"\n", "\r\n", ""} {
+		path := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(path, []byte("gochat_token"+ending), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := readToken(path); err != nil || string(got) != "gochat_token" {
+			t.Errorf("readToken with ending %q = %q, %v; want gochat_token", ending, string(got), err)
+		}
+	}
+}

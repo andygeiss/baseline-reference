@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/andygeiss/baseline-reference/v5/internal/chatapi"
 	"github.com/andygeiss/baseline-reference/v5/internal/domain"
@@ -63,6 +64,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "whoami":
 		return runWhoami(ctx, args[1:], stdout, stderr)
 	case "version":
+		if len(args) > 1 {
+			return noArguments("version", args[1:], stderr)
+		}
 		fmt.Fprintln(stdout, version())
 		return nil
 	case "-h", "-help", "--help", "help":
@@ -114,15 +118,33 @@ func (Secret) MarshalText() ([]byte, error) { return []byte("REDACTED"), nil }
 // readToken prefers the file, because $GOCHAT_TOKEN leaks into every child
 // process and into anything that dumps the environment. A flag is worse still —
 // its value shows up in ps and in shell history — so there is no -token flag.
+//
+// A token that holds a control character is refused here, by where it came
+// from and never by what it is. A second line in the file is the usual way to
+// get one, and net/http then refuses the Authorization header on every request
+// with an error that names a header and no file (patterns/go-cli.md).
 func readToken(path string) (Secret, error) {
-	if path == "" {
-		return Secret(os.Getenv("GOCHAT_TOKEN")), nil
+	from, token := "$GOCHAT_TOKEN", os.Getenv("GOCHAT_TOKEN")
+	if path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read token file: %w", err)
+		}
+		from, token = "the token file "+path, strings.TrimSpace(string(b)) // the file usually ends in a newline
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read token file: %w", err)
+	if strings.ContainsFunc(token, unicode.IsControl) {
+		return "", fmt.Errorf("%s holds a control character: a token is one line, with nothing after it", from)
 	}
-	return Secret(strings.TrimSpace(string(b))), nil // the file usually ends in a newline
+	return Secret(token), nil
+}
+
+// noArguments refuses a command that takes none and was given some. flag stops
+// at the first argument that is not a flag, so every flag after it would be
+// ignored without a word: "gochat rooms extra -json" would print the other
+// format and exit 0 (patterns/go-cli.md).
+func noArguments(command string, rest []string, stderr io.Writer) error {
+	fmt.Fprintf(stderr, "gochat %s takes no arguments, and was given %q\n%s", command, rest, usage)
+	return errUsage
 }
 
 // parse binds the common flags, parses args, and turns the flag package's own
@@ -145,6 +167,9 @@ func runRooms(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs, err := parse("rooms", &c, args, stderr)
 	if fs == nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return noArguments("rooms", fs.Args(), stderr)
 	}
 	client, err := c.client()
 	if err != nil {
@@ -259,6 +284,9 @@ func runWhoami(ctx context.Context, args []string, stdout, stderr io.Writer) err
 	if fs == nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return noArguments("whoami", fs.Args(), stderr)
+	}
 	client, err := c.client()
 	if err != nil {
 		return err
@@ -326,13 +354,19 @@ func flagOrderHint(rest []string) string {
 }
 
 // advise turns the conditions worth explaining into an error that says what to
-// do about it. Everything else goes up as it came.
+// do about it, in this tool's words. Everything else goes up as it came.
 func advise(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrUnauthorized):
 		return fmt.Errorf("%w\nMake a token on the server's \"You\" page, then point -token-file at it", err)
 	case errors.Is(err, domain.ErrNotFound):
 		return fmt.Errorf("%w\nRun `gochat rooms` to see what there is", err)
+	case errors.Is(err, domain.ErrRejected):
+		// The server's own reason is not in err: the adapter keeps a status
+		// code and nothing the server wrote. The one thing this tool sends
+		// that a server refuses is a message, and the rule for one is the
+		// domain's, so the tool can say it itself.
+		return fmt.Errorf("%w\nA message is 1 to %d characters", err, domain.MaxBodyLen)
 	default:
 		return err
 	}

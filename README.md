@@ -467,6 +467,12 @@ candidate to feed back into it, per the reproduction protocol in [SPEC.md](SPEC.
   stored session recorded the time: there is nothing to read a counter out of. The
   `sessions` table is made again with a nullable `data` column — `NULL` is the mark of a
   deleted session, as the rule's statement has it — and its rows are not copied.
+- **The tool words a refusal itself** (`cmd/gochat/run.go`). `patterns/go-http-client.md`
+  keeps everything a server wrote out of an adapter's error, so `gochat` no longer
+  prints the server's reason for a 401, a 404 or a 422 — it prints the status and its
+  own advice. For a refused message that advice is the domain's own limit, which is the
+  one rule the tool can state without asking. A server that refuses for a reason the
+  tool does not know leaves the person with a status code.
 - **Flags before positionals, said out loud** (`cmd/gochat/run.go`). Go's `flag` stops
   at the first plain argument, so `gochat read general -json` silently treats the flag
   as an extra argument. The tool spots that shape and says which order to use
