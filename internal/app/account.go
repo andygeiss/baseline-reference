@@ -36,8 +36,12 @@ func (a *App) handleAccountDeleteForm(w http.ResponseWriter, r *http.Request) {
 // it is a dialog htmx draws, so it is nothing at all with htmx switched off,
 // and a guard the server cannot check is not a guard
 // (patterns/go-data-deletion.md).
+//
+// The password is checked behind the login's limiter, in the login's bucket:
+// without it an unlocked session is also a way to guess the password at full
+// speed (patterns/go-data-deletion.md).
 func (a *App) handleAccountDelete(w http.ResponseWriter, r *http.Request) {
-	if !a.parseForm(w, r) {
+	if !a.parseForm(w, r) || !a.allow(w, r) {
 		return
 	}
 	user := userFrom(r.Context())

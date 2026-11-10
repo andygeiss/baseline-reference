@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 )
 
 // The delete route names no account. It erases whoever is signed in, so the
@@ -108,4 +110,41 @@ func TestTheDeleteConfirmationIsServerSide(t *testing.T) {
 			t.Errorf("the confirmation form is missing %s", field)
 		}
 	}
+}
+
+// TestTheDeletePasswordCheckIsRateLimited is the other half of asking for the
+// password again: a form that checks a password is a place to guess one, so it
+// sits behind the login's limiter, or an unlocked session is also a way to
+// find out the password at full speed (patterns/go-data-deletion.md).
+func TestTheDeletePasswordCheckIsRateLimited(t *testing.T) {
+	t.Parallel()
+	// Made outside the bubble, with a context that never cancels, and on
+	// synctest's clock so the bucket cannot refill while argon2 runs —
+	// TestLoginRateLimit says why.
+	o := newTestOptions(t, withStopping(context.Background()))
+
+	synctest.Test(t, func(t *testing.T) {
+		ta := newTestAppWith(t, o)
+		ta.signUp(t, "alice", "correct horse battery")
+
+		guess := url.Values{"name": {"alice"}, "password": {"hunter2"}}
+		// The bucket holds five and signing up spent some of them, so six
+		// guesses cannot all be answered.
+		var last *http.Response
+		for range 6 {
+			last, _ = ta.do(t, http.MethodPost, "/account/delete", guess, nil)
+		}
+		if last.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("sixth wrong password on the delete form = %d, want 429", last.StatusCode)
+		}
+		// Over the limit the right password is refused too, and the account
+		// is still there: the limiter answers before anything is checked.
+		right := url.Values{"name": {"alice"}, "password": {"correct horse battery"}}
+		if res, _ := ta.do(t, http.MethodPost, "/account/delete", right, nil); res.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("delete while limited = %d, want 429", res.StatusCode)
+		}
+		if res, _ := ta.do(t, http.MethodGet, "/profile", nil, nil); res.StatusCode != http.StatusOK {
+			t.Errorf("profile after the refused deletes: status %d, want 200", res.StatusCode)
+		}
+	})
 }

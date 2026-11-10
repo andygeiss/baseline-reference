@@ -105,16 +105,33 @@ func (s *Users) SetEmail(ctx context.Context, id, email string) error {
 
 // Delete erases an account and everything the schema hangs off it.
 //
-// One statement. Every table that names a user declares its own ON DELETE, so
-// the cascade is the schema keeping a promise rather than a list of deletes
-// here that the next table added would be missing from
-// (patterns/go-data-deletion.md).
+// Every table that names a user declares its own ON DELETE, so the cascade is
+// the schema keeping a promise rather than a list of deletes here that the next
+// table added would be missing from (patterns/go-data-deletion.md).
+//
+// One delete the schema cannot declare comes first, in the same transaction:
+// an outbox row queued with no user_id — mail to an address before it was
+// anybody's account — names this person by address alone, and no cascade
+// follows an address. An account with no address stored matches nothing,
+// because no message is queued to an empty one.
 //
 // The id is the actor's own, out of the session: this app has no
 // administrator, so the only account anybody may delete is the one they are
 // signed in as, and there is no second predicate to forget.
 func (s *Users) Delete(ctx context.Context, id string) error {
-	res, err := s.db.Write.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	tx, err := s.db.Write.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning to delete user %s: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM outbox
+		  WHERE user_id IS NULL
+		    AND recipient = (SELECT email FROM users WHERE id = ?)`, id); err != nil {
+		return fmt.Errorf("deleting the mail queued to user %s by address: %w", id, err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("deleting user %s: %w", id, err)
 	}
@@ -124,6 +141,9 @@ func (s *Users) Delete(ctx context.Context, id string) error {
 	}
 	if n == 0 {
 		return domain.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing the deletion of user %s: %w", id, err)
 	}
 	return nil
 }

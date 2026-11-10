@@ -744,6 +744,21 @@ func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 		t.Fatalf("adding a reset: %v", err)
 	}
 
+	// Mail queued to Ada's address with no user_id: the row a message gets when
+	// it goes to an address before that address is anybody's account. No
+	// cascade follows an address, so the delete has to reach it by hand — and
+	// must leave the same kind of row alone when the address is somebody else's.
+	if err := store.NewUsers(db).SetEmail(t.Context(), ada.ID, "ada@example.com"); err != nil {
+		t.Fatalf("storing Ada's address: %v", err)
+	}
+	for id, to := range map[string]string{"to-ada": "ada@example.com", "to-eve": "eve@example.com"} {
+		if _, err := db.Write.ExecContext(t.Context(),
+			`INSERT INTO outbox (id, recipient, subject, body, created_at) VALUES (?, ?, 'Invitation', 'link', ?)`,
+			id, to, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			t.Fatalf("queueing mail with no user: %v", err)
+		}
+	}
+
 	// Bob gets one of everything too, so the sweep below proves the cascade is
 	// aimed rather than indiscriminate.
 	bobMsg := &domain.Message{RoomID: general.ID, AuthorID: bob.ID, Body: "still here"}
@@ -761,7 +776,7 @@ func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 			// Identifiers cannot be bound. These come from sqlite_master, never
 			// from anything a request touched.
 			q := fmt.Sprintf(`SELECT count(*) FROM %q WHERE %q = ?`, table, col)
-			if err := db.Read.QueryRow(q, ada.ID).Scan(&n); err != nil {
+			if err := db.Read.QueryRowContext(t.Context(), q, ada.ID).Scan(&n); err != nil {
 				t.Fatalf("counting %s.%s: %v", table, col, err)
 			}
 			if n != 0 {
@@ -772,23 +787,30 @@ func TestDeletingAUserLeavesNoRowBehind(t *testing.T) {
 
 	// The sweep above finds rows that name Ada by id. It cannot find a row that
 	// holds her data under another name, and the outbox is exactly that: it
-	// stores an address, and an address is not an id. Removing the user_id this
-	// release added leaves the sweep green and the address on disk — so the
-	// column a delete follows needs an assertion of its own.
+	// stores an address, and an address is not an id. Removing the user_id
+	// leaves the sweep green and the address on disk, and so does dropping the
+	// delete by address — so both get an assertion of their own.
 	var queued int
-	if err := db.Read.QueryRow(
+	if err := db.Read.QueryRowContext(t.Context(),
 		`SELECT count(*) FROM outbox WHERE recipient = ?`, "ada@example.com").Scan(&queued); err != nil {
 		t.Fatalf("counting queued mail: %v", err)
 	}
 	if queued != 0 {
 		t.Errorf("%d queued message(s) still address the deleted account", queued)
 	}
+	if err := db.Read.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM outbox WHERE recipient = ?`, "eve@example.com").Scan(&queued); err != nil {
+		t.Fatalf("counting a stranger's queued mail: %v", err)
+	}
+	if queued != 1 {
+		t.Errorf("%d message(s) left for an address that is not the deleted account's, want 1", queued)
+	}
 
 	// The one place neither check can look: a session names its user inside an
 	// opaque payload, not in a column. What ends those is authenticate
 	// resolving the credential to a row — TestDeletingAnAccountSignsTheBrowserOut.
 	var left int
-	if err := db.Read.QueryRow(`SELECT count(*) FROM messages WHERE author_id = ?`, bob.ID).
+	if err := db.Read.QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE author_id = ?`, bob.ID).
 		Scan(&left); err != nil {
 		t.Fatalf("counting bob's messages: %v", err)
 	}

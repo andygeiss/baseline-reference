@@ -936,17 +936,32 @@ step "smoke: deleting an account takes the person with it"
 # real database. The Intruder is the account this run is finished with.
 #
 # Neither half of the confirmation is enough on its own.
+#
+# The form checks a password, so it sits behind the login's limiter, in the
+# login's bucket. These three come from an address of their own, as a person's
+# would: from this machine's they would find the bucket the steps above emptied.
+DELETER='X-Forwarded-For: 198.51.100.12'
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
-    -d "name=Intruder" --data-urlencode "password=not the password")"
+    -H "$DELETER" -d "name=Intruder" --data-urlencode "password=not the password")"
 [ "$CODE" = "422" ] || fail "deleting with the wrong password answered $CODE, want 422"
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
-    -d "name=Somebody Else" --data-urlencode "password=a whole new password")"
+    -H "$DELETER" -d "name=Somebody Else" --data-urlencode "password=a whole new password")"
 [ "$CODE" = "422" ] || fail "deleting with the wrong name answered $CODE, want 422"
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' "localhost:$PORT/rooms")"
 [ "$CODE" = "200" ] || fail "two refused deletes signed the person out: got $CODE"
 
+# Guessing the password here is limited like guessing it at the sign-in page: a
+# session found unlocked is not a way to find out the password at full speed.
+LIMITED=""
+for _ in 1 2 3 4 5 6 7 8; do
+    CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
+        -H 'X-Forwarded-For: 198.51.100.13' -d "name=Intruder" --data-urlencode "password=guess")"
+    [ "$CODE" = "429" ] && LIMITED="yes" && break
+done
+[ -n "$LIMITED" ] || fail "eight wrong passwords on the delete form were never rate limited"
+
 CODE="$(curl -s -c "$JAR3" -b "$JAR3" -o /dev/null -w '%{http_code}' -X POST "localhost:$PORT/account/delete" \
-    -d "name=Intruder" --data-urlencode "password=a whole new password")"
+    -H "$DELETER" -d "name=Intruder" --data-urlencode "password=a whole new password")"
 [ "$CODE" = "303" ] || fail "deleting the account answered $CODE, want 303"
 
 # No cascade reaches a session row: it is keyed by token and its payload is
