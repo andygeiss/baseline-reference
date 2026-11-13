@@ -22,12 +22,13 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`c18771c`**, tagged v6.0.1. It carries one rule over
-v6.0.0: a password reset deletes the user's machine tokens, in the transaction that
-writes the new hash (`patterns/go-auth-sessions.md`, *Machine tokens* rule 5). v6.0.0
-shipped without it, as a known high, on Andy's decision. `Resets.Redeem` deletes them
-here, and `verify.sh` makes a token under the old password and reads 401 from it after
-the reset.
+Built against baseline commit **`0f22ef3`**, tagged v6.0.2. It moves the Go pin to
+1.27.4, a security release: below it, `govulncheck` fails every program that uses
+`net/http`. v6.0.1, at `c18771c`, carried one rule over v6.0.0: a password reset
+deletes the user's machine tokens, in the transaction that writes the new hash
+(`patterns/go-auth-sessions.md`, *Machine tokens* rule 5). v6.0.0 shipped without it,
+as a known high, on Andy's decision. `Resets.Redeem` deletes them here, and `verify.sh`
+makes a token under the old password and reads 401 from it after the reset.
 
 v6.0.0 was the baseline's 2026-11-10 backlog run. It read the baseline's oldest unread
 documents four times and did not converge. Its owner then took two areas out of the
@@ -70,7 +71,7 @@ after it. The README records both under *Baseline deviations*; lowering the cap,
 the bytes to a directory, or a waiver is Andy's to choose, and so is which of the two
 rules gives way.
 
-`./verify.sh` exits 0 against `c18771c` (97 steps).
+`./verify.sh` exits 0 against `0f22ef3` (97 steps).
 
 ## The task (give this to the builder, human or AI, verbatim)
 
