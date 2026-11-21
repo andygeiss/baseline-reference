@@ -10,7 +10,7 @@ set -eu
 cd "${1:-$(dirname "$0")}"
 
 # Pinned in the baseline's VERSIONS.md; update both together.
-HTMX_SHA256="e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f"
+HTMX_SHA256="fd25ba3fe5e44768756f23862a6daa4f928192199a121e825e882e719bc8aabd"
 # The TinyGo that builds the room map's module. Pinned in the baseline's
 # VERSIONS.md; update both together, and rebuild the module with make wasm.
 TINYGO_VERSION="0.44.0"

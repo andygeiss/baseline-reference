@@ -21,7 +21,7 @@ programs; `gochat` is the program.
 ## Stack
 
 Go 1.27 (stdlib `net/http`, `html/template`, `log/slog`, `encoding/json/v2`) · htmx
-4.0.0 (vendored, SHA-256 checked by verify.sh — the only script on every page but the
+4.0.2 (vendored, SHA-256 checked by verify.sh — the only script on every page but the
 room map) · one WebAssembly module, the room map, built by TinyGo 0.44.0 and talking
 over a hand-written RFC 6455 socket (`patterns/wasm-client.md`) · pure CSS (cascade
 layers, mobile-first grid layout, oklch, media-query dark mode, motion-as-feedback with
