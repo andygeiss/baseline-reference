@@ -22,8 +22,10 @@ at its root, job and why one line each; each bullet names its long form.
 
 ## Baseline pin
 
-Built against baseline commit **`0f22ef3`**, tagged v6.0.2. It moves the Go pin to
-1.27.4, a security release: below it, `govulncheck` fails every program that uses
+Built against baseline commit **`6e5f736`**, untagged. It moves htmx to 4.0.2 and
+`modernc.org/sqlite` to v1.62.0, whose `Commit` stops waiting once `BeginTx`'s context
+is done (`patterns/go-sqlite.md` rule 7); every `Commit` here already returns its error.
+v6.0.2, at `0f22ef3`, moved the Go pin to 1.27.4, a security release: below it, `govulncheck` fails every program that uses
 `net/http`. v6.0.1, at `c18771c`, carried one rule over v6.0.0: a password reset
 deletes the user's machine tokens, in the transaction that writes the new hash
 (`patterns/go-auth-sessions.md`, *Machine tokens* rule 5). v6.0.0 shipped without it,
